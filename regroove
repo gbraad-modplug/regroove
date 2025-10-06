@@ -1,0 +1,6 @@
+#!/bin/sh
+
+file=$(find . -type f -name '*.*' | fzf)
+if [ -n "$file" ]; then
+  LD_LIBRARY_PATH=. ./modplayer "$file" -m 1
+fi
