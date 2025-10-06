@@ -11,19 +11,9 @@
 #include "regroove.h"
 #include "midi.h"
 
-static volatile int running = 1;
-static struct termios orig_termios;
-
-// --- Global Regroove pointers ---
-Regroove *g = NULL;
-static Regroove *g_active = NULL;
-
-extern SDL_AudioSpec global_spec;
-extern struct RegrooveCallbacks global_cbs;
-
-// --- FileList definition ---
 #define MAX_FILES 4096
 #define MAX_PATH 1024
+
 typedef struct {
     char **names;
     int count;
@@ -31,40 +21,49 @@ typedef struct {
     char dirpath[MAX_PATH];
 } FileList;
 
-// --- Global midi context ---
-typedef struct {
-    Regroove *player;
-    int paused;
-    int num_channels;
-    FileList *files;
-    int files_active;
-} MidiContext;
-MidiContext midi_ctx;
+static volatile int running = 1;
+static struct termios orig_termios;
 
-// --- Prototypes ---
-static void handle_sigint(int sig);
-static void tty_restore(void);
-static int tty_make_raw_nonblocking(void);
-static int read_key_nonblocking(void);
-void free_filelist(FileList *fl);
-int load_filelist(FileList *fl, const char *dirpath);
-static void print_song_order(Regroove *g);
-static int load_module(const char *path, SDL_AudioSpec *spec, struct RegrooveCallbacks *cbs);
-void control_play_pause(int play);
-void control_retrigger(void);
-void control_next_order(void);
-void control_prev_order(void);
-void control_loop_till_row(void);
-void control_halve_loop(void);
-void control_full_loop(void);
-void control_pattern_mode_toggle(void);
-void control_channel_mute(int ch);
-void control_mute_all(void);
-void control_unmute_all(void);
-void control_pitch_up(void);
-void control_pitch_down(void);
+// --- Only one Regroove instance in the app ---
+static Regroove *g = NULL;
 
-// --- File extension check ---
+static void handle_sigint(int sig) { (void)sig; running = 0; }
+static void tty_restore(void) {
+    if (orig_termios.c_cflag) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
+    }
+}
+static int tty_make_raw_nonblocking(void) {
+    if (!isatty(STDIN_FILENO)) return -1;
+    if (tcgetattr(STDIN_FILENO, &orig_termios) < 0) return -1;
+    struct termios raw = orig_termios;
+    raw.c_lflag &= ~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    if (flags != -1) fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+    atexit(tty_restore);
+    return 0;
+}
+static int read_key_nonblocking(void) {
+    unsigned char c;
+    ssize_t n = read(STDIN_FILENO, &c, 1);
+    if (n == 1) return (int)c;
+    return -1;
+}
+
+void free_filelist(FileList *fl) {
+    if (!fl) return;
+    if (fl->names) {
+        for (int i = 0; i < fl->count; ++i) free(fl->names[i]);
+        free(fl->names);
+    }
+    fl->names = NULL;
+    fl->count = 0;
+    fl->current = 0;
+}
+
 int ends_with_module(const char *filename) {
     const char *dot = strrchr(filename, '.');
     if (!dot) return 0;
@@ -98,17 +97,6 @@ int load_filelist(FileList *fl, const char *dirpath) {
     return fl->count;
 }
 
-void free_filelist(FileList *fl) {
-    if (!fl) return;
-    if (fl->names) {
-        for (int i = 0; i < fl->count; ++i) free(fl->names[i]);
-        free(fl->names);
-    }
-    fl->names = NULL;
-    fl->count = 0;
-    fl->current = 0;
-}
-
 static void print_song_order(Regroove *g) {
     printf("Song order list (%d entries):\n", regroove_get_num_orders(g));
     for (int ord = 0; ord < regroove_get_num_orders(g); ++ord) {
@@ -118,7 +106,7 @@ static void print_song_order(Regroove *g) {
     printf("--------------------------------------\n");
 }
 
-// --- UI feedback callbacks ---
+// --- CALLBACKS for UI feedback ---
 static void my_order_callback(int order, int pattern, void *userdata) {
     printf("[ORDER] Now at Order %d (Pattern %d)\n", order, pattern);
 }
@@ -132,36 +120,48 @@ static void my_loop_callback(int order, int pattern, void *userdata) {
 // --- SDL audio callback ---
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
     (void)userdata;
-    Regroove *cur = g_active;
-    if (!cur) return;
+    if (!g) return;
     int16_t *buffer = (int16_t *)stream;
     int frames = len / (2 * sizeof(int16_t));
-    regroove_render_audio(cur, buffer, frames);
+    regroove_render_audio(g, buffer, frames);
 }
+
+// --- Only ONE MidiContext, only referencing g and not its own player ---
+typedef struct {
+    int paused;
+    int num_channels;
+    FileList *files;
+    int files_active;
+} MidiContext;
+static MidiContext midi_ctx = {0};
+
+// --- Only one set of global callbacks and spec ---
+struct RegrooveCallbacks global_cbs;
+SDL_AudioSpec global_spec;
 
 // --- Centralized module loader ---
 static int load_module(const char *path, SDL_AudioSpec *spec, struct RegrooveCallbacks *cbs) {
-    // Safely destroy previous module
     SDL_LockAudio();
-    if (g_active) {
-        Regroove *tmp = g_active;
-        g_active = NULL;
+    if (g) {
+        Regroove *old = g;
+        g = NULL;
         SDL_UnlockAudio();
-        regroove_destroy(tmp);
+        regroove_destroy(old);
     } else {
         SDL_UnlockAudio();
     }
     Regroove *mod = regroove_create(path, 48000.0);
-    g = mod;
-    g_active = mod;
-    midi_ctx.player = mod;
-    midi_ctx.num_channels = mod ? regroove_get_num_channels(mod) : 0;
-    midi_ctx.paused = 1;
     if (!mod) {
         printf("Failed to load: %s\n", path);
         return -1;
     }
-    printf("Loaded: %s\n", path);
+    SDL_LockAudio();
+    g = mod;
+    SDL_UnlockAudio();
+
+    midi_ctx.num_channels = regroove_get_num_channels(mod);
+    midi_ctx.paused = 1;
+
     regroove_set_callbacks(mod, cbs);
     SDL_PauseAudio(1);
     print_song_order(mod);
@@ -169,110 +169,109 @@ static int load_module(const char *path, SDL_AudioSpec *spec, struct RegrooveCal
     return 0;
 }
 
-// --- Unified playback/command control ---
+// --- Unified playback/command control using g only ---
 void control_play_pause(int play) {
     if (!g) return;
+
     midi_ctx.paused = !play ? 1 : 0;
     SDL_PauseAudio(!play ? 1 : 0);
     printf("Playback %s\n", play ? "resumed" : "paused");
 }
 void control_retrigger(void) {
-    if (g) {
-        regroove_retrigger_pattern(g);
-        printf("Triggered retrigger.\n");
-    }
+    if (!g) return;
+
+    regroove_retrigger_pattern(g);
+    printf("Triggered retrigger.\n");
 }
 void control_next_order(void) {
-    if (g) {
-        regroove_queue_next_order(g);
-        int next_order = regroove_get_current_order(g) + 1;
-        if (next_order < regroove_get_num_orders(g))
-            printf("Next order queued: Order %d (Pattern %d)\n",
-                next_order, regroove_get_order_pattern(g, next_order));
-    }
+    if (!g) return;
+    
+    regroove_queue_next_order(g);
+    int next_order = regroove_get_current_order(g) + 1;
+    if (next_order < regroove_get_num_orders(g))
+        printf("Next order queued: Order %d (Pattern %d)\n",
+            next_order, regroove_get_order_pattern(g, next_order));
 }
 void control_prev_order(void) {
-    if (g) {
-        regroove_queue_prev_order(g);
-        int prev_order = regroove_get_current_order(g) > 0 ?
+    if (!g) return;
+
+    regroove_queue_prev_order(g);
+    int prev_order = regroove_get_current_order(g) > 0 ?
             regroove_get_current_order(g) - 1 : 0;
         printf("Previous order queued: Order %d (Pattern %d)\n",
             prev_order, regroove_get_order_pattern(g, prev_order));
-    }
 }
 void control_loop_till_row(void) {
-    if (g) {
-        regroove_loop_till_row(g, regroove_get_current_row(g));
-        printf("Loop till row queued: Order %d, Row %d\n",
-            regroove_get_current_order(g), regroove_get_current_row(g));
-    }
+    if (!g) return;
+
+    regroove_loop_till_row(g, regroove_get_current_row(g));
+    printf("Loop till row queued: Order %d, Row %d\n",
+        regroove_get_current_order(g), regroove_get_current_row(g));
 }
 void control_halve_loop(void) {
-    if (g) {
-        int rows = regroove_get_custom_loop_rows(g) > 0 ?
-            regroove_get_custom_loop_rows(g) : regroove_get_full_pattern_rows(g);
-        int halved = rows / 2 < 1 ? 1 : rows / 2;
-        regroove_set_custom_loop_rows(g, halved);
-        printf("Loop length halved: %d rows\n", halved);
-    }
+    if (!g) return;
+
+    int rows = regroove_get_custom_loop_rows(g) > 0 ?
+        regroove_get_custom_loop_rows(g) : regroove_get_full_pattern_rows(g);
+    int halved = rows / 2 < 1 ? 1 : rows / 2;
+    regroove_set_custom_loop_rows(g, halved);
+    printf("Loop length halved: %d rows\n", halved);
 }
 void control_full_loop(void) {
-    if (g) {
-        regroove_set_custom_loop_rows(g, 0);
-        printf("Loop length reset to full pattern: %d rows\n", regroove_get_full_pattern_rows(g));
-    }
+    if (!g) return;
+
+    regroove_set_custom_loop_rows(g, 0);
+    printf("Loop length reset to full pattern: %d rows\n", regroove_get_full_pattern_rows(g));
 }
 void control_pattern_mode_toggle(void) {
-    if (g) {
-        int new_mode = !regroove_get_pattern_mode(g);
-        regroove_pattern_mode(g, new_mode);
-        if (new_mode)
-            printf("Pattern mode ON (looping pattern %d at order %d)\n",
-                   regroove_get_current_pattern(g), regroove_get_current_order(g));
-        else
-            printf("Song mode ON\n");
-    }
+    if (!g) return;
+
+    int new_mode = !regroove_get_pattern_mode(g);
+    regroove_pattern_mode(g, new_mode);
+    if (new_mode)
+        printf("Pattern mode ON (looping pattern %d at order %d)\n",
+               regroove_get_current_pattern(g), regroove_get_current_order(g));
+    else
+        printf("Song mode ON\n");
 }
 void control_channel_mute(int ch) {
-    if (g) {
-        regroove_toggle_channel_mute(g, ch);
-        printf("Channel %d %s\n", ch + 1,
-            regroove_is_channel_muted(g, ch) ? "muted" : "unmuted");
-    }
+    if (!g) return;
+
+    regroove_toggle_channel_mute(g, ch);
+    int muted = regroove_is_channel_muted(g, ch); // always ask the engine!
+    printf("Channel %d %s\n", ch + 1, muted ? "muted" : "unmuted");
 }
 void control_mute_all(void) {
-    if (g) {
-        regroove_mute_all(g);
-        printf("All channels muted\n");
-    }
+    if (!g) return;
+
+    regroove_mute_all(g);
+    printf("All channels muted\n");
 }
 void control_unmute_all(void) {
-    if (g) {
-        regroove_unmute_all(g);
-        printf("All channels unmuted\n");
-    }
+    if (!g) return
+    regroove_unmute_all(g);
+    printf("All channels unmuted\n");
 }
 void control_pitch_up(void) {
     static double pitch = 1.0;
-    if (g) {
-        pitch += 0.01;
-        regroove_set_pitch(g, pitch);
-        printf("Pitch factor: %.2f\n", pitch);
-    }
+    if (!g) return;
+
+    if (pitch < 3.0) pitch += 0.01;
+    regroove_set_pitch(g, pitch);
+    printf("Pitch factor: %.2f\n", pitch);
 }
 void control_pitch_down(void) {
     static double pitch = 1.0;
-    if (g) {
-        pitch -= 0.01;
-        regroove_set_pitch(g, pitch);
-        printf("Pitch factor: %.2f\n", pitch);
-    }
+    if (!g) return;
+
+    if (pitch > 0.25) pitch -= 0.01;
+    regroove_set_pitch(g, pitch);
+    printf("Pitch factor: %.2f\n", pitch);
 }
 
-// --- MIDI HANDLING: uses unified control functions ---
+// --- MIDI HANDLING: uses unified control functions and ONLY g ---
 void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value, void *userdata) {
     MidiContext *ctx = (MidiContext *)userdata;
-
     // File browsing
     if ((status & 0xF0) == 0xB0) {
         if (ctx->files_active) {
@@ -293,29 +292,24 @@ void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value
                 return;
             }
         }
-
         // Channel and global controls
         if (cc >= 32 && cc < 32 + 8) { // SOLO
             int ch = cc - 32;
-            if (ch < ctx->num_channels && value >= 64)
-                regroove_toggle_channel_single(ctx->player, ch);
-        } else if (cc >= 48 && cc < 48 + ctx->num_channels) { // MUTE
+            if (ch < midi_ctx.num_channels && value >= 64)
+                regroove_toggle_channel_single(g, ch);
+        } else if (cc >= 48 && cc < 48 + midi_ctx.num_channels) { // MUTE
             int ch = cc - 48;
-            if (ch < ctx->num_channels && value >= 64)
+            if (ch < midi_ctx.num_channels && value >= 64)
                 control_channel_mute(ch);
-        } else if (cc >= 0 && cc < ctx->num_channels) { // VOLUME
+        } else if (cc >= 0 && cc < midi_ctx.num_channels) { // VOLUME
             double vol = value / 127.0;
-            regroove_set_channel_volume(ctx->player, cc, vol);
+            regroove_set_channel_volume(g, cc, vol);
         } else switch (cc) {
             case 41: // Play
-                if (value >= 64 && ctx->paused) {
-                    control_play_pause(1);
-                }
+                if (value >= 64 && midi_ctx.paused) control_play_pause(1);
                 break;
             case 42: // Stop
-                if (value >= 64 && !ctx->paused) {
-                    control_play_pause(0);
-                }
+                if (value >= 64 && !midi_ctx.paused) control_play_pause(0);
                 break;
             case 46: // Pattern mode toggle
                 if (value >= 64) control_pattern_mode_toggle();
@@ -330,40 +324,11 @@ void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value
     }
 }
 
-struct RegrooveCallbacks global_cbs;
-SDL_AudioSpec global_spec;
-
 int is_directory(const char *path) {
     struct stat st;
     if (stat(path, &st) == 0 && S_ISDIR(st.st_mode))
         return 1;
     return 0;
-}
-
-static void handle_sigint(int sig) { (void)sig; running = 0; }
-static void tty_restore(void) {
-    if (orig_termios.c_cflag) {
-        tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
-    }
-}
-static int tty_make_raw_nonblocking(void) {
-    if (!isatty(STDIN_FILENO)) return -1;
-    if (tcgetattr(STDIN_FILENO, &orig_termios) < 0) return -1;
-    struct termios raw = orig_termios;
-    raw.c_lflag &= ~(ICANON | ECHO);
-    raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
-    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
-    if (flags != -1) fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
-    atexit(tty_restore);
-    return 0;
-}
-static int read_key_nonblocking(void) {
-    unsigned char c;
-    ssize_t n = read(STDIN_FILENO, &c, 1);
-    if (n == 1) return (int)c;
-    return -1;
 }
 
 int main(int argc, char *argv[]) {
@@ -422,9 +387,16 @@ int main(int argc, char *argv[]) {
 
     midi_ctx.files = &files;
     midi_ctx.files_active = files_active;
-    midi_ctx.player = NULL;
     midi_ctx.paused = 1;
     midi_ctx.num_channels = 0;
+
+    struct RegrooveCallbacks cbs = {
+        .on_order_change = my_order_callback,
+        .on_row_change = my_row_callback,
+        .on_pattern_loop = my_loop_callback,
+        .userdata = NULL
+    };
+    global_cbs = cbs;
 
     if (!files_active) {
         if (load_module(initial_path, &global_spec, &global_cbs) != 0) {
@@ -446,15 +418,6 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, handle_sigint);
 
     tty_make_raw_nonblocking();
-
-    struct RegrooveCallbacks cbs = {
-        .on_order_change = my_order_callback,
-        .on_row_change = my_row_callback,
-        .on_pattern_loop = my_loop_callback,
-        .userdata = NULL
-    };
-    global_cbs = cbs;
-    if (g) regroove_set_callbacks(g, &global_cbs);
 
     int midi_ports = midi_list_ports();
     if (midi_ports > 0) {
@@ -513,9 +476,9 @@ int main(int argc, char *argv[]) {
     // Safely stop audio and destroy module
     SDL_PauseAudio(1);
     SDL_LockAudio();
-    if (g_active) {
-        Regroove *tmp = g_active;
-        g_active = NULL;
+    if (g) {
+        Regroove *tmp = g;
+        g = NULL;
         SDL_UnlockAudio();
         regroove_destroy(tmp);
     } else {
