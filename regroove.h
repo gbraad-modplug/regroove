@@ -26,6 +26,7 @@ void regroove_set_callbacks(Regroove *g, struct RegrooveCallbacks *cb);
 int regroove_render_audio(Regroove *g, int16_t *buffer, int frames);
 
 // User commands (to be called from main loop or UI)
+void regroove_process_commands(Regroove *g);
 void regroove_pattern_mode(Regroove *g, int on);
 void regroove_queue_next_order(Regroove *g);
 void regroove_queue_prev_order(Regroove *g);
@@ -35,6 +36,10 @@ void regroove_set_custom_loop_rows(Regroove *g, int rows);
 void regroove_toggle_channel_mute(Regroove *g, int ch);
 void regroove_mute_all(Regroove *g);
 void regroove_unmute_all(Regroove *g);
+void regroove_toggle_channel_single(Regroove *g, int ch);
+void regroove_set_channel_volume(Regroove *g, int ch, double vol);
+double regroove_get_channel_volume(const Regroove* g, int ch);
+
 void regroove_set_pitch(Regroove *g, double pitch);
 
 // State queries

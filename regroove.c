@@ -5,6 +5,9 @@
 #include <libopenmpt/libopenmpt.h>
 #include <libopenmpt/libopenmpt_ext.h>
 
+#define REGROOVE_MIN_PITCH 0.01
+#define REGROOVE_MAX_PITCH 4.0
+
 typedef enum {
     RG_CMD_NONE,
     RG_CMD_QUEUE_ORDER,
@@ -13,15 +16,18 @@ typedef enum {
     RG_CMD_RETRIGGER_PATTERN,
     RG_CMD_SET_CUSTOM_LOOP_ROWS,
     RG_CMD_TOGGLE_CHANNEL_MUTE,
+    RG_CMD_TOGGLE_CHANNEL_SINGLE,   // NEW
     RG_CMD_MUTE_ALL,
     RG_CMD_UNMUTE_ALL,
-    RG_CMD_SET_PITCH
+    RG_CMD_SET_PITCH,
+    RG_CMD_SET_CHANNEL_VOLUME       // NEW
 } RegrooveCommandType;
 
 typedef struct {
     RegrooveCommandType type;
     int arg1;
     int arg2;
+    double dval; // For volume
 } RegrooveCommand;
 
 #define RG_MAX_COMMANDS 8
@@ -35,9 +41,9 @@ struct Regroove {
     double pitch_factor;
     int num_channels;
     int* mute_states;
+    double* channel_volumes;
 
     int num_orders;
-
     int pattern_mode;
     int loop_pattern;
     int loop_order;
@@ -77,7 +83,7 @@ static void reapply_mutes(struct Regroove* g) {
     if (!g->interactive_ok) return;
     for (int ch = 0; ch < g->num_channels; ++ch) {
         g->interactive.set_channel_volume(g->modext, ch,
-            g->mute_states[ch] ? 0.0 : 1.0);
+            g->mute_states[ch] ? 0.0 : g->channel_volumes[ch]);
     }
 }
 
@@ -87,6 +93,17 @@ static void enqueue_command(struct Regroove* g, RegrooveCommandType type, int ar
         g->command_queue[g->command_queue_tail].type = type;
         g->command_queue[g->command_queue_tail].arg1 = arg1;
         g->command_queue[g->command_queue_tail].arg2 = arg2;
+        g->command_queue[g->command_queue_tail].dval = 0.0;
+        g->command_queue_tail = next_tail;
+    }
+}
+static void enqueue_command_d(struct Regroove* g, RegrooveCommandType type, int arg1, double dval) {
+    int next_tail = (g->command_queue_tail + 1) % RG_MAX_COMMANDS;
+    if (next_tail != g->command_queue_head) {
+        g->command_queue[g->command_queue_tail].type = type;
+        g->command_queue[g->command_queue_tail].arg1 = arg1;
+        g->command_queue[g->command_queue_tail].arg2 = 0;
+        g->command_queue[g->command_queue_tail].dval = dval;
         g->command_queue_tail = next_tail;
     }
 }
@@ -95,6 +112,59 @@ static void process_commands(struct Regroove* g) {
     while (g->command_queue_head != g->command_queue_tail) {
         RegrooveCommand* cmd = &g->command_queue[g->command_queue_head];
         switch (cmd->type) {
+            case RG_CMD_TOGGLE_CHANNEL_MUTE:
+                if (cmd->arg1 >= 0 && cmd->arg1 < g->num_channels) {
+                    g->mute_states[cmd->arg1] = !g->mute_states[cmd->arg1];
+                    if (g->interactive_ok)
+                        g->interactive.set_channel_volume(
+                            g->modext, cmd->arg1, g->mute_states[cmd->arg1] ? 0.0 : g->channel_volumes[cmd->arg1]);
+                }
+                break;
+            case RG_CMD_TOGGLE_CHANNEL_SINGLE:
+                if (cmd->arg1 >= 0 && cmd->arg1 < g->num_channels) {
+                    for (int i = 0; i < g->num_channels; ++i) {
+                        int mute = (i != cmd->arg1);
+                        g->mute_states[i] = mute;
+                        if (g->interactive_ok)
+                            g->interactive.set_channel_volume(
+                                g->modext, i, mute ? 0.0 : g->channel_volumes[i]);
+                    }
+                }
+                break;
+            case RG_CMD_SET_CHANNEL_VOLUME: {
+                int ch = cmd->arg1;
+                double vol = cmd->dval;
+                if (ch >= 0 && ch < g->num_channels) {
+                    if (vol < 0.0) vol = 0.0;
+                    if (vol > 1.0) vol = 1.0;
+                    g->channel_volumes[ch] = vol;
+                    if (g->interactive_ok)
+                        g->interactive.set_channel_volume(
+                            g->modext, ch, g->mute_states[ch] ? 0.0 : vol);
+                }
+                break;
+            }
+            case RG_CMD_MUTE_ALL:
+                for (int ch = 0; ch < g->num_channels; ++ch) {
+                    g->mute_states[ch] = 1;
+                    if (g->interactive_ok)
+                        g->interactive.set_channel_volume(g->modext, ch, 0.0);
+                }
+                break;
+            case RG_CMD_UNMUTE_ALL:
+                for (int ch = 0; ch < g->num_channels; ++ch) {
+                    g->mute_states[ch] = 0;
+                    if (g->interactive_ok)
+                        g->interactive.set_channel_volume(g->modext, ch, g->channel_volumes[ch]);
+                }
+                break;
+            case RG_CMD_SET_PITCH: {
+                double val = cmd->arg1 / 100.0;
+                if (val < REGROOVE_MIN_PITCH) val = REGROOVE_MIN_PITCH;
+                if (val > REGROOVE_MAX_PITCH) val = REGROOVE_MAX_PITCH;
+                g->pitch_factor = val;
+                break;
+            }
             case RG_CMD_QUEUE_ORDER:
                 if (g->pattern_mode) {
                     g->pending_pattern_mode_order = cmd->arg1;
@@ -136,32 +206,7 @@ static void process_commands(struct Regroove* g) {
             case RG_CMD_SET_CUSTOM_LOOP_ROWS:
                 g->custom_loop_rows = cmd->arg1;
                 if (g->custom_loop_rows < 0) g->custom_loop_rows = 0;
-                g->prev_row = -1; // <--- CRITICAL: reset prev_row so wrap detection doesn't fire early
-                break;
-            case RG_CMD_TOGGLE_CHANNEL_MUTE:
-                if (cmd->arg1 >= 0 && cmd->arg1 < g->num_channels) {
-                    g->mute_states[cmd->arg1] = !g->mute_states[cmd->arg1];
-                    if (g->interactive_ok)
-                        g->interactive.set_channel_volume(
-                            g->modext, cmd->arg1, g->mute_states[cmd->arg1] ? 0.0 : 1.0);
-                }
-                break;
-            case RG_CMD_MUTE_ALL:
-                for (int ch = 0; ch < g->num_channels; ++ch) {
-                    g->mute_states[ch] = 1;
-                    if (g->interactive_ok)
-                        g->interactive.set_channel_volume(g->modext, ch, 0.0);
-                }
-                break;
-            case RG_CMD_UNMUTE_ALL:
-                for (int ch = 0; ch < g->num_channels; ++ch) {
-                    g->mute_states[ch] = 0;
-                    if (g->interactive_ok)
-                        g->interactive.set_channel_volume(g->modext, ch, 1.0);
-                }
-                break;
-            case RG_CMD_SET_PITCH:
-                g->pitch_factor = cmd->arg1 / 100.0;
+                g->prev_row = -1;
                 break;
             default: break;
         }
@@ -202,6 +247,9 @@ Regroove *regroove_create(const char *filename, double samplerate) {
     g->num_channels = openmpt_module_get_num_channels(g->mod);
 
     g->mute_states = (int*)calloc(g->num_channels, sizeof(int));
+    g->channel_volumes = (double*)calloc(g->num_channels, sizeof(double));
+    for (int i = 0; i < g->num_channels; ++i) g->channel_volumes[i] = 1.0;
+
     g->interactive_ok = 0;
     if (openmpt_module_ext_get_interface(
             g->modext, LIBOPENMPT_EXT_C_INTERFACE_INTERACTIVE,
@@ -232,6 +280,7 @@ Regroove *regroove_create(const char *filename, double samplerate) {
 void regroove_destroy(Regroove *g) {
     if (g->modext) openmpt_module_ext_destroy(g->modext);
     if (g->mute_states) free(g->mute_states);
+    if (g->channel_volumes) free(g->channel_volumes);
     free(g);
 }
 
@@ -343,7 +392,11 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
     return count;
 }
 
-// --- API for user input ---
+// --- API functions ---
+
+void regroove_process_commands(Regroove *g) {
+    process_commands(g);
+}
 
 void regroove_pattern_mode(Regroove* g, int on) {
     enqueue_command(g, RG_CMD_SET_PATTERN_MODE, !!on, 0);
@@ -369,9 +422,24 @@ void regroove_retrigger_pattern(Regroove* g) {
 void regroove_set_custom_loop_rows(Regroove* g, int rows) {
     enqueue_command(g, RG_CMD_SET_CUSTOM_LOOP_ROWS, rows, 0);
 }
-void regroove_toggle_channel_mute(Regroove* g, int ch) {
+
+void regroove_toggle_channel_mute(Regroove *g, int ch) {
     enqueue_command(g, RG_CMD_TOGGLE_CHANNEL_MUTE, ch, 0);
 }
+
+void regroove_toggle_channel_single(Regroove* g, int ch) {
+    enqueue_command(g, RG_CMD_TOGGLE_CHANNEL_SINGLE, ch, 0);
+}
+
+void regroove_set_channel_volume(Regroove *g, int ch, double vol) {
+    enqueue_command_d(g, RG_CMD_SET_CHANNEL_VOLUME, ch, vol);
+}
+
+double regroove_get_channel_volume(const Regroove* g, int ch) {
+    if (!g || ch < 0 || ch >= g->num_channels) return 0.0;
+    return g->channel_volumes[ch];
+}
+
 void regroove_mute_all(Regroove* g) {
     enqueue_command(g, RG_CMD_MUTE_ALL, 0, 0);
 }

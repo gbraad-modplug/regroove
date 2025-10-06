@@ -7,6 +7,9 @@
 #include <SDL.h>
 #include "regroove.h"
 
+// RtMidi C API
+#include <rtmidi_c.h>
+
 static volatile int running = 1;
 static struct termios orig_termios;
 
@@ -41,7 +44,7 @@ static void my_order_callback(int order, int pattern, void *userdata) {
     printf("[ORDER] Now at Order %d (Pattern %d)\n", order, pattern);
 }
 static void my_row_callback(int order, int row, void *userdata) {
-    printf("[ROW] Order %d, Row %d\n", order, row);
+    //printf("[ROW] Order %d, Row %d\n", order, row);
 }
 static void my_loop_callback(int order, int pattern, void *userdata) {
     printf("[LOOP] Loop/retrigger at Order %d (Pattern %d)\n", order, pattern);
@@ -55,9 +58,132 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
     regroove_render_audio(g, buffer, frames);
 }
 
+// --- MIDI HANDLING ---
+
+typedef struct {
+    Regroove *player;
+    int paused;
+    int num_channels;
+} MidiContext;
+
+static void midi_cc_action(MidiContext *ctx, unsigned char cc, unsigned char value) {
+    // SOLO: CC32+ch (channels 0..7)
+    if (cc >= 32 && cc < 32 + 8) {
+        int ch = cc - 32;
+        if (ch < ctx->num_channels && value >= 64) {
+            regroove_toggle_channel_single(ctx->player, ch);
+            printf("[MIDI] SOLO ch %d\n", ch);
+        }
+    }
+    // MUTE: CC48+ch (channels 0..7)
+    else if (cc >= 48 && cc < 48 + ctx->num_channels) {
+        int ch = cc - 48;
+        if (ch < ctx->num_channels && value >= 64) {
+            regroove_toggle_channel_mute(ctx->player, ch);
+            printf("[MIDI] MUTE toggle ch %d\n", ch);
+        }
+    }
+    // VOLUME: CC0+ch (channels 0..7)
+    else if (cc >= 0 && cc < ctx->num_channels) {
+        double vol = value / 127.0;
+        regroove_set_channel_volume(ctx->player, cc, vol);
+        printf("[MIDI] Vol ch %d = %.2f\n", cc, vol);
+    }
+    // ... (other global controls: play, stop, loop, next, prev) ...
+    else switch (cc) {
+        case 41: // Play
+            if (ctx->paused) {
+                ctx->paused = 0;
+                SDL_PauseAudio(0);
+                printf("[MIDI] Play\n");
+            }
+            break;
+        case 42: // Stop
+            if (!ctx->paused) {
+                ctx->paused = 1;
+                SDL_PauseAudio(1);
+                printf("[MIDI] Stop\n");
+            }
+            break;
+        case 46: // Loop pattern/mode toggle
+            if (value >= 64) {
+                int mode = !regroove_get_pattern_mode(ctx->player);
+                regroove_pattern_mode(ctx->player, mode);
+                printf("[MIDI] Pattern mode %s\n", mode ? "ON" : "OFF");
+            }
+            break;
+        case 44: // Next order
+            if (value >= 64) {
+                regroove_queue_next_order(ctx->player);
+                printf("[MIDI] Next order\n");
+            }
+            break;
+        case 43: // Prev order
+            if (value >= 64) {
+                regroove_queue_prev_order(ctx->player);
+                printf("[MIDI] Prev order\n");
+            }
+            break;
+    }
+}
+
+static void midi_callback(double deltatime, const unsigned char *msg, size_t sz, void *userdata) {
+    MidiContext *ctx = (MidiContext *)userdata;
+    if (sz < 3) return;
+    unsigned char status = msg[0] & 0xF0;
+    unsigned char cc = msg[1];
+    unsigned char value = msg[2];
+    if (status == 0xB0) { // Control Change
+        midi_cc_action(ctx, cc, value);
+    }
+}
+
+// --- MIDI SETUP ---
+static RtMidiInPtr open_midi_port(MidiContext *ctx, int which_port) {
+    // Defensive: skip MIDI if ALSA sequencer is missing
+    if (access("/dev/snd/seq", F_OK) == -1) {
+        fprintf(stderr, "No /dev/snd/seq found. Skipping MIDI initialization.\n");
+        return NULL;
+    }
+    RtMidiInPtr midiin = rtmidi_in_create_default();
+    if (!midiin) {
+        fprintf(stderr, "No MIDI system available (rtmidi_in_create_default failed).\n");
+        return NULL;
+    }
+    unsigned int nports = 0;
+    nports = rtmidi_get_port_count(midiin);
+    if (nports == 0) {
+        fprintf(stderr, "No MIDI input devices found. MIDI disabled.\n");
+        rtmidi_in_free(midiin);
+        return NULL;
+    }
+    for (unsigned int i = 0; i < nports; ++i) {
+        char name[128];
+        int bufsize = sizeof(name);
+        rtmidi_get_port_name(midiin, i, name, &bufsize);
+        printf("  [%u] %s\n", i, name);
+    }
+    if (which_port < 0 || which_port >= (int)nports) {
+        fprintf(stderr, "Invalid MIDI port %d, using 0.\n", which_port);
+        which_port = 0;
+    }
+    rtmidi_open_port(midiin, which_port, "regroove-midi-in");
+    rtmidi_in_set_callback(midiin, midi_callback, ctx);
+    rtmidi_in_ignore_types(midiin, 0, 0, 0);
+    printf("Opened MIDI port [%d]\n", which_port);
+    return midiin;
+}
+
 int main(int argc, char *argv[]) {
+    int midi_port = -1;
+    // Parse arguments for -m <port>
+    for (int i = 1; i < argc; ++i) {
+        if (!strcmp(argv[i], "-m") && i + 1 < argc) {
+            midi_port = atoi(argv[++i]);
+        }
+    }
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s file.mod\n", argv[0]);
+        fprintf(stderr, "Usage: %s file.mod [-m mididevice]\n", argv[0]);
         return 1;
     }
     Regroove *g = regroove_create(argv[1], 48000.0);
@@ -102,9 +228,15 @@ int main(int argc, char *argv[]) {
     };
     regroove_set_callbacks(g, &cbs);
 
+    // Setup MIDI
+    MidiContext midi_ctx = { .player = g, .paused = 1, .num_channels = regroove_get_num_channels(g) };
+    RtMidiInPtr midiin = open_midi_port(&midi_ctx, midi_port);
+
+    if (!midiin)
+        printf("No MIDI available. Running with keyboard control only.\n");
+
     // Start PAUSED
     SDL_PauseAudio(1);
-    int paused = 1;
 
     printf("Controls:\n");
     printf("  SPACE start/stop playback\n");
@@ -116,6 +248,7 @@ int main(int argc, char *argv[]) {
     printf("  1–9 mute channels, m mute all, u unmute all\n");
     printf("  +/- pitch\n");
     printf("  q/ESC quit\n");
+    printf("  M switch MIDI port (runtime)\n");
     printf("\nPlayback paused (press SPACE to start)\n");
 
     while (running) {
@@ -124,9 +257,9 @@ int main(int argc, char *argv[]) {
             if (k == 27 || k == 'q' || k == 'Q') {
                 running = 0;
             } else if (k == ' ') {
-                paused = !paused;
-                printf("Playback %s\n", paused ? "paused" : "resumed");
-                SDL_PauseAudio(paused ? 1 : 0);
+                midi_ctx.paused = !midi_ctx.paused;
+                printf("Playback %s\n", midi_ctx.paused ? "paused" : "resumed");
+                SDL_PauseAudio(midi_ctx.paused ? 1 : 0);
             } else if (k == 'r' || k == 'R') {
                 regroove_retrigger_pattern(g);
                 printf("Triggered retrigger.\n");
@@ -169,24 +302,46 @@ int main(int argc, char *argv[]) {
                 printf("Channel %d %s\n", ch + 1,
                     regroove_is_channel_muted(g, ch) ? "muted" : "unmuted");
             } else if (k == 'm' || k == 'M') {
-                regroove_mute_all(g);
-                printf("All channels muted\n");
+                // For runtime MIDI port switch:
+                if (midiin) {
+                    printf("Switching MIDI port: ");
+                    RtMidiInPtr newmidi = NULL;
+                    unsigned int nports = rtmidi_get_port_count(midiin);
+                    for (unsigned int i = 0; i < nports; ++i) {
+                        char name[128];
+                        int bufsize = sizeof(name);
+                        rtmidi_get_port_name(midiin, i, name, &bufsize);
+                        printf("[%u] %s  ", i, name);
+                    }
+                    printf("\nEnter MIDI port number: ");
+                    fflush(stdout);
+                    int port = 0;
+                    scanf("%d", &port);
+                    rtmidi_in_free(midiin);
+                    midiin = open_midi_port(&midi_ctx, port);
+                } else {
+                    regroove_mute_all(g);
+                    printf("All channels muted\n");
+                }
             } else if (k == 'u' || k == 'U') {
                 regroove_unmute_all(g);
                 printf("All channels unmuted\n");
             } else if (k == '+' || k == '=') {
-                double new_pitch = regroove_get_pitch(g) * 1.05;
+                double new_pitch = regroove_get_pitch(g) + .01;
                 regroove_set_pitch(g, new_pitch);
+                regroove_process_commands(g);
                 printf("Pitch factor: %.2f\n", new_pitch);
             } else if (k == '-') {
-                double new_pitch = regroove_get_pitch(g) / 1.05;
+                double new_pitch = regroove_get_pitch(g) - .01;
                 regroove_set_pitch(g, new_pitch);
+                regroove_process_commands(g);
                 printf("Pitch factor: %.2f\n", new_pitch);
             }
         }
         SDL_Delay(10);
     }
 
+    if (midiin) rtmidi_in_free(midiin);
     SDL_CloseAudio();
     regroove_destroy(g);
     SDL_Quit();
