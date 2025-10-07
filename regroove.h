@@ -1,6 +1,10 @@
 #ifndef REGROOVE_H
 #define REGROOVE_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 
 typedef struct Regroove Regroove;
@@ -54,5 +58,9 @@ int regroove_is_channel_muted(const Regroove *g, int ch);
 int regroove_get_pattern_mode(const Regroove *g);
 int regroove_get_custom_loop_rows(const Regroove *g);
 int regroove_get_full_pattern_rows(const Regroove *g);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // REGROOVE_H
