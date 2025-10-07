@@ -296,7 +296,7 @@ void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value
         if (cc >= 32 && cc < 32 + 8) { // SOLO
             int ch = cc - 32;
             if (ch < midi_ctx.num_channels && value >= 64)
-                regroove_toggle_channel_single(g, ch);
+                regroove_toggle_channel_solo(g, ch);
         } else if (cc >= 48 && cc < 48 + midi_ctx.num_channels) { // MUTE
             int ch = cc - 48;
             if (ch < midi_ctx.num_channels && value >= 64)

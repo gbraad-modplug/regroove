@@ -425,9 +425,10 @@ void regroove_set_custom_loop_rows(Regroove* g, int rows) {
 
 void regroove_toggle_channel_mute(Regroove *g, int ch) {
     enqueue_command(g, RG_CMD_TOGGLE_CHANNEL_MUTE, ch, 0);
+    process_commands(g);
 }
 
-void regroove_toggle_channel_single(Regroove* g, int ch) {
+void regroove_toggle_channel_solo(Regroove* g, int ch) {
     enqueue_command(g, RG_CMD_TOGGLE_CHANNEL_SINGLE, ch, 0);
 }
 

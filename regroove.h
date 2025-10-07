@@ -36,7 +36,7 @@ void regroove_set_custom_loop_rows(Regroove *g, int rows);
 void regroove_toggle_channel_mute(Regroove *g, int ch);
 void regroove_mute_all(Regroove *g);
 void regroove_unmute_all(Regroove *g);
-void regroove_toggle_channel_single(Regroove *g, int ch);
+void regroove_toggle_channel_solo(Regroove *g, int ch);
 void regroove_set_channel_volume(Regroove *g, int ch, double vol);
 double regroove_get_channel_volume(const Regroove* g, int ch);
 
