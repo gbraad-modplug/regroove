@@ -118,18 +118,44 @@ void dispatch_action(InputAction act, int arg1 = -1, float arg2 = 0.0f) {
                 }
             }
             break;
-        case ACT_MUTE_CHANNEL:
+        case ACT_SOLO_CHANNEL: {
             if (g_regroove && arg1 >= 0 && arg1 < 8) {
-                regroove_toggle_channel_mute(g_regroove, arg1);
-                channels[arg1].mute = regroove_is_channel_muted(g_regroove, arg1);
+                bool wasSolo = channels[arg1].solo;
+
+                // Clear all solo states
+                for (int i = 0; i < 8; ++i) channels[i].solo = false;
+
+                if (!wasSolo) {
+                    // New solo: set this channel solo, mute all, unmute this one
+                    channels[arg1].solo = true;
+                    regroove_mute_all(g_regroove);
+                    for (int i = 0; i < 8; ++i) channels[i].mute = true;
+                    // Unmute soloed channel
+                    regroove_toggle_channel_mute(g_regroove, arg1);
+                    channels[arg1].mute = false;
+                } else {
+                    // Un-solo: unmute all
+                    regroove_unmute_all(g_regroove);
+                    for (int i = 0; i < 8; ++i) channels[i].mute = false;
+                }
             }
             break;
-        case ACT_SOLO_CHANNEL:
+        }
+        case ACT_MUTE_CHANNEL: {
             if (g_regroove && arg1 >= 0 && arg1 < 8) {
-                regroove_toggle_channel_solo(g_regroove, arg1);
-                channels[arg1].solo = !channels[arg1].solo;
+                // If soloed, un-solo and unmute all
+                if (channels[arg1].solo) {
+                    channels[arg1].solo = false;
+                    regroove_unmute_all(g_regroove);
+                    for (int i = 0; i < 8; ++i) channels[i].mute = false;
+                } else {
+                    // Toggle mute just for this channel
+                    channels[arg1].mute = !channels[arg1].mute;
+                    regroove_toggle_channel_mute(g_regroove, arg1);
+                }
             }
             break;
+        }
         case ACT_VOLUME_CHANNEL:
             if (g_regroove && arg1 >= 0 && arg1 < 8) {
                 regroove_set_channel_volume(g_regroove, arg1, (double)arg2);
@@ -404,8 +430,13 @@ static void ShowMainUI() {
         ImGui::BeginGroup();
         ImGui::Text("Ch%d", i + 1);
         ImGui::Dummy(ImVec2(0, 4.0f));
+
+        // SOLO BUTTON
+        ImVec4 soloCol = channels[i].solo ? ImVec4(0.80f,0.12f,0.14f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, soloCol);
         if (ImGui::Button((std::string("S##solo")+std::to_string(i)).c_str(), ImVec2(sliderW, SOLO_SIZE)))
             dispatch_action(ACT_SOLO_CHANNEL, i);
+        ImGui::PopStyleColor();
 
         ImGui::Dummy(ImVec2(0, 6.0f));
         float prev_vol = channels[i].volume;
@@ -415,9 +446,15 @@ static void ShowMainUI() {
             if (prev_vol != channels[i].volume)
                 dispatch_action(ACT_VOLUME_CHANNEL, i, channels[i].volume);
         }
+
         ImGui::Dummy(ImVec2(0, 8.0f));
+
+        // MUTE BUTTON with color feedback
+        ImVec4 muteCol = channels[i].mute ? ImVec4(0.90f,0.16f,0.18f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, muteCol);
         if (ImGui::Button((std::string("M##mute")+std::to_string(i)).c_str(), ImVec2(sliderW, MUTE_SIZE)))
             dispatch_action(ACT_MUTE_CHANNEL, i);
+        ImGui::PopStyleColor();
 
         ImGui::EndGroup();
     }
