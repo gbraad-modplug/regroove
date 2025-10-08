@@ -7,6 +7,8 @@
 #include <cstring>
 #include <string>
 #include <cmath>
+#include <vector>
+#include <filesystem> // C++17
 
 extern "C" {
 #include "regroove.h"
@@ -28,6 +30,7 @@ static int current_step = 0;
 static bool loop_enabled = false;
 static bool playing = false;
 static int pattern = 1, order = 1, total_rows = 64;
+static std::string mod_dir = ".";
 Regroove *g_regroove = NULL;
 
 // Clamp helper
@@ -44,6 +47,100 @@ static float MapPitchFader(float slider_val) {
         pitch = 1.0f + slider_val * (2.0f - 1.0f);  // [0,1] maps to [1.0,2.0]
     }
     return Clamp(pitch, 0.05f, 2.0f);
+}
+
+// -----------------------------------------------------------------------------
+// Callbacks
+// -----------------------------------------------------------------------------
+static void my_row_callback(int ord, int row, void *userdata) {
+    if (total_rows <= 0) return;
+    int rows_per_step = total_rows / 16;
+    if (rows_per_step < 1) rows_per_step = 1;
+    current_step = row / rows_per_step;
+    if (current_step >= 16) current_step = 15;
+    step_fade[current_step] = 1.0f;
+}
+static void my_order_callback(int ord, int pat, void *userdata) {
+    order = ord;
+    pattern = pat;
+    if (g_regroove)
+        total_rows = regroove_get_full_pattern_rows(g_regroove);
+}
+
+// -----------------------------------------------------------------------------
+// Module Loading
+// -----------------------------------------------------------------------------
+
+static constexpr int MAX_FILENAME_LEN = 16;
+static const std::vector<std::string> allowed_exts = {
+    ".mod", ".xm", ".it", ".s3m", ".med", ".mmd", ".mmd1", ".mmd2", ".mmd3"
+    // TODO: add more as needed, matching what libopenmpt/modplug supports
+};
+static std::vector<std::string> module_files;
+static int selected_module_index = 0;
+
+namespace fs = std::filesystem;
+void scan_module_files(const std::string& directory) {
+    module_files.clear();
+    for (const auto& entry : fs::directory_iterator(directory)) {
+        if (entry.is_regular_file()) {
+            std::string ext = entry.path().extension().string();
+            for (const auto& allowed : allowed_exts) {
+                if (ext == allowed) {
+                    module_files.push_back(entry.path().filename().string());
+                    break;
+                }
+            }
+        }
+    }
+    selected_module_index = 0;
+}
+
+static int load_module(const char *path) {
+    SDL_LockAudio();
+    if (g_regroove) {
+        Regroove *old = g_regroove;
+        g_regroove = NULL;
+        SDL_UnlockAudio();
+        regroove_destroy(old);
+    } else {
+        SDL_UnlockAudio();
+    }
+    Regroove *mod = regroove_create(path, 48000.0);
+    if (!mod) return -1;
+    SDL_LockAudio(); g_regroove = mod; SDL_UnlockAudio();
+    struct RegrooveCallbacks cbs = {
+        .on_order_change = my_order_callback,
+        .on_row_change = my_row_callback,
+        .on_pattern_loop = NULL,
+        .userdata = NULL
+    };
+    regroove_set_callbacks(mod, &cbs);
+    int num_channels = regroove_get_num_channels(mod);
+
+    for (int i = 0; i < 16; ++i) step_fade[i] = 0.0f;
+
+    for (int i = 0; i < 8 && i < num_channels; i++) {
+        channels[i].volume = 1.0f;
+        channels[i].mute = false;
+        channels[i].solo = false;
+    }
+    order = regroove_get_current_order(mod);
+    pattern = regroove_get_current_pattern(mod);
+    total_rows = regroove_get_full_pattern_rows(mod);
+
+    loop_enabled = false;
+    playing = false;
+    pitch_slider = 0.0f;
+    current_step = 0;
+
+    regroove_set_custom_loop_rows(mod, 0); // 0 disables custom loop
+    regroove_set_pitch(mod, MapPitchFader(0.0f)); // Reset pitch
+
+    SDL_PauseAudio(1);
+    playing = false;
+    for (int i = 0; i < 16; i++) step_fade[i] = 0.0f;
+    return 0;
 }
 
 // -----------------------------------------------------------------------------
@@ -166,24 +263,6 @@ void dispatch_action(InputAction act, int arg1 = -1, float arg2 = 0.0f) {
 }
 
 // -----------------------------------------------------------------------------
-// Callbacks
-// -----------------------------------------------------------------------------
-static void my_row_callback(int ord, int row, void *userdata) {
-    if (total_rows <= 0) return;
-    int rows_per_step = total_rows / 16;
-    if (rows_per_step < 1) rows_per_step = 1;
-    current_step = row / rows_per_step;
-    if (current_step >= 16) current_step = 15;
-    step_fade[current_step] = 1.0f;
-}
-static void my_order_callback(int ord, int pat, void *userdata) {
-    order = ord;
-    pattern = pat;
-    if (g_regroove)
-        total_rows = regroove_get_full_pattern_rows(g_regroove);
-}
-
-// -----------------------------------------------------------------------------
 // Input Mapping
 // -----------------------------------------------------------------------------
 void handle_keyboard(SDL_Event &e, SDL_Window *window) {
@@ -213,17 +292,58 @@ void handle_keyboard(SDL_Event &e, SDL_Window *window) {
         case SDLK_ESCAPE: case SDLK_q: {
             SDL_Event quit; quit.type = SDL_QUIT; SDL_PushEvent(&quit); break;
         }
+        // File loading
+        case SDLK_LEFTBRACKET: // '['
+            if (!module_files.empty()) {
+                selected_module_index = (selected_module_index - 1 + module_files.size()) % module_files.size();
+            }
+            break;
+        case SDLK_RIGHTBRACKET: // ']'
+            if (!module_files.empty()) {
+                selected_module_index = (selected_module_index + 1) % module_files.size();
+            }
+            break;
+        case SDLK_RETURN: // ENTER
+            if (!module_files.empty()) {
+                std::string full_path = mod_dir + "/" + module_files[selected_module_index];
+                load_module(full_path.c_str());
+            }
+            break;
     }
 }
 
 void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value, void *userdata) {
     if ((status & 0xF0) != 0xB0) return;
     switch (cc) {
-        case 41: if (value >= 64) dispatch_action(ACT_PLAY); break;
+        case 41:
+        if (value >= 64)
+            if (playing) {
+                dispatch_action(ACT_RETRIGGER);
+            } else {
+                dispatch_action(ACT_PLAY);
+            }
+            break;
         case 42: if (value >= 64) dispatch_action(ACT_STOP); break;
         case 46: if (value >= 64) dispatch_action(ACT_TOGGLE_LOOP); break;
         case 44: if (value >= 64) dispatch_action(ACT_NEXT_ORDER); break;
         case 43: if (value >= 64) dispatch_action(ACT_PREV_ORDER); break;
+        // File loading
+        case 61: // previous file
+            if (value >= 64 && !module_files.empty()) {
+                selected_module_index = (selected_module_index - 1 + module_files.size()) % module_files.size();
+            }
+            break;
+        case 62: // next file
+            if (value >= 64 && !module_files.empty()) {
+                selected_module_index = (selected_module_index + 1) % module_files.size();
+            }
+            break;
+        case 60: // confirm/load
+            if (value >= 64 && !module_files.empty()) {
+                std::string full_path = mod_dir + "/" + module_files[selected_module_index];
+                load_module(full_path.c_str());
+            }
+            break;
         // channel controls
         default:
             if (cc >= 32 && cc < 40 && value >= 64)
@@ -248,44 +368,6 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
     int16_t *buffer = (int16_t *)stream;
     int frames = len / (2 * sizeof(int16_t));
     regroove_render_audio(g_regroove, buffer, frames);
-}
-
-// -----------------------------------------------------------------------------
-// Module Loading
-// -----------------------------------------------------------------------------
-static int load_module(const char *path) {
-    SDL_LockAudio();
-    if (g_regroove) {
-        Regroove *old = g_regroove;
-        g_regroove = NULL;
-        SDL_UnlockAudio();
-        regroove_destroy(old);
-    } else {
-        SDL_UnlockAudio();
-    }
-    Regroove *mod = regroove_create(path, 48000.0);
-    if (!mod) return -1;
-    SDL_LockAudio(); g_regroove = mod; SDL_UnlockAudio();
-    struct RegrooveCallbacks cbs = {
-        .on_order_change = my_order_callback,
-        .on_row_change = my_row_callback,
-        .on_pattern_loop = NULL,
-        .userdata = NULL
-    };
-    regroove_set_callbacks(mod, &cbs);
-    int num_channels = regroove_get_num_channels(mod);
-    for (int i = 0; i < 8 && i < num_channels; i++) {
-        channels[i].volume = 1.0f;
-        channels[i].mute = false;
-        channels[i].solo = false;
-    }
-    order = regroove_get_current_order(mod);
-    pattern = regroove_get_current_pattern(mod);
-    total_rows = regroove_get_full_pattern_rows(mod);
-    SDL_PauseAudio(1);
-    playing = false;
-    for (int i = 0; i < 16; i++) step_fade[i] = 0.0f;
-    return 0;
 }
 
 // -----------------------------------------------------------------------------
@@ -396,8 +478,22 @@ static void ShowMainUI() {
                       true, ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
     {
         char lcd[64];
-        std::snprintf(lcd, sizeof(lcd), "Pat:%02d Ord:%02d Loop:%s\nPitch:%.2f",
-                      pattern, order, loop_enabled ? "ON" : "OFF", MapPitchFader(pitch_slider));
+
+        // Include truncated file name
+        const char* file_disp = "";
+        if (!module_files.empty()) {
+            static char truncated[MAX_FILENAME_LEN + 1];
+            std::strncpy(truncated, module_files[selected_module_index].c_str(), MAX_FILENAME_LEN);
+            truncated[MAX_FILENAME_LEN] = 0;
+            file_disp = truncated;
+        }
+
+        std::snprintf(lcd, sizeof(lcd),
+            "Pat:%02d Ord:%02d Loop:%s\nPitch:%.2f\nFile:%.*s",
+            pattern, order, loop_enabled ? "ON" : "OFF",
+            MapPitchFader(pitch_slider),
+            MAX_FILENAME_LEN, file_disp);
+
         DrawLCD(lcd, LEFT_PANEL_WIDTH - 16.0f, LCD_HEIGHT);
     }
 
@@ -573,6 +669,17 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Usage: %s file.mod [-m mididevice]\n", argv[0]);
         return 1;
     }
+
+    // For file loading
+    if (module_path) {
+        fs::path p(module_path);
+        if (p.has_parent_path())
+            mod_dir = p.parent_path().string();
+        else
+            mod_dir = ".";
+        scan_module_files(mod_dir);
+    }
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) return 1;
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
@@ -599,7 +706,7 @@ int main(int argc, char* argv[]) {
     ApplyFlatBlackRedSkin();
     ImGui_ImplSDL2_InitForOpenGL(window, gl_ctx);
     ImGui_ImplOpenGL2_Init();
-    if (load_module(module_path) != 0) return 1;
+    //if (load_module(module_path) != 0) return 1;
     int midi_ports = midi_list_ports();
     if (midi_ports > 0) midi_init(my_midi_mapping, NULL, midi_port);
     bool running = true;
