@@ -49,6 +49,14 @@ static float MapPitchFader(float slider_val) {
     return Clamp(pitch, 0.05f, 2.0f);
 }
 
+void update_channel_mute_states() {
+    if (!g_regroove) return;
+    int num_channels = regroove_get_num_channels(g_regroove);
+    for (int i = 0; i < 8 && i < num_channels; ++i) {
+        channels[i].mute = regroove_is_channel_muted(g_regroove, i);
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Callbacks
 // -----------------------------------------------------------------------------
@@ -125,6 +133,8 @@ static int load_module(const char *path) {
         channels[i].mute = false;
         channels[i].solo = false;
     }
+    update_channel_mute_states();
+
     order = regroove_get_current_order(mod);
     pattern = regroove_get_current_pattern(mod);
     total_rows = regroove_get_full_pattern_rows(mod);
@@ -188,7 +198,10 @@ void dispatch_action(InputAction act, int arg1 = -1, float arg2 = 0.0f) {
             if (g_regroove) regroove_queue_prev_order(g_regroove);
             break;
         case ACT_RETRIGGER:
-            if (g_regroove) regroove_retrigger_pattern(g_regroove);
+            if (g_regroove) {
+                regroove_retrigger_pattern(g_regroove);
+                update_channel_mute_states();
+            }
             break;
         case ACT_SET_PITCH: {
             if (g_regroove) {
