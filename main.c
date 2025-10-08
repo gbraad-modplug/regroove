@@ -117,6 +117,10 @@ static void my_loop_callback(int order, int pattern, void *userdata) {
     printf("[LOOP] Loop/retrigger at Order %d (Pattern %d)\n", order, pattern);
 }
 
+static void my_song_callback(void *userdata) {
+    printf("[SONG] looped back to start\n");
+}
+
 // --- SDL audio callback ---
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
     (void)userdata;
@@ -393,7 +397,8 @@ int main(int argc, char *argv[]) {
     struct RegrooveCallbacks cbs = {
         .on_order_change = my_order_callback,
         .on_row_change = my_row_callback,
-        .on_pattern_loop = my_loop_callback,
+        .on_loop_pattern = my_loop_callback,
+        .on_loop_song = my_song_callback,
         .userdata = NULL
     };
     global_cbs = cbs;

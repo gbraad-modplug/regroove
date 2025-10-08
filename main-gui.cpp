@@ -75,6 +75,14 @@ static void my_order_callback(int ord, int pat, void *userdata) {
         total_rows = regroove_get_full_pattern_rows(g_regroove);
 }
 
+static void my_loop_pattern_callback(int order, int pattern, void *userdata) {
+
+}
+
+static void my_loop_song_callback(void *userdata) {
+    playing = false;
+}
+
 // -----------------------------------------------------------------------------
 // Module Loading
 // -----------------------------------------------------------------------------
@@ -120,7 +128,8 @@ static int load_module(const char *path) {
     struct RegrooveCallbacks cbs = {
         .on_order_change = my_order_callback,
         .on_row_change = my_row_callback,
-        .on_pattern_loop = NULL,
+        .on_loop_pattern = my_loop_pattern_callback,
+        .on_loop_song = my_loop_song_callback,
         .userdata = NULL
     };
     regroove_set_callbacks(mod, &cbs);
@@ -199,7 +208,9 @@ void dispatch_action(InputAction act, int arg1 = -1, float arg2 = 0.0f) {
             break;
         case ACT_RETRIGGER:
             if (g_regroove) {
+                //SDL_PauseAudio(1);  // TODO: retrigger causes a double free
                 regroove_retrigger_pattern(g_regroove);
+                //SDL_PauseAudio(0);
                 update_channel_mute_states();
             }
             break;

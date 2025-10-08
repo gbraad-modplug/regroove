@@ -12,12 +12,14 @@ typedef struct Regroove Regroove;
 // --- Optional UI callback types ---
 typedef void (*RegrooveOrderCallback)(int order, int pattern, void *userdata);
 typedef void (*RegrooveRowCallback)(int order, int row, void *userdata);
-typedef void (*RegrooveLoopCallback)(int order, int pattern, void *userdata);
+typedef void (*RegrooveLoopPatternCallback)(int order, int pattern, void *userdata);
+typedef void (*RegrooveLoopSongCallback)(void *userdata);
 
 struct RegrooveCallbacks {
-    RegrooveOrderCallback on_order_change;
-    RegrooveRowCallback   on_row_change;
-    RegrooveLoopCallback  on_pattern_loop;
+    RegrooveOrderCallback       on_order_change;
+    RegrooveRowCallback         on_row_change;
+    RegrooveLoopPatternCallback on_loop_pattern;
+    RegrooveLoopSongCallback    on_loop_song;
     void *userdata;
 };
 

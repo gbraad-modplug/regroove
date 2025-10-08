@@ -68,15 +68,19 @@ struct Regroove {
     int prev_order;
 
     // --- UI callback hooks ---
-    RegrooveOrderCallback on_order_change;
-    RegrooveRowCallback   on_row_change;
-    RegrooveLoopCallback  on_pattern_loop;
+    RegrooveOrderCallback        on_order_change;
+    RegrooveRowCallback          on_row_change;
+    RegrooveLoopPatternCallback  on_loop_pattern;
+    RegrooveLoopSongCallback     on_loop_song;
     void *callback_userdata;
 
     // --- For feedback ---
     int last_msg_order;
     int last_msg_pattern;
     int last_msg_row;
+
+    int last_playback_order;
+    int last_playback_row;
 };
 
 static void reapply_mutes(struct Regroove* g) {
@@ -267,12 +271,16 @@ Regroove *regroove_create(const char *filename, double samplerate) {
 
     g->on_order_change = NULL;
     g->on_row_change = NULL;
-    g->on_pattern_loop = NULL;
+    g->on_loop_pattern = NULL;
+    g->on_loop_song = NULL;
     g->callback_userdata = NULL;
 
     g->last_msg_order = -1;
     g->last_msg_pattern = -1;
     g->last_msg_row = -1;
+
+    g->last_playback_order = -1;
+    g->last_playback_row = -1;
 
     return g;
 }
@@ -288,7 +296,8 @@ void regroove_set_callbacks(Regroove *g, struct RegrooveCallbacks *cb) {
     if (!g || !cb) return;
     g->on_order_change = cb->on_order_change;
     g->on_row_change = cb->on_row_change;
-    g->on_pattern_loop = cb->on_pattern_loop;
+    g->on_loop_pattern = cb->on_loop_pattern;
+    g->on_loop_song = cb->on_loop_song;
     g->callback_userdata = cb->userdata;
 }
 
@@ -319,8 +328,8 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             } else if (g->prev_row == rows - 1 && cur_row == 0) {
                 openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
                 if (g->interactive_ok) reapply_mutes(g);
-                if (g->on_pattern_loop)
-                    g->on_pattern_loop(g->loop_order, g->loop_pattern, g->callback_userdata);
+                if (g->on_loop_pattern)
+                    g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
                 g->prev_row = -1;
             } else {
                 g->prev_row = cur_row;
@@ -343,8 +352,8 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             g->pending_pattern_mode_order = -1;
             openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
             if (g->interactive_ok) reapply_mutes(g);
-            if (g->on_pattern_loop)
-                g->on_pattern_loop(g->loop_order, g->loop_pattern, g->callback_userdata);
+            if (g->on_loop_pattern)
+                g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
             g->prev_row = -1;
             return count;
         }
@@ -354,8 +363,8 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             if (at_custom_loop_end || at_full_pattern_end) {
                 openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
                 if (g->interactive_ok) reapply_mutes(g);
-                if (g->on_pattern_loop)
-                    g->on_pattern_loop(g->loop_order, g->loop_pattern, g->callback_userdata);
+                if (g->on_loop_pattern)
+                    g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
                 g->prev_row = -1;
             } else {
                 g->prev_row = cur_row;
@@ -388,6 +397,18 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         g->on_row_change(final_order, final_row, g->callback_userdata);
         g->last_msg_row = final_row;
     }
+
+    // --- Detect song loop event ---
+    if (g->last_playback_order != -1) {
+        if ((cur_order < g->last_playback_order) ||
+            (cur_order == 0 && g->last_playback_order != 0)) {
+            if (g->on_loop_song) {
+                g->on_loop_song(g->callback_userdata);
+            }
+        }
+    }
+    g->last_playback_order = cur_order;
+    g->last_playback_row = cur_row;
 
     return count;
 }
