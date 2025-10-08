@@ -186,19 +186,33 @@ static void my_order_callback(int ord, int pat, void *userdata) {
 // -----------------------------------------------------------------------------
 // Input Mapping
 // -----------------------------------------------------------------------------
-void handle_keyboard(SDL_Event &e) {
+void handle_keyboard(SDL_Event &e, SDL_Window *window) {
     if (e.type != SDL_KEYDOWN) return;
     switch (e.key.keysym.sym) {
+        // Regroove controls
         case SDLK_SPACE: dispatch_action(playing ? ACT_STOP : ACT_PLAY); break;
         case SDLK_l: dispatch_action(ACT_TOGGLE_LOOP); break;
         case SDLK_n: dispatch_action(ACT_NEXT_ORDER); break;
         case SDLK_p: dispatch_action(ACT_PREV_ORDER); break;
         case SDLK_r: dispatch_action(ACT_RETRIGGER); break;
-        case SDLK_ESCAPE: case SDLK_q: SDL_Event quit; quit.type = SDL_QUIT; SDL_PushEvent(&quit); break;
         case SDLK_1: case SDLK_2: case SDLK_3: case SDLK_4:
         case SDLK_5: case SDLK_6: case SDLK_7: case SDLK_8:
             dispatch_action(ACT_MUTE_CHANNEL, e.key.keysym.sym - SDLK_1);
             break;
+        // Application controls
+        case SDLK_F11:
+            if (window) {
+                Uint32 flags = SDL_GetWindowFlags(window);
+                if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) {
+                    SDL_SetWindowFullscreen(window, 0); // Exit fullscreen
+                } else {
+                    SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP); // Enter fullscreen
+                }
+            }
+            break;
+        case SDLK_ESCAPE: case SDLK_q: {
+            SDL_Event quit; quit.type = SDL_QUIT; SDL_PushEvent(&quit); break;
+        }
     }
 }
 
@@ -387,16 +401,46 @@ static void ShowMainUI() {
         DrawLCD(lcd, LEFT_PANEL_WIDTH - 16.0f, LCD_HEIGHT);
     }
 
-    if (ImGui::Button("[]", ImVec2(48,48))) dispatch_action(ACT_STOP);
+    // STOP BUTTON
+    if (!playing) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.25f, 0.20f, 1.0f)); // red
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.35f, 0.30f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.50f, 0.15f, 0.15f, 1.0f));
+        if (ImGui::Button("[]", ImVec2(48,48))) dispatch_action(ACT_STOP);
+        ImGui::PopStyleColor(3);
+    } else {
+        if (ImGui::Button("[]", ImVec2(48,48))) dispatch_action(ACT_STOP);
+    }
+
     ImGui::SameLine();
-    if (ImGui::Button("|>", ImVec2(48,48))) dispatch_action(ACT_PLAY);
+    
+    // PLAY BUTTON
+    if (playing) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.25f, 1.0f)); // green
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.80f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.50f, 0.20f, 1.0f));
+        if (ImGui::Button("|>", ImVec2(48,48))) dispatch_action(ACT_RETRIGGER);
+        ImGui::PopStyleColor(3);
+    } else {
+        if (ImGui::Button("|>", ImVec2(48,48))) dispatch_action(ACT_PLAY);
+    }
 
     ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
     if (ImGui::Button("<<", ImVec2(48,48))) dispatch_action(ACT_PREV_ORDER);
     ImGui::SameLine();
     if (ImGui::Button(">>", ImVec2(48,48))) dispatch_action(ACT_NEXT_ORDER);
     ImGui::SameLine();
-    if (ImGui::Button(loop_enabled ? "O*" : "O∞", ImVec2(48,48))) dispatch_action(ACT_TOGGLE_LOOP);
+
+    // LOOP BUTTON
+    if (loop_enabled) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.60f, 0.20f, 1.0f)); // yellow
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.75f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.60f, 0.50f, 0.15f, 1.0f));
+        if (ImGui::Button(loop_enabled ? "O*" : "O∞", ImVec2(48,48))) dispatch_action(ACT_TOGGLE_LOOP);
+        ImGui::PopStyleColor(3);
+    } else {
+        if (ImGui::Button(loop_enabled ? "O*" : "O∞", ImVec2(48,48))) dispatch_action(ACT_TOGGLE_LOOP);
+    }
 
     ImGui::EndChild();
 
@@ -564,7 +608,7 @@ int main(int argc, char* argv[]) {
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) running = false;
-            handle_keyboard(e); // unified handler!
+            handle_keyboard(e, window); // unified handler!
         }
         if (g_regroove) regroove_process_commands(g_regroove);
         ImGui_ImplOpenGL2_NewFrame();
