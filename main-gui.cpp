@@ -31,6 +31,7 @@ static bool loop_enabled = false;
 static bool playing = false;
 static int pattern = 1, order = 1, total_rows = 64;
 static std::string mod_dir = ".";
+static float loop_blink = 0.0f;
 Regroove *g_regroove = NULL;
 
 // Clamp helper
@@ -61,6 +62,7 @@ void update_channel_mute_states() {
 // Callbacks
 // -----------------------------------------------------------------------------
 static void my_row_callback(int ord, int row, void *userdata) {
+    //printf("[ROW] Order %d, Row %d\n", ord, row);
     if (total_rows <= 0) return;
     int rows_per_step = total_rows / 16;
     if (rows_per_step < 1) rows_per_step = 1;
@@ -69,6 +71,7 @@ static void my_row_callback(int ord, int row, void *userdata) {
     step_fade[current_step] = 1.0f;
 }
 static void my_order_callback(int ord, int pat, void *userdata) {
+    //printf("[SONG] Now at Order %d (Pattern %d)\n", ord, pat);
     order = ord;
     pattern = pat;
     if (g_regroove)
@@ -76,10 +79,12 @@ static void my_order_callback(int ord, int pat, void *userdata) {
 }
 
 static void my_loop_pattern_callback(int order, int pattern, void *userdata) {
-
+    //printf("[LOOP] Loop/retrigger at Order %d (Pattern %d)\n", order, pattern);
+    loop_blink = 1.0f;
 }
 
 static void my_loop_song_callback(void *userdata) {
+    //printf("[SONG] looped back to start\n");
     playing = false;
 }
 
@@ -467,9 +472,10 @@ static void ShowMainUI() {
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
-    ImGui::Begin("regroove nanokontrol2 UI", nullptr, rootFlags);
+    ImGui::Begin("MP-1210: Direct Interaction Groove Interface", nullptr, rootFlags);
 
     // Layout constants
+    const float BUTTON_SIZE = 48.0f;
     const float SIDE_MARGIN = 10.0f;
     const float TOP_MARGIN = 8.0f;
     const float LEFT_PANEL_WIDTH = 190.0f;
@@ -521,15 +527,41 @@ static void ShowMainUI() {
         DrawLCD(lcd, LEFT_PANEL_WIDTH - 16.0f, LCD_HEIGHT);
     }
 
+    ImGui::Dummy(ImVec2(0, 8.0f));
+
+    // File browser buttons
+    ImGui::BeginGroup();
+    if (ImGui::Button("<", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        if (!module_files.empty()) {
+            selected_module_index = (selected_module_index - 1 + module_files.size()) % module_files.size();
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("o", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        if (!module_files.empty()) {
+            std::string full_path = mod_dir + "/" + module_files[selected_module_index];
+            load_module(full_path.c_str());
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(">", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        if (!module_files.empty()) {
+            selected_module_index = (selected_module_index + 1) % module_files.size();
+        }
+    }
+    ImGui::EndGroup();
+
+    ImGui::Dummy(ImVec2(0, 8.0f));
+
     // STOP BUTTON
     if (!playing) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.25f, 0.20f, 1.0f)); // red
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.35f, 0.30f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.50f, 0.15f, 0.15f, 1.0f));
-        if (ImGui::Button("[]", ImVec2(48,48))) dispatch_action(ACT_STOP);
+        if (ImGui::Button("[]", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_STOP);
         ImGui::PopStyleColor(3);
     } else {
-        if (ImGui::Button("[]", ImVec2(48,48))) dispatch_action(ACT_STOP);
+        if (ImGui::Button("[]", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_STOP);
     }
 
     ImGui::SameLine();
@@ -539,27 +571,38 @@ static void ShowMainUI() {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.25f, 1.0f)); // green
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.80f, 0.35f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.50f, 0.20f, 1.0f));
-        if (ImGui::Button("|>", ImVec2(48,48))) dispatch_action(ACT_RETRIGGER);
+        if (ImGui::Button("|>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_RETRIGGER);
         ImGui::PopStyleColor(3);
     } else {
-        if (ImGui::Button("|>", ImVec2(48,48))) dispatch_action(ACT_PLAY);
+        if (ImGui::Button("|>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_PLAY);
     }
 
     ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
-    if (ImGui::Button("<<", ImVec2(48,48))) dispatch_action(ACT_PREV_ORDER);
+    if (ImGui::Button("<<", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_PREV_ORDER);
     ImGui::SameLine();
-    if (ImGui::Button(">>", ImVec2(48,48))) dispatch_action(ACT_NEXT_ORDER);
+    if (ImGui::Button(">>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_NEXT_ORDER);
     ImGui::SameLine();
 
+    // Fade the blink effect each frame
+    loop_blink = fmaxf(loop_blink - 0.05f, 0.0f);
+
     // LOOP BUTTON
+    ImVec4 baseCol = loop_enabled ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImVec4 blinkCol = ImVec4(
+        baseCol.x + loop_blink * 0.6f, // brighten R
+        baseCol.y + loop_blink * 0.4f, // brighten G
+        baseCol.z,                     // keep B
+        1.0f
+    );
+
     if (loop_enabled) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.60f, 0.20f, 1.0f)); // yellow
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.75f, 0.35f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.60f, 0.50f, 0.15f, 1.0f));
-        if (ImGui::Button(loop_enabled ? "O*" : "O∞", ImVec2(48,48))) dispatch_action(ACT_TOGGLE_LOOP);
+        ImGui::PushStyleColor(ImGuiCol_Button, blinkCol);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, blinkCol);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, blinkCol);
+        if (ImGui::Button("O*", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_TOGGLE_LOOP);
         ImGui::PopStyleColor(3);
     } else {
-        if (ImGui::Button(loop_enabled ? "O*" : "O∞", ImVec2(48,48))) dispatch_action(ACT_TOGGLE_LOOP);
+        if (ImGui::Button("O∞", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_TOGGLE_LOOP);
     }
 
     ImGui::EndChild();

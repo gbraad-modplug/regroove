@@ -362,7 +362,8 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         if (cur_order == g->loop_order) {
             if (at_custom_loop_end || at_full_pattern_end) {
                 openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
-                if (g->interactive_ok) reapply_mutes(g);
+                if (g->interactive_ok)
+                    reapply_mutes(g);
                 if (g->on_loop_pattern)
                     g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
                 g->prev_row = -1;
@@ -371,13 +372,17 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             }
         } else { // If escaped loop order, snap back
             openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
-            if (g->interactive_ok) reapply_mutes(g);
+            if (g->interactive_ok)
+                reapply_mutes(g);
+            if (g->on_loop_pattern)
+                g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
             g->prev_row = -1;
         }
     }
     else if (g->has_queued_jump) {
         openmpt_module_set_position_order_row(g->mod, g->queued_order, g->queued_row);
-        if (g->interactive_ok) reapply_mutes(g);
+        if (g->interactive_ok)
+            reapply_mutes(g);
         g->has_queued_jump = 0;
         g->prev_row = -1;
     }
@@ -399,9 +404,9 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
     }
 
     // --- Detect song loop event ---
+    int num_orders = openmpt_module_get_num_orders(g->mod);
     if (g->last_playback_order != -1) {
-        if ((cur_order < g->last_playback_order) ||
-            (cur_order == 0 && g->last_playback_order != 0)) {
+        if (g->last_playback_order == num_orders - 1 && cur_order == 0) {
             if (g->on_loop_song) {
                 g->on_loop_song(g->callback_userdata);
             }
