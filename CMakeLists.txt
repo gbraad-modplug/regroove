@@ -18,6 +18,7 @@ add_executable(regroove-tui
     main-tui.c
     regroove.c
     midi.c
+    input_mappings.c
 )
 
 target_include_directories(regroove-tui PRIVATE
@@ -43,6 +44,7 @@ add_executable(regroove-gui
     main-gui.cpp
     regroove.c
     midi.c
+    input_mappings.c
     imgui/imgui.cpp
     imgui/imgui_draw.cpp
     imgui/imgui_tables.cpp

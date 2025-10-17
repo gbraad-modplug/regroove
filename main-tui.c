@@ -10,6 +10,7 @@
 #include <SDL.h>
 #include "regroove.h"
 #include "midi.h"
+#include "input_mappings.h"
 
 #define MAX_FILES 4096
 #define MAX_PATH 1024
@@ -136,12 +137,16 @@ typedef struct {
     int num_channels;
     FileList *files;
     int files_active;
+    InputMappings *input_mappings;
 } MidiContext;
 static MidiContext midi_ctx = {0};
 
 // --- Only one set of global callbacks and spec ---
 struct RegrooveCallbacks global_cbs;
 SDL_AudioSpec global_spec;
+
+// --- Global pitch control ---
+static double global_pitch = 1.0;
 
 // --- Centralized module loader ---
 static int load_module(const char *path, SDL_AudioSpec *spec, struct RegrooveCallbacks *cbs) {
@@ -257,74 +262,128 @@ void control_unmute_all(void) {
     printf("All channels unmuted\n");
 }
 void control_pitch_up(void) {
-    static double pitch = 1.0;
     if (!g) return;
 
-    if (pitch < 3.0) pitch += 0.01;
-    regroove_set_pitch(g, pitch);
-    printf("Pitch factor: %.2f\n", pitch);
+    if (global_pitch < 3.0) global_pitch += 0.01;
+    regroove_set_pitch(g, global_pitch);
+    printf("Pitch factor: %.2f\n", global_pitch);
 }
 void control_pitch_down(void) {
-    static double pitch = 1.0;
     if (!g) return;
 
-    if (pitch > 0.25) pitch -= 0.01;
-    regroove_set_pitch(g, pitch);
-    printf("Pitch factor: %.2f\n", pitch);
+    if (global_pitch > 0.25) global_pitch -= 0.01;
+    regroove_set_pitch(g, global_pitch);
+    printf("Pitch factor: %.2f\n", global_pitch);
 }
 
-// --- MIDI HANDLING: uses unified control functions and ONLY g ---
+// --- Unified Input Event Handler ---
+void handle_input_event(InputEvent *event) {
+    if (!event || event->action == ACTION_NONE) return;
+
+    switch (event->action) {
+        case ACTION_PLAY_PAUSE:
+            control_play_pause(midi_ctx.paused);
+            break;
+        case ACTION_PLAY:
+            if (midi_ctx.paused) control_play_pause(1);
+            break;
+        case ACTION_STOP:
+            if (!midi_ctx.paused) control_play_pause(0);
+            break;
+        case ACTION_RETRIGGER:
+            control_retrigger();
+            break;
+        case ACTION_NEXT_ORDER:
+            control_next_order();
+            break;
+        case ACTION_PREV_ORDER:
+            control_prev_order();
+            break;
+        case ACTION_LOOP_TILL_ROW:
+            control_loop_till_row();
+            break;
+        case ACTION_HALVE_LOOP:
+            control_halve_loop();
+            break;
+        case ACTION_FULL_LOOP:
+            control_full_loop();
+            break;
+        case ACTION_PATTERN_MODE_TOGGLE:
+            control_pattern_mode_toggle();
+            break;
+        case ACTION_MUTE_ALL:
+            control_mute_all();
+            break;
+        case ACTION_UNMUTE_ALL:
+            control_unmute_all();
+            break;
+        case ACTION_PITCH_UP:
+            control_pitch_up();
+            break;
+        case ACTION_PITCH_DOWN:
+            control_pitch_down();
+            break;
+        case ACTION_QUIT:
+            running = 0;
+            break;
+        case ACTION_FILE_PREV:
+            if (midi_ctx.files_active) {
+                midi_ctx.files->current--;
+                if (midi_ctx.files->current < 0)
+                    midi_ctx.files->current = midi_ctx.files->count - 1;
+                printf("File: %s\n", midi_ctx.files->names[midi_ctx.files->current]);
+            }
+            break;
+        case ACTION_FILE_NEXT:
+            if (midi_ctx.files_active) {
+                midi_ctx.files->current++;
+                if (midi_ctx.files->current >= midi_ctx.files->count)
+                    midi_ctx.files->current = 0;
+                printf("File: %s\n", midi_ctx.files->names[midi_ctx.files->current]);
+            }
+            break;
+        case ACTION_FILE_LOAD:
+            if (midi_ctx.files_active) {
+                char path[MAX_PATH * 2];
+                snprintf(path, sizeof(path), "%s/%s",
+                        midi_ctx.files->dirpath,
+                        midi_ctx.files->names[midi_ctx.files->current]);
+                load_module(path, &global_spec, &global_cbs);
+            }
+            break;
+        case ACTION_CHANNEL_MUTE:
+            if (event->parameter < midi_ctx.num_channels) {
+                control_channel_mute(event->parameter);
+            }
+            break;
+        case ACTION_CHANNEL_SOLO:
+            if (g && event->parameter < midi_ctx.num_channels) {
+                regroove_toggle_channel_solo(g, event->parameter);
+                printf("Channel %d solo toggled\n", event->parameter + 1);
+            }
+            break;
+        case ACTION_CHANNEL_VOLUME:
+            if (g && event->parameter < midi_ctx.num_channels) {
+                double vol = event->value / 127.0;
+                regroove_set_channel_volume(g, event->parameter, vol);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+// --- MIDI HANDLING: uses unified control functions and InputMappings ---
 void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value, void *userdata) {
     MidiContext *ctx = (MidiContext *)userdata;
-    // File browsing
-    if ((status & 0xF0) == 0xB0) {
-        if (ctx->files_active) {
-            if (cc == 61 && value >= 64) {
-                ctx->files->current--;
-                if (ctx->files->current < 0) ctx->files->current = ctx->files->count - 1;
-                printf("[MIDI] File: %s\n", ctx->files->names[ctx->files->current]);
-                return;
-            } else if (cc == 62 && value >= 64) {
-                ctx->files->current++;
-                if (ctx->files->current >= ctx->files->count) ctx->files->current = 0;
-                printf("[MIDI] File: %s\n", ctx->files->names[ctx->files->current]);
-                return;
-            } else if (cc == 60 && value >= 64) {
-                char path[MAX_PATH * 2];
-                snprintf(path, sizeof(path), "%s/%s", ctx->files->dirpath, ctx->files->names[ctx->files->current]);
-                load_module(path, &global_spec, &global_cbs);
-                return;
-            }
-        }
-        // Channel and global controls
-        if (cc >= 32 && cc < 32 + 8) { // SOLO
-            int ch = cc - 32;
-            if (ch < midi_ctx.num_channels && value >= 64)
-                regroove_toggle_channel_solo(g, ch);
-        } else if (cc >= 48 && cc < 48 + midi_ctx.num_channels) { // MUTE
-            int ch = cc - 48;
-            if (ch < midi_ctx.num_channels && value >= 64)
-                control_channel_mute(ch);
-        } else if (cc >= 0 && cc < midi_ctx.num_channels) { // VOLUME
-            double vol = value / 127.0;
-            regroove_set_channel_volume(g, cc, vol);
-        } else switch (cc) {
-            case 41: // Play
-                if (value >= 64 && midi_ctx.paused) control_play_pause(1);
-                break;
-            case 42: // Stop
-                if (value >= 64 && !midi_ctx.paused) control_play_pause(0);
-                break;
-            case 46: // Pattern mode toggle
-                if (value >= 64) control_pattern_mode_toggle();
-                break;
-            case 44: // Next order
-                if (value >= 64) control_next_order();
-                break;
-            case 43: // Prev order
-                if (value >= 64) control_prev_order();
-                break;
-        }
+
+    // Only handle Control Change messages
+    if ((status & 0xF0) != 0xB0) return;
+
+    // Query input mappings
+    InputEvent event;
+    if (ctx->input_mappings && input_mappings_get_midi_event(ctx->input_mappings, cc, value, &event)) {
+        handle_input_event(&event);
     }
 }
 
@@ -389,10 +448,26 @@ int main(int argc, char *argv[]) {
     spec.userdata = NULL;
     global_spec = spec;
 
+    // Initialize input mappings
+    InputMappings *input_mappings = input_mappings_create();
+    if (!input_mappings) {
+        fprintf(stderr, "Failed to create input mappings\n");
+        return 1;
+    }
+
+    // Try to load custom mappings from regroove.ini
+    if (input_mappings_load(input_mappings, "regroove.ini") != 0) {
+        printf("No regroove.ini found, using default mappings\n");
+        input_mappings_reset_defaults(input_mappings);
+    } else {
+        printf("Loaded input mappings from regroove.ini\n");
+    }
+
     midi_ctx.files = &files;
     midi_ctx.files_active = files_active;
     midi_ctx.paused = 1;
     midi_ctx.num_channels = 0;
+    midi_ctx.input_mappings = input_mappings;
 
     struct RegrooveCallbacks cbs = {
         .on_order_change = my_order_callback,
@@ -436,40 +511,11 @@ int main(int argc, char *argv[]) {
 
     while (running) {
         int k = read_key_nonblocking();
-        if (files_active) {
-            // Directory navigation via keyboard: [ and ]
-            if (k == '[') {
-                files.current--;
-                if (files.current < 0) files.current = files.count - 1;
-                printf("File: %s\n", files.names[files.current]);
-            } else if (k == ']') {
-                files.current++;
-                if (files.current >= files.count) files.current = 0;
-                printf("File: %s\n", files.names[files.current]);
-            } else if (k == '\n' || k == '\r') { // ENTER = load
-                char path[MAX_PATH * 2];
-                snprintf(path, sizeof(path), "%s/%s", files.dirpath, files.names[files.current]);
-                load_module(path, &global_spec, &global_cbs);
-            }
-        }
         if (k != -1) {
-            switch (k) {
-                case 27: case 'q': case 'Q': running = 0; break;
-                case ' ': control_play_pause(midi_ctx.paused); break;
-                case 'r': case 'R': control_retrigger(); break;
-                case 'N': case 'n': control_next_order(); break;
-                case 'P': case 'p': control_prev_order(); break;
-                case 'j': case 'J': control_loop_till_row(); break;
-                case 'h': case 'H': control_halve_loop(); break;
-                case 'f': case 'F': control_full_loop(); break;
-                case 'S': case 's': control_pattern_mode_toggle(); break;
-                case 'm': case 'M': control_mute_all(); break;
-                case 'u': case 'U': control_unmute_all(); break;
-                case '+': case '=': control_pitch_up(); break;
-                case '-': control_pitch_down(); break;
-                default:
-                    if (k >= '1' && k <= '9')
-                        control_channel_mute(k - '1');
+            // Query input mappings for keyboard event
+            InputEvent event;
+            if (input_mappings_get_keyboard_event(input_mappings, k, &event)) {
+                handle_input_event(&event);
             }
         }
         if (g) regroove_process_commands(g);
@@ -491,6 +537,7 @@ int main(int argc, char *argv[]) {
     }
 
     SDL_CloseAudio();
+    input_mappings_destroy(input_mappings);
     free_filelist(&files);
     SDL_Quit();
     return 0;
