@@ -27,7 +27,7 @@ cmake --build . --target regroove-gui
 #### Console version with MIDI
 
 ```sh
-gcc -o regroove-tui main.c regroove.c midi.c \
+gcc -o regroove-tui main-tui.c regroove.c midi.c \
     $(pkg-config --cflags --libs sdl2 libopenmpt rtmidi)
 ```
 

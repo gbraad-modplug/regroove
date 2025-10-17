@@ -15,7 +15,7 @@ pkg_check_modules(RTMIDI REQUIRED rtmidi)
 
 # Console version with MIDI
 add_executable(regroove-tui
-    main.c
+    main-tui.c
     regroove.c
     midi.c
 )
