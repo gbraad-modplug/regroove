@@ -2,7 +2,7 @@
 #define REGROOVE_COMMON_H
 
 #include <stddef.h>
-#include "regroove.h"
+#include "regroove_engine.h"
 #include "input_mappings.h"
 
 #ifdef __cplusplus

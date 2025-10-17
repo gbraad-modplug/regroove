@@ -16,7 +16,7 @@ pkg_check_modules(RTMIDI REQUIRED rtmidi)
 # Console version with MIDI
 add_executable(regroove-tui
     main-tui.c
-    regroove.c
+    regroove_engine.c
     regroove_common.c
     midi.c
     input_mappings.c
@@ -43,7 +43,7 @@ target_compile_options(regroove-tui PRIVATE
 # GUI version
 add_executable(regroove-gui
     main-gui.cpp
-    regroove.c
+    regroove_engine.c
     regroove_common.c
     midi.c
     input_mappings.c
