@@ -8,10 +8,10 @@
 #include <string>
 #include <cmath>
 #include <vector>
-#include <filesystem> // C++17
+#include <sys/stat.h>
 
 extern "C" {
-#include "regroove.h"
+#include "regroove_common.h"
 #include "midi.h"
 }
 
@@ -30,9 +30,10 @@ static int current_step = 0;
 static bool loop_enabled = false;
 static bool playing = false;
 static int pattern = 1, order = 1, total_rows = 64;
-static std::string mod_dir = ".";
 static float loop_blink = 0.0f;
-Regroove *g_regroove = NULL;
+
+// Shared state
+static RegrooveCommonState *common_state = NULL;
 
 // Clamp helper
 template<typename T>
@@ -51,10 +52,10 @@ static float MapPitchFader(float slider_val) {
 }
 
 void update_channel_mute_states() {
-    if (!g_regroove) return;
-    int num_channels = regroove_get_num_channels(g_regroove);
+    if (!common_state || !common_state->player) return;
+    int num_channels = regroove_get_num_channels(common_state->player);
     for (int i = 0; i < 8 && i < num_channels; ++i) {
-        channels[i].mute = regroove_is_channel_muted(g_regroove, i);
+        channels[i].mute = regroove_is_channel_muted(common_state->player, i);
     }
 }
 
@@ -74,8 +75,8 @@ static void my_order_callback(int ord, int pat, void *userdata) {
     //printf("[SONG] Now at Order %d (Pattern %d)\n", ord, pat);
     order = ord;
     pattern = pat;
-    if (g_regroove)
-        total_rows = regroove_get_full_pattern_rows(g_regroove);
+    if (common_state && common_state->player)
+        total_rows = regroove_get_full_pattern_rows(common_state->player);
 }
 
 static void my_loop_pattern_callback(int order, int pattern, void *userdata) {
@@ -93,43 +94,8 @@ static void my_loop_song_callback(void *userdata) {
 // -----------------------------------------------------------------------------
 
 static constexpr int MAX_FILENAME_LEN = 16;
-static const std::vector<std::string> allowed_exts = {
-    ".mod", ".xm", ".it", ".s3m", ".med", ".mmd", ".mmd1", ".mmd2", ".mmd3"
-    // TODO: add more as needed, matching what libopenmpt/modplug supports
-};
-static std::vector<std::string> module_files;
-static int selected_module_index = 0;
-
-namespace fs = std::filesystem;
-void scan_module_files(const std::string& directory) {
-    module_files.clear();
-    for (const auto& entry : fs::directory_iterator(directory)) {
-        if (entry.is_regular_file()) {
-            std::string ext = entry.path().extension().string();
-            for (const auto& allowed : allowed_exts) {
-                if (ext == allowed) {
-                    module_files.push_back(entry.path().filename().string());
-                    break;
-                }
-            }
-        }
-    }
-    selected_module_index = 0;
-}
 
 static int load_module(const char *path) {
-    SDL_LockAudio();
-    if (g_regroove) {
-        Regroove *old = g_regroove;
-        g_regroove = NULL;
-        SDL_UnlockAudio();
-        regroove_destroy(old);
-    } else {
-        SDL_UnlockAudio();
-    }
-    Regroove *mod = regroove_create(path, 48000.0);
-    if (!mod) return -1;
-    SDL_LockAudio(); g_regroove = mod; SDL_UnlockAudio();
     struct RegrooveCallbacks cbs = {
         .on_order_change = my_order_callback,
         .on_row_change = my_row_callback,
@@ -137,7 +103,12 @@ static int load_module(const char *path) {
         .on_loop_song = my_loop_song_callback,
         .userdata = NULL
     };
-    regroove_set_callbacks(mod, &cbs);
+
+    if (regroove_common_load_module(common_state, path, &cbs) != 0) {
+        return -1;
+    }
+
+    Regroove *mod = common_state->player;
     int num_channels = regroove_get_num_channels(mod);
 
     for (int i = 0; i < 16; ++i) step_fade[i] = 0.0f;
@@ -170,7 +141,7 @@ static int load_module(const char *path) {
 // -----------------------------------------------------------------------------
 // Unified Input Actions
 // -----------------------------------------------------------------------------
-enum InputAction {
+enum GuiAction {
     ACT_PLAY,
     ACT_STOP,
     ACT_TOGGLE_LOOP,
@@ -179,50 +150,59 @@ enum InputAction {
     ACT_RETRIGGER,
     ACT_SET_PITCH,
     ACT_PITCH_RESET,
+    ACT_PITCH_UP,
+    ACT_PITCH_DOWN,
     ACT_SET_LOOP_ROWS,
+    ACT_LOOP_TILL_ROW,
+    ACT_HALVE_LOOP,
+    ACT_FULL_LOOP,
     ACT_MUTE_CHANNEL,
     ACT_SOLO_CHANNEL,
-    ACT_VOLUME_CHANNEL
+    ACT_VOLUME_CHANNEL,
+    ACT_MUTE_ALL,
+    ACT_UNMUTE_ALL
 };
 
-void dispatch_action(InputAction act, int arg1 = -1, float arg2 = 0.0f) {
+void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
+    Regroove *mod = common_state ? common_state->player : NULL;
+
     switch (act) {
         case ACT_PLAY:
-            if (g_regroove) {
+            if (mod) {
                 SDL_PauseAudio(0);
                 playing = true;
             }
             break;
         case ACT_STOP:
-            if (g_regroove) {
+            if (mod) {
                 SDL_PauseAudio(1);
                 playing = false;
             }
             break;
         case ACT_TOGGLE_LOOP:
-            if (g_regroove) {
+            if (mod) {
                 loop_enabled = !loop_enabled;
-                regroove_pattern_mode(g_regroove, loop_enabled ? 1 : 0);
+                regroove_pattern_mode(mod, loop_enabled ? 1 : 0);
             }
             break;
         case ACT_NEXT_ORDER:
-            if (g_regroove) regroove_queue_next_order(g_regroove);
+            if (mod) regroove_queue_next_order(mod);
             break;
         case ACT_PREV_ORDER:
-            if (g_regroove) regroove_queue_prev_order(g_regroove);
+            if (mod) regroove_queue_prev_order(mod);
             break;
         case ACT_RETRIGGER:
-            if (g_regroove) {
+            if (mod) {
                 //SDL_PauseAudio(1);  // TODO: retrigger causes a double free
-                regroove_retrigger_pattern(g_regroove);
+                regroove_retrigger_pattern(mod);
                 //SDL_PauseAudio(0);
                 update_channel_mute_states();
             }
             break;
         case ACT_SET_PITCH: {
-            if (g_regroove) {
+            if (mod) {
                 float mapped_pitch = MapPitchFader(arg2);
-                regroove_set_pitch(g_regroove, mapped_pitch);
+                regroove_set_pitch(mod, mapped_pitch);
                 pitch_slider = arg2;
             }
             break;
@@ -231,21 +211,59 @@ void dispatch_action(InputAction act, int arg1 = -1, float arg2 = 0.0f) {
             pitch_slider = 0.0f;
             dispatch_action(ACT_SET_PITCH, -1, 0.0f);
             break;
+        case ACT_PITCH_UP:
+            if (mod) {
+                // Increment pitch slider by small amount (0.01 = ~1% of range)
+                pitch_slider += 0.01f;
+                if (pitch_slider > 1.0f) pitch_slider = 1.0f;
+                float mapped_pitch = MapPitchFader(pitch_slider);
+                regroove_set_pitch(mod, mapped_pitch);
+            }
+            break;
+        case ACT_PITCH_DOWN:
+            if (mod) {
+                // Decrement pitch slider by small amount
+                pitch_slider -= 0.01f;
+                if (pitch_slider < -1.0f) pitch_slider = -1.0f;
+                float mapped_pitch = MapPitchFader(pitch_slider);
+                regroove_set_pitch(mod, mapped_pitch);
+            }
+            break;
         case ACT_SET_LOOP_ROWS:
-            if (g_regroove && total_rows > 0) {
+            if (mod && total_rows > 0) {
                 int step_index = arg1;
                 if (step_index == 15) {
-                    regroove_set_custom_loop_rows(g_regroove, 0);
+                    regroove_set_custom_loop_rows(mod, 0);
                 } else {
                     int rows_per_step = total_rows / 16;
                     if (rows_per_step < 1) rows_per_step = 1;
                     int loop_rows = (step_index + 1) * rows_per_step;
-                    regroove_set_custom_loop_rows(g_regroove, loop_rows);
+                    regroove_set_custom_loop_rows(mod, loop_rows);
                 }
             }
             break;
+        case ACT_LOOP_TILL_ROW:
+            if (mod) {
+                int current_row = regroove_get_current_row(mod);
+                regroove_loop_till_row(mod, current_row);
+            }
+            break;
+        case ACT_HALVE_LOOP:
+            if (mod && total_rows > 0) {
+                int rows = regroove_get_custom_loop_rows(mod) > 0 ?
+                    regroove_get_custom_loop_rows(mod) :
+                    total_rows;
+                int halved = rows / 2 < 1 ? 1 : rows / 2;
+                regroove_set_custom_loop_rows(mod, halved);
+            }
+            break;
+        case ACT_FULL_LOOP:
+            if (mod) {
+                regroove_set_custom_loop_rows(mod, 0);
+            }
+            break;
         case ACT_SOLO_CHANNEL: {
-            if (g_regroove && arg1 >= 0 && arg1 < 8) {
+            if (mod && arg1 >= 0 && arg1 < 8) {
                 bool wasSolo = channels[arg1].solo;
 
                 // Clear all solo states
@@ -254,135 +272,217 @@ void dispatch_action(InputAction act, int arg1 = -1, float arg2 = 0.0f) {
                 if (!wasSolo) {
                     // New solo: set this channel solo, mute all, unmute this one
                     channels[arg1].solo = true;
-                    regroove_mute_all(g_regroove);
+                    regroove_mute_all(mod);
                     for (int i = 0; i < 8; ++i) channels[i].mute = true;
                     // Unmute soloed channel
-                    regroove_toggle_channel_mute(g_regroove, arg1);
+                    regroove_toggle_channel_mute(mod, arg1);
                     channels[arg1].mute = false;
                 } else {
                     // Un-solo: unmute all
-                    regroove_unmute_all(g_regroove);
+                    regroove_unmute_all(mod);
                     for (int i = 0; i < 8; ++i) channels[i].mute = false;
                 }
             }
             break;
         }
         case ACT_MUTE_CHANNEL: {
-            if (g_regroove && arg1 >= 0 && arg1 < 8) {
+            if (mod && arg1 >= 0 && arg1 < 8) {
                 // If soloed, un-solo and unmute all
                 if (channels[arg1].solo) {
                     channels[arg1].solo = false;
-                    regroove_unmute_all(g_regroove);
+                    regroove_unmute_all(mod);
                     for (int i = 0; i < 8; ++i) channels[i].mute = false;
                 } else {
                     // Toggle mute just for this channel
                     channels[arg1].mute = !channels[arg1].mute;
-                    regroove_toggle_channel_mute(g_regroove, arg1);
+                    regroove_toggle_channel_mute(mod, arg1);
                 }
             }
             break;
         }
         case ACT_VOLUME_CHANNEL:
-            if (g_regroove && arg1 >= 0 && arg1 < 8) {
-                regroove_set_channel_volume(g_regroove, arg1, (double)arg2);
+            if (mod && arg1 >= 0 && arg1 < 8) {
+                regroove_set_channel_volume(mod, arg1, (double)arg2);
                 channels[arg1].volume = arg2;
+            }
+            break;
+        case ACT_MUTE_ALL:
+            if (mod) {
+                regroove_mute_all(mod);
+                for (int i = 0; i < 8; ++i) {
+                    channels[i].mute = true;
+                    channels[i].solo = false;
+                }
+            }
+            break;
+        case ACT_UNMUTE_ALL:
+            if (mod) {
+                regroove_unmute_all(mod);
+                for (int i = 0; i < 8; ++i) {
+                    channels[i].mute = false;
+                    channels[i].solo = false;
+                }
             }
             break;
     }
 }
 
 // -----------------------------------------------------------------------------
-// Input Mapping
+// Input Mapping - Convert InputAction to GuiAction
 // -----------------------------------------------------------------------------
+static void handle_input_event(InputEvent *event) {
+    if (!event || event->action == ACTION_NONE) return;
+
+    switch (event->action) {
+        case ACTION_PLAY_PAUSE:
+            dispatch_action(playing ? ACT_STOP : ACT_PLAY);
+            break;
+        case ACTION_PLAY:
+            dispatch_action(ACT_PLAY);
+            break;
+        case ACTION_STOP:
+            dispatch_action(ACT_STOP);
+            break;
+        case ACTION_RETRIGGER:
+            dispatch_action(ACT_RETRIGGER);
+            break;
+        case ACTION_NEXT_ORDER:
+            dispatch_action(ACT_NEXT_ORDER);
+            break;
+        case ACTION_PREV_ORDER:
+            dispatch_action(ACT_PREV_ORDER);
+            break;
+        case ACTION_LOOP_TILL_ROW:
+            dispatch_action(ACT_LOOP_TILL_ROW);
+            break;
+        case ACTION_HALVE_LOOP:
+            dispatch_action(ACT_HALVE_LOOP);
+            break;
+        case ACTION_FULL_LOOP:
+            dispatch_action(ACT_FULL_LOOP);
+            break;
+        case ACTION_PATTERN_MODE_TOGGLE:
+            dispatch_action(ACT_TOGGLE_LOOP);
+            break;
+        case ACTION_MUTE_ALL:
+            dispatch_action(ACT_MUTE_ALL);
+            break;
+        case ACTION_UNMUTE_ALL:
+            dispatch_action(ACT_UNMUTE_ALL);
+            break;
+        case ACTION_PITCH_UP:
+            dispatch_action(ACT_PITCH_UP);
+            break;
+        case ACTION_PITCH_DOWN:
+            dispatch_action(ACT_PITCH_DOWN);
+            break;
+        case ACTION_QUIT:
+            {
+                SDL_Event quit;
+                quit.type = SDL_QUIT;
+                SDL_PushEvent(&quit);
+            }
+            break;
+        case ACTION_FILE_PREV:
+            if (common_state && common_state->file_list) {
+                regroove_filelist_prev(common_state->file_list);
+            }
+            break;
+        case ACTION_FILE_NEXT:
+            if (common_state && common_state->file_list) {
+                regroove_filelist_next(common_state->file_list);
+            }
+            break;
+        case ACTION_FILE_LOAD:
+            if (common_state && common_state->file_list) {
+                char path[COMMON_MAX_PATH * 2];
+                regroove_filelist_get_current_path(common_state->file_list, path, sizeof(path));
+                load_module(path);
+            }
+            break;
+        case ACTION_CHANNEL_MUTE:
+            dispatch_action(ACT_MUTE_CHANNEL, event->parameter);
+            break;
+        case ACTION_CHANNEL_SOLO:
+            dispatch_action(ACT_SOLO_CHANNEL, event->parameter);
+            break;
+        case ACTION_CHANNEL_VOLUME:
+            dispatch_action(ACT_VOLUME_CHANNEL, event->parameter, event->value / 127.0f);
+            break;
+        default:
+            break;
+    }
+}
+
 void handle_keyboard(SDL_Event &e, SDL_Window *window) {
     if (e.type != SDL_KEYDOWN) return;
-    switch (e.key.keysym.sym) {
-        // Regroove controls
-        case SDLK_SPACE: dispatch_action(playing ? ACT_STOP : ACT_PLAY); break;
-        case SDLK_l: dispatch_action(ACT_TOGGLE_LOOP); break;
-        case SDLK_n: dispatch_action(ACT_NEXT_ORDER); break;
-        case SDLK_p: dispatch_action(ACT_PREV_ORDER); break;
-        case SDLK_r: dispatch_action(ACT_RETRIGGER); break;
-        case SDLK_1: case SDLK_2: case SDLK_3: case SDLK_4:
-        case SDLK_5: case SDLK_6: case SDLK_7: case SDLK_8:
-            dispatch_action(ACT_MUTE_CHANNEL, e.key.keysym.sym - SDLK_1);
-            break;
-        // Application controls
-        case SDLK_F11:
-            if (window) {
-                Uint32 flags = SDL_GetWindowFlags(window);
-                if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) {
-                    SDL_SetWindowFullscreen(window, 0); // Exit fullscreen
-                } else {
-                    SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP); // Enter fullscreen
-                }
+
+    // Handle special GUI-only keys first
+    if (e.key.keysym.sym == SDLK_F11) {
+        if (window) {
+            Uint32 flags = SDL_GetWindowFlags(window);
+            if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) {
+                SDL_SetWindowFullscreen(window, 0);
+            } else {
+                SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
             }
-            break;
-        case SDLK_ESCAPE: case SDLK_q: {
-            SDL_Event quit; quit.type = SDL_QUIT; SDL_PushEvent(&quit); break;
         }
-        // File loading
-        case SDLK_LEFTBRACKET: // '['
-            if (!module_files.empty()) {
-                selected_module_index = (selected_module_index - 1 + module_files.size()) % module_files.size();
-            }
-            break;
-        case SDLK_RIGHTBRACKET: // ']'
-            if (!module_files.empty()) {
-                selected_module_index = (selected_module_index + 1) % module_files.size();
-            }
-            break;
-        case SDLK_RETURN: // ENTER
-            if (!module_files.empty()) {
-                std::string full_path = mod_dir + "/" + module_files[selected_module_index];
-                load_module(full_path.c_str());
-            }
-            break;
+        return;
+    }
+
+    // Convert SDL key to character for input mappings
+    int key = e.key.keysym.sym;
+
+    if (key >= SDLK_a && key <= SDLK_z) {
+        // Convert to lowercase character
+        key = 'a' + (key - SDLK_a);
+    } else if (key >= SDLK_0 && key <= SDLK_9) {
+        key = '0' + (key - SDLK_0);
+    } else if (key >= SDLK_KP_1 && key <= SDLK_KP_9) {
+        // Map numpad 1-9 to character codes
+        key = '1' + (key - SDLK_KP_1);
+    } else if (key == SDLK_KP_0) {
+        // Map numpad 0 separately
+        key = '0';
+    } else {
+        // Map special keys
+        switch (key) {
+            case SDLK_SPACE: key = ' '; break;
+            case SDLK_ESCAPE: key = 27; break;
+            case SDLK_RETURN: key = '\n'; break;
+            case SDLK_KP_ENTER: key = '\n'; break;
+            case SDLK_LEFTBRACKET: key = '['; break;
+            case SDLK_RIGHTBRACKET: key = ']'; break;
+            case SDLK_MINUS: key = '-'; break;
+            case SDLK_KP_MINUS: key = '-'; break;
+            case SDLK_EQUALS: key = '='; break;
+            case SDLK_PLUS: key = '+'; break;
+            case SDLK_KP_PLUS: key = '+'; break;
+            default: return; // Unsupported key
+        }
+    }
+
+    // Query input mappings
+    if (common_state && common_state->input_mappings) {
+        InputEvent event;
+        if (input_mappings_get_keyboard_event(common_state->input_mappings, key, &event)) {
+            handle_input_event(&event);
+        }
     }
 }
 
 void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value, void *userdata) {
+    (void)userdata;
+
+    // Only handle Control Change messages
     if ((status & 0xF0) != 0xB0) return;
-    switch (cc) {
-        case 41:
-        if (value >= 64)
-            if (playing) {
-                dispatch_action(ACT_RETRIGGER);
-            } else {
-                dispatch_action(ACT_PLAY);
-            }
-            break;
-        case 42: if (value >= 64) dispatch_action(ACT_STOP); break;
-        case 46: if (value >= 64) dispatch_action(ACT_TOGGLE_LOOP); break;
-        case 44: if (value >= 64) dispatch_action(ACT_NEXT_ORDER); break;
-        case 43: if (value >= 64) dispatch_action(ACT_PREV_ORDER); break;
-        // File loading
-        case 61: // previous file
-            if (value >= 64 && !module_files.empty()) {
-                selected_module_index = (selected_module_index - 1 + module_files.size()) % module_files.size();
-            }
-            break;
-        case 62: // next file
-            if (value >= 64 && !module_files.empty()) {
-                selected_module_index = (selected_module_index + 1) % module_files.size();
-            }
-            break;
-        case 60: // confirm/load
-            if (value >= 64 && !module_files.empty()) {
-                std::string full_path = mod_dir + "/" + module_files[selected_module_index];
-                load_module(full_path.c_str());
-            }
-            break;
-        // channel controls
-        default:
-            if (cc >= 32 && cc < 40 && value >= 64)
-                dispatch_action(ACT_SOLO_CHANNEL, cc - 32);
-            else if (cc >= 48 && cc < 56 && value >= 64)
-                dispatch_action(ACT_MUTE_CHANNEL, cc - 48);
-            else if (cc >= 0 && cc < 8)
-                dispatch_action(ACT_VOLUME_CHANNEL, cc, value / 127.0f);
-            else if (cc == 8) // pitch fader
-                dispatch_action(ACT_SET_PITCH, -1, (value - 63.5f) / 63.5f);
+
+    // Query input mappings
+    if (common_state && common_state->input_mappings) {
+        InputEvent event;
+        if (input_mappings_get_midi_event(common_state->input_mappings, cc, value, &event)) {
+            handle_input_event(&event);
+        }
     }
 }
 
@@ -390,13 +490,13 @@ void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value
 // Audio Callback
 // -----------------------------------------------------------------------------
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
-    if (!g_regroove) {
+    if (!common_state || !common_state->player) {
         memset(stream, 0, len);
         return;
     }
     int16_t *buffer = (int16_t *)stream;
     int frames = len / (2 * sizeof(int16_t));
-    regroove_render_audio(g_regroove, buffer, frames);
+    regroove_render_audio(common_state->player, buffer, frames);
 }
 
 // -----------------------------------------------------------------------------
@@ -511,9 +611,10 @@ static void ShowMainUI() {
 
         // Include truncated file name
         const char* file_disp = "";
-        if (!module_files.empty()) {
+        if (common_state && common_state->file_list && common_state->file_list->count > 0) {
             static char truncated[MAX_FILENAME_LEN + 1];
-            std::strncpy(truncated, module_files[selected_module_index].c_str(), MAX_FILENAME_LEN);
+            const char* current_file = common_state->file_list->filenames[common_state->file_list->current_index];
+            std::strncpy(truncated, current_file, MAX_FILENAME_LEN);
             truncated[MAX_FILENAME_LEN] = 0;
             file_disp = truncated;
         }
@@ -532,25 +633,25 @@ static void ShowMainUI() {
     // File browser buttons
     ImGui::BeginGroup();
     if (ImGui::Button("<", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        if (!module_files.empty()) {
-            selected_module_index = (selected_module_index - 1 + module_files.size()) % module_files.size();
+        if (common_state && common_state->file_list) {
+            regroove_filelist_prev(common_state->file_list);
         }
     }
     ImGui::SameLine();
     if (ImGui::Button("o", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        if (!module_files.empty()) {
-            std::string full_path = mod_dir + "/" + module_files[selected_module_index];
-            load_module(full_path.c_str());
+        if (common_state && common_state->file_list) {
+            char path[COMMON_MAX_PATH * 2];
+            regroove_filelist_get_current_path(common_state->file_list, path, sizeof(path));
+            load_module(path);
         }
     }
     ImGui::SameLine();
     if (ImGui::Button(">", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        if (!module_files.empty()) {
-            selected_module_index = (selected_module_index + 1) % module_files.size();
+        if (common_state && common_state->file_list) {
+            regroove_filelist_next(common_state->file_list);
         }
     }
     ImGui::EndGroup();
-
     ImGui::Dummy(ImVec2(0, 8.0f));
 
     // STOP BUTTON
@@ -733,18 +834,46 @@ int main(int argc, char* argv[]) {
         else if (!module_path) module_path = argv[i];
     }
     if (!module_path) {
-        fprintf(stderr, "Usage: %s file.mod [-m mididevice]\n", argv[0]);
+        fprintf(stderr, "Usage: %s directory|file.mod [-m mididevice]\n", argv[0]);
         return 1;
     }
 
-    // For file loading
-    if (module_path) {
-        fs::path p(module_path);
-        if (p.has_parent_path())
-            mod_dir = p.parent_path().string();
-        else
-            mod_dir = ".";
-        scan_module_files(mod_dir);
+    // Create common state
+    common_state = regroove_common_create();
+    if (!common_state) {
+        fprintf(stderr, "Failed to create common state\n");
+        return 1;
+    }
+
+    // Load input mappings from regroove.ini
+    if (regroove_common_load_mappings(common_state, "regroove.ini") != 0) {
+        printf("No regroove.ini found, using default mappings\n");
+    } else {
+        printf("Loaded input mappings from regroove.ini\n");
+    }
+
+    // Load file list from directory
+    std::string dir_path;
+    struct stat st;
+    if (stat(module_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        // It's a directory
+        dir_path = module_path;
+    } else {
+        // It's a file, get the parent directory
+        size_t last_slash = std::string(module_path).find_last_of("/\\");
+        if (last_slash != std::string::npos) {
+            dir_path = std::string(module_path).substr(0, last_slash);
+        } else {
+            dir_path = ".";
+        }
+    }
+
+    common_state->file_list = regroove_filelist_create();
+    if (!common_state->file_list ||
+        regroove_filelist_load(common_state->file_list, dir_path.c_str()) <= 0) {
+        fprintf(stderr, "Failed to load file list from directory: %s\n", dir_path.c_str());
+        regroove_common_destroy(common_state);
+        return 1;
     }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) return 1;
@@ -784,7 +913,7 @@ int main(int argc, char* argv[]) {
             if (e.type == SDL_QUIT) running = false;
             handle_keyboard(e, window); // unified handler!
         }
-        if (g_regroove) regroove_process_commands(g_regroove);
+        if (common_state && common_state->player) regroove_process_commands(common_state->player);
         ImGui_ImplOpenGL2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
@@ -800,13 +929,13 @@ int main(int argc, char* argv[]) {
     }
     midi_deinit();
     SDL_PauseAudio(1);
-    SDL_LockAudio();
-    if (g_regroove) { Regroove *tmp = g_regroove; g_regroove = NULL; SDL_UnlockAudio(); regroove_destroy(tmp); }
-    else SDL_UnlockAudio();
+    SDL_CloseAudio();
+
+    regroove_common_destroy(common_state);
+
     ImGui_ImplOpenGL2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
-    SDL_CloseAudio();
     SDL_GL_DeleteContext(gl_ctx);
     SDL_DestroyWindow(window);
     SDL_Quit();

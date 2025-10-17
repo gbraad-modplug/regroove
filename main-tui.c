@@ -4,29 +4,16 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <termios.h>
-#include <dirent.h>
 #include <sys/stat.h>
-#include <ctype.h>
 #include <SDL.h>
-#include "regroove.h"
+#include "regroove_common.h"
 #include "midi.h"
-#include "input_mappings.h"
-
-#define MAX_FILES 4096
-#define MAX_PATH 1024
-
-typedef struct {
-    char **names;
-    int count;
-    int current;
-    char dirpath[MAX_PATH];
-} FileList;
 
 static volatile int running = 1;
 static struct termios orig_termios;
 
-// --- Only one Regroove instance in the app ---
-static Regroove *g = NULL;
+// --- Shared state ---
+static RegrooveCommonState *common_state = NULL;
 
 static void handle_sigint(int sig) { (void)sig; running = 0; }
 static void tty_restore(void) {
@@ -52,50 +39,6 @@ static int read_key_nonblocking(void) {
     ssize_t n = read(STDIN_FILENO, &c, 1);
     if (n == 1) return (int)c;
     return -1;
-}
-
-void free_filelist(FileList *fl) {
-    if (!fl) return;
-    if (fl->names) {
-        for (int i = 0; i < fl->count; ++i) free(fl->names[i]);
-        free(fl->names);
-    }
-    fl->names = NULL;
-    fl->count = 0;
-    fl->current = 0;
-}
-
-int ends_with_module(const char *filename) {
-    const char *dot = strrchr(filename, '.');
-    if (!dot) return 0;
-    char ext[16];
-    snprintf(ext, sizeof(ext), "%s", dot);
-    for (char *p = ext; *p; ++p) *p = tolower(*p);
-    return (
-        strcmp(ext, ".mod") == 0  || strcmp(ext, ".xm") == 0   ||
-        strcmp(ext, ".s3m") == 0  || strcmp(ext, ".it") == 0   ||
-        strcmp(ext, ".med") == 0  || strcmp(ext, ".mmd") == 0  ||
-        strcmp(ext, ".mmd0") == 0 || strcmp(ext, ".mmd1") == 0 ||
-        strcmp(ext, ".mmd2") == 0 || strcmp(ext, ".mmd3") == 0 ||
-        strcmp(ext, ".mmdc") == 0
-    );
-}
-
-int load_filelist(FileList *fl, const char *dirpath) {
-    DIR *dir = opendir(dirpath);
-    if (!dir) return -1;
-    struct dirent *entry;
-    fl->names = (char**)malloc(MAX_FILES * sizeof(char*));
-    fl->count = 0;
-    fl->current = 0;
-    snprintf(fl->dirpath, MAX_PATH, "%s", dirpath);
-    while ((entry = readdir(dir)) != NULL && fl->count < MAX_FILES) {
-        if ((entry->d_type == DT_REG || entry->d_type == DT_UNKNOWN) && ends_with_module(entry->d_name)) {
-            fl->names[fl->count++] = strdup(entry->d_name);
-        }
-    }
-    closedir(dir);
-    return fl->count;
 }
 
 static void print_song_order(Regroove *g) {
@@ -125,156 +68,27 @@ static void my_song_callback(void *userdata) {
 // --- SDL audio callback ---
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
     (void)userdata;
-    if (!g) return;
+    if (!common_state || !common_state->player) return;
     int16_t *buffer = (int16_t *)stream;
     int frames = len / (2 * sizeof(int16_t));
-    regroove_render_audio(g, buffer, frames);
+    regroove_render_audio(common_state->player, buffer, frames);
 }
 
-// --- Only ONE MidiContext, only referencing g and not its own player ---
-typedef struct {
-    int paused;
-    int num_channels;
-    FileList *files;
-    int files_active;
-    InputMappings *input_mappings;
-} MidiContext;
-static MidiContext midi_ctx = {0};
-
-// --- Only one set of global callbacks and spec ---
+// --- Only one set of global callbacks ---
 struct RegrooveCallbacks global_cbs;
-SDL_AudioSpec global_spec;
-
-// --- Global pitch control ---
-static double global_pitch = 1.0;
 
 // --- Centralized module loader ---
-static int load_module(const char *path, SDL_AudioSpec *spec, struct RegrooveCallbacks *cbs) {
-    SDL_LockAudio();
-    if (g) {
-        Regroove *old = g;
-        g = NULL;
-        SDL_UnlockAudio();
-        regroove_destroy(old);
-    } else {
-        SDL_UnlockAudio();
-    }
-    Regroove *mod = regroove_create(path, 48000.0);
-    if (!mod) {
+static int load_module(const char *path, struct RegrooveCallbacks *cbs) {
+    if (regroove_common_load_module(common_state, path, cbs) != 0) {
         printf("Failed to load: %s\n", path);
         return -1;
     }
-    SDL_LockAudio();
-    g = mod;
-    SDL_UnlockAudio();
 
-    midi_ctx.num_channels = regroove_get_num_channels(mod);
-    midi_ctx.paused = 1;
-
-    regroove_set_callbacks(mod, cbs);
-    SDL_PauseAudio(1);
-    print_song_order(mod);
+    print_song_order(common_state->player);
     printf("\nPlayback paused (press SPACE or MIDI Play to start)\n");
     return 0;
 }
 
-// --- Unified playback/command control using g only ---
-void control_play_pause(int play) {
-    if (!g) return;
-
-    midi_ctx.paused = !play ? 1 : 0;
-    SDL_PauseAudio(!play ? 1 : 0);
-    printf("Playback %s\n", play ? "resumed" : "paused");
-}
-void control_retrigger(void) {
-    if (!g) return;
-
-    regroove_retrigger_pattern(g);
-    printf("Triggered retrigger.\n");
-}
-void control_next_order(void) {
-    if (!g) return;
-    
-    regroove_queue_next_order(g);
-    int next_order = regroove_get_current_order(g) + 1;
-    if (next_order < regroove_get_num_orders(g))
-        printf("Next order queued: Order %d (Pattern %d)\n",
-            next_order, regroove_get_order_pattern(g, next_order));
-}
-void control_prev_order(void) {
-    if (!g) return;
-
-    regroove_queue_prev_order(g);
-    int prev_order = regroove_get_current_order(g) > 0 ?
-            regroove_get_current_order(g) - 1 : 0;
-        printf("Previous order queued: Order %d (Pattern %d)\n",
-            prev_order, regroove_get_order_pattern(g, prev_order));
-}
-void control_loop_till_row(void) {
-    if (!g) return;
-
-    regroove_loop_till_row(g, regroove_get_current_row(g));
-    printf("Loop till row queued: Order %d, Row %d\n",
-        regroove_get_current_order(g), regroove_get_current_row(g));
-}
-void control_halve_loop(void) {
-    if (!g) return;
-
-    int rows = regroove_get_custom_loop_rows(g) > 0 ?
-        regroove_get_custom_loop_rows(g) : regroove_get_full_pattern_rows(g);
-    int halved = rows / 2 < 1 ? 1 : rows / 2;
-    regroove_set_custom_loop_rows(g, halved);
-    printf("Loop length halved: %d rows\n", halved);
-}
-void control_full_loop(void) {
-    if (!g) return;
-
-    regroove_set_custom_loop_rows(g, 0);
-    printf("Loop length reset to full pattern: %d rows\n", regroove_get_full_pattern_rows(g));
-}
-void control_pattern_mode_toggle(void) {
-    if (!g) return;
-
-    int new_mode = !regroove_get_pattern_mode(g);
-    regroove_pattern_mode(g, new_mode);
-    if (new_mode)
-        printf("Pattern mode ON (looping pattern %d at order %d)\n",
-               regroove_get_current_pattern(g), regroove_get_current_order(g));
-    else
-        printf("Song mode ON\n");
-}
-void control_channel_mute(int ch) {
-    if (!g) return;
-
-    regroove_toggle_channel_mute(g, ch);
-    int muted = regroove_is_channel_muted(g, ch); // always ask the engine!
-    printf("Channel %d %s\n", ch + 1, muted ? "muted" : "unmuted");
-}
-void control_mute_all(void) {
-    if (!g) return;
-
-    regroove_mute_all(g);
-    printf("All channels muted\n");
-}
-void control_unmute_all(void) {
-    if (!g) return
-    regroove_unmute_all(g);
-    printf("All channels unmuted\n");
-}
-void control_pitch_up(void) {
-    if (!g) return;
-
-    if (global_pitch < 3.0) global_pitch += 0.01;
-    regroove_set_pitch(g, global_pitch);
-    printf("Pitch factor: %.2f\n", global_pitch);
-}
-void control_pitch_down(void) {
-    if (!g) return;
-
-    if (global_pitch > 0.25) global_pitch -= 0.01;
-    regroove_set_pitch(g, global_pitch);
-    printf("Pitch factor: %.2f\n", global_pitch);
-}
 
 // --- Unified Input Event Handler ---
 void handle_input_event(InputEvent *event) {
@@ -282,90 +96,138 @@ void handle_input_event(InputEvent *event) {
 
     switch (event->action) {
         case ACTION_PLAY_PAUSE:
-            control_play_pause(midi_ctx.paused);
+            regroove_common_play_pause(common_state, common_state->paused);
+            printf("Playback %s\n", common_state->paused ? "paused" : "resumed");
             break;
         case ACTION_PLAY:
-            if (midi_ctx.paused) control_play_pause(1);
+            if (common_state->paused) {
+                regroove_common_play_pause(common_state, 1);
+                printf("Playback resumed\n");
+            }
             break;
         case ACTION_STOP:
-            if (!midi_ctx.paused) control_play_pause(0);
+            if (!common_state->paused) {
+                regroove_common_play_pause(common_state, 0);
+                printf("Playback paused\n");
+            }
             break;
         case ACTION_RETRIGGER:
-            control_retrigger();
+            regroove_common_retrigger(common_state);
+            printf("Triggered retrigger.\n");
             break;
         case ACTION_NEXT_ORDER:
-            control_next_order();
+            regroove_common_next_order(common_state);
+            if (common_state->player) {
+                int next_order = regroove_get_current_order(common_state->player) + 1;
+                if (next_order < regroove_get_num_orders(common_state->player))
+                    printf("Next order queued: Order %d (Pattern %d)\n",
+                        next_order, regroove_get_order_pattern(common_state->player, next_order));
+            }
             break;
         case ACTION_PREV_ORDER:
-            control_prev_order();
+            regroove_common_prev_order(common_state);
+            if (common_state->player) {
+                int prev_order = regroove_get_current_order(common_state->player) > 0 ?
+                        regroove_get_current_order(common_state->player) - 1 : 0;
+                printf("Previous order queued: Order %d (Pattern %d)\n",
+                    prev_order, regroove_get_order_pattern(common_state->player, prev_order));
+            }
             break;
         case ACTION_LOOP_TILL_ROW:
-            control_loop_till_row();
+            regroove_common_loop_till_row(common_state);
+            if (common_state->player) {
+                printf("Loop till row queued: Order %d, Row %d\n",
+                    regroove_get_current_order(common_state->player),
+                    regroove_get_current_row(common_state->player));
+            }
             break;
         case ACTION_HALVE_LOOP:
-            control_halve_loop();
+            regroove_common_halve_loop(common_state);
+            if (common_state->player) {
+                int rows = regroove_get_custom_loop_rows(common_state->player) > 0 ?
+                    regroove_get_custom_loop_rows(common_state->player) :
+                    regroove_get_full_pattern_rows(common_state->player);
+                printf("Loop length halved: %d rows\n", rows);
+            }
             break;
         case ACTION_FULL_LOOP:
-            control_full_loop();
+            regroove_common_full_loop(common_state);
+            if (common_state->player) {
+                printf("Loop length reset to full pattern: %d rows\n",
+                    regroove_get_full_pattern_rows(common_state->player));
+            }
             break;
         case ACTION_PATTERN_MODE_TOGGLE:
-            control_pattern_mode_toggle();
+            regroove_common_pattern_mode_toggle(common_state);
+            if (common_state->player) {
+                int new_mode = regroove_get_pattern_mode(common_state->player);
+                if (new_mode)
+                    printf("Pattern mode ON (looping pattern %d at order %d)\n",
+                           regroove_get_current_pattern(common_state->player),
+                           regroove_get_current_order(common_state->player));
+                else
+                    printf("Song mode ON\n");
+            }
             break;
         case ACTION_MUTE_ALL:
-            control_mute_all();
+            regroove_common_mute_all(common_state);
+            printf("All channels muted\n");
             break;
         case ACTION_UNMUTE_ALL:
-            control_unmute_all();
+            regroove_common_unmute_all(common_state);
+            printf("All channels unmuted\n");
             break;
         case ACTION_PITCH_UP:
-            control_pitch_up();
+            regroove_common_pitch_up(common_state);
+            printf("Pitch factor: %.2f\n", common_state->pitch);
             break;
         case ACTION_PITCH_DOWN:
-            control_pitch_down();
+            regroove_common_pitch_down(common_state);
+            printf("Pitch factor: %.2f\n", common_state->pitch);
             break;
         case ACTION_QUIT:
             running = 0;
             break;
         case ACTION_FILE_PREV:
-            if (midi_ctx.files_active) {
-                midi_ctx.files->current--;
-                if (midi_ctx.files->current < 0)
-                    midi_ctx.files->current = midi_ctx.files->count - 1;
-                printf("File: %s\n", midi_ctx.files->names[midi_ctx.files->current]);
+            if (common_state->file_list) {
+                regroove_filelist_prev(common_state->file_list);
+                printf("File: %s\n",
+                    common_state->file_list->filenames[common_state->file_list->current_index]);
             }
             break;
         case ACTION_FILE_NEXT:
-            if (midi_ctx.files_active) {
-                midi_ctx.files->current++;
-                if (midi_ctx.files->current >= midi_ctx.files->count)
-                    midi_ctx.files->current = 0;
-                printf("File: %s\n", midi_ctx.files->names[midi_ctx.files->current]);
+            if (common_state->file_list) {
+                regroove_filelist_next(common_state->file_list);
+                printf("File: %s\n",
+                    common_state->file_list->filenames[common_state->file_list->current_index]);
             }
             break;
         case ACTION_FILE_LOAD:
-            if (midi_ctx.files_active) {
-                char path[MAX_PATH * 2];
-                snprintf(path, sizeof(path), "%s/%s",
-                        midi_ctx.files->dirpath,
-                        midi_ctx.files->names[midi_ctx.files->current]);
-                load_module(path, &global_spec, &global_cbs);
+            if (common_state->file_list) {
+                char path[COMMON_MAX_PATH * 2];
+                regroove_filelist_get_current_path(common_state->file_list, path, sizeof(path));
+                load_module(path, &global_cbs);
             }
             break;
         case ACTION_CHANNEL_MUTE:
-            if (event->parameter < midi_ctx.num_channels) {
-                control_channel_mute(event->parameter);
+            if (event->parameter < common_state->num_channels) {
+                regroove_common_channel_mute(common_state, event->parameter);
+                if (common_state->player) {
+                    int muted = regroove_is_channel_muted(common_state->player, event->parameter);
+                    printf("Channel %d %s\n", event->parameter + 1, muted ? "muted" : "unmuted");
+                }
             }
             break;
         case ACTION_CHANNEL_SOLO:
-            if (g && event->parameter < midi_ctx.num_channels) {
-                regroove_toggle_channel_solo(g, event->parameter);
+            if (common_state->player && event->parameter < common_state->num_channels) {
+                regroove_toggle_channel_solo(common_state->player, event->parameter);
                 printf("Channel %d solo toggled\n", event->parameter + 1);
             }
             break;
         case ACTION_CHANNEL_VOLUME:
-            if (g && event->parameter < midi_ctx.num_channels) {
+            if (common_state->player && event->parameter < common_state->num_channels) {
                 double vol = event->value / 127.0;
-                regroove_set_channel_volume(g, event->parameter, vol);
+                regroove_set_channel_volume(common_state->player, event->parameter, vol);
             }
             break;
         default:
@@ -375,14 +237,15 @@ void handle_input_event(InputEvent *event) {
 
 // --- MIDI HANDLING: uses unified control functions and InputMappings ---
 void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value, void *userdata) {
-    MidiContext *ctx = (MidiContext *)userdata;
+    (void)userdata;
 
     // Only handle Control Change messages
     if ((status & 0xF0) != 0xB0) return;
 
     // Query input mappings
     InputEvent event;
-    if (ctx->input_mappings && input_mappings_get_midi_event(ctx->input_mappings, cc, value, &event)) {
+    if (common_state && common_state->input_mappings &&
+        input_mappings_get_midi_event(common_state->input_mappings, cc, value, &event)) {
         handle_input_event(&event);
     }
 }
@@ -406,19 +269,26 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    FileList files = {0};
-    int files_active = 0;
+    // Create common state
+    common_state = regroove_common_create();
+    if (!common_state) {
+        fprintf(stderr, "Failed to create common state\n");
+        return 1;
+    }
+
     char *initial_path = argv[1];
     if (is_directory(initial_path)) {
-        if (load_filelist(&files, initial_path) > 0) {
-            files_active = 1;
-            printf("Loaded %d files from directory: %s\n", files.count, files.dirpath);
-            printf("Use CC61/CC62 or [ and ] to select, CC60 or ENTER to load\n");
-        } else {
+        common_state->file_list = regroove_filelist_create();
+        if (!common_state->file_list ||
+            regroove_filelist_load(common_state->file_list, initial_path) <= 0) {
             printf("Could not load directory or no files found: %s\n", initial_path);
-            free_filelist(&files);
+            regroove_common_destroy(common_state);
             return 1;
         }
+        printf("Loaded %d files from directory: %s\n",
+               common_state->file_list->count,
+               common_state->file_list->directory);
+        printf("Use CC61/CC62 or [ and ] to select, CC60 or ENTER to load\n");
     }
 
     // Print help first (before loading any module)
@@ -432,42 +302,18 @@ int main(int argc, char *argv[]) {
     printf("  1–9 mute channels, m mute all, u unmute all\n");
     printf("  +/- pitch\n");
     printf("  q/ESC quit\n");
-    if (files_active) {
+    if (common_state->file_list) {
         printf("  [ and ] to select file, ENTER to load\n");
         printf("  (or CC61/CC62/CC60 via MIDI)\n");
     }
     printf("\n");
 
-    SDL_AudioSpec spec;
-    SDL_zero(spec);
-    spec.freq = 48000;
-    spec.format = AUDIO_S16SYS;
-    spec.channels = 2;
-    spec.samples = 256;
-    spec.callback = audio_callback;
-    spec.userdata = NULL;
-    global_spec = spec;
-
-    // Initialize input mappings
-    InputMappings *input_mappings = input_mappings_create();
-    if (!input_mappings) {
-        fprintf(stderr, "Failed to create input mappings\n");
-        return 1;
-    }
-
     // Try to load custom mappings from regroove.ini
-    if (input_mappings_load(input_mappings, "regroove.ini") != 0) {
+    if (regroove_common_load_mappings(common_state, "regroove.ini") != 0) {
         printf("No regroove.ini found, using default mappings\n");
-        input_mappings_reset_defaults(input_mappings);
     } else {
         printf("Loaded input mappings from regroove.ini\n");
     }
-
-    midi_ctx.files = &files;
-    midi_ctx.files_active = files_active;
-    midi_ctx.paused = 1;
-    midi_ctx.num_channels = 0;
-    midi_ctx.input_mappings = input_mappings;
 
     struct RegrooveCallbacks cbs = {
         .on_order_change = my_order_callback,
@@ -478,20 +324,30 @@ int main(int argc, char *argv[]) {
     };
     global_cbs = cbs;
 
-    if (!files_active) {
-        if (load_module(initial_path, &global_spec, &global_cbs) != 0) {
+    if (!common_state->file_list) {
+        if (load_module(initial_path, &global_cbs) != 0) {
+            regroove_common_destroy(common_state);
             return 1;
         }
     }
 
+    SDL_AudioSpec spec;
+    SDL_zero(spec);
+    spec.freq = 48000;
+    spec.format = AUDIO_S16SYS;
+    spec.channels = 2;
+    spec.samples = 256;
+    spec.callback = audio_callback;
+    spec.userdata = NULL;
+
     if (SDL_Init(SDL_INIT_AUDIO) < 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
-        if (g) regroove_destroy(g);
+        regroove_common_destroy(common_state);
         return 1;
     }
-    if (SDL_OpenAudio(&global_spec, NULL) < 0) {
+    if (SDL_OpenAudio(&spec, NULL) < 0) {
         fprintf(stderr, "SDL_OpenAudio failed: %s\n", SDL_GetError());
-        if (g) regroove_destroy(g);
+        regroove_common_destroy(common_state);
         SDL_Quit();
         return 1;
     }
@@ -501,7 +357,7 @@ int main(int argc, char *argv[]) {
 
     int midi_ports = midi_list_ports();
     if (midi_ports > 0) {
-        if (midi_init(my_midi_mapping, &midi_ctx, midi_port) != 0)
+        if (midi_init(my_midi_mapping, NULL, midi_port) != 0)
             printf("No MIDI available. Running with keyboard control only.\n");
     } else {
         printf("No MIDI available. Running with keyboard control only.\n");
@@ -514,11 +370,12 @@ int main(int argc, char *argv[]) {
         if (k != -1) {
             // Query input mappings for keyboard event
             InputEvent event;
-            if (input_mappings_get_keyboard_event(input_mappings, k, &event)) {
+            if (common_state->input_mappings &&
+                input_mappings_get_keyboard_event(common_state->input_mappings, k, &event)) {
                 handle_input_event(&event);
             }
         }
-        if (g) regroove_process_commands(g);
+        if (common_state->player) regroove_process_commands(common_state->player);
         SDL_Delay(10);
     }
 
@@ -526,19 +383,10 @@ int main(int argc, char *argv[]) {
 
     // Safely stop audio and destroy module
     SDL_PauseAudio(1);
-    SDL_LockAudio();
-    if (g) {
-        Regroove *tmp = g;
-        g = NULL;
-        SDL_UnlockAudio();
-        regroove_destroy(tmp);
-    } else {
-        SDL_UnlockAudio();
-    }
-
     SDL_CloseAudio();
-    input_mappings_destroy(input_mappings);
-    free_filelist(&files);
+
+    regroove_common_destroy(common_state);
+
     SDL_Quit();
     return 0;
 }

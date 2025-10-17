@@ -17,6 +17,7 @@ pkg_check_modules(RTMIDI REQUIRED rtmidi)
 add_executable(regroove-tui
     main-tui.c
     regroove.c
+    regroove_common.c
     midi.c
     input_mappings.c
 )
@@ -43,6 +44,7 @@ target_compile_options(regroove-tui PRIVATE
 add_executable(regroove-gui
     main-gui.cpp
     regroove.c
+    regroove_common.c
     midi.c
     input_mappings.c
     imgui/imgui.cpp
