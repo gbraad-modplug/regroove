@@ -18,12 +18,16 @@ extern "C" {
 // -----------------------------------------------------------------------------
 // State & Helper Types
 // -----------------------------------------------------------------------------
+static const char* appname = "MP-1210: Direct Interaction Groove Interface";
+
 struct Channel {
     float volume = 1.0f;
     bool mute = false;
     bool solo = false;
 };
-static Channel channels[8];
+
+#define MAX_CHANNELS 64
+static Channel channels[MAX_CHANNELS];
 static float pitch_slider = 0.0f; // -1.0 to 1.0, 0 = 1.0x pitch
 static float step_fade[16] = {0.0f};
 static int current_step = 0;
@@ -53,8 +57,9 @@ static float MapPitchFader(float slider_val) {
 
 void update_channel_mute_states() {
     if (!common_state || !common_state->player) return;
-    int num_channels = regroove_get_num_channels(common_state->player);
-    for (int i = 0; i < 8 && i < num_channels; ++i) {
+    common_state->num_channels = regroove_get_num_channels(common_state->player);
+
+    for (int i = 0; i < common_state->num_channels; ++i) {
         channels[i].mute = regroove_is_channel_muted(common_state->player, i);
     }
 }
@@ -109,11 +114,11 @@ static int load_module(const char *path) {
     }
 
     Regroove *mod = common_state->player;
-    int num_channels = regroove_get_num_channels(mod);
+    common_state->num_channels = regroove_get_num_channels(mod);
 
     for (int i = 0; i < 16; ++i) step_fade[i] = 0.0f;
 
-    for (int i = 0; i < 8 && i < num_channels; i++) {
+    for (int i = 0; i < common_state->num_channels; i++) {
         channels[i].volume = 1.0f;
         channels[i].mute = false;
         channels[i].solo = false;
@@ -263,45 +268,46 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
             }
             break;
         case ACT_SOLO_CHANNEL: {
-            if (mod && arg1 >= 0 && arg1 < 8) {
+            if (mod && arg1 >= 0 && arg1 < common_state->num_channels) {
                 bool wasSolo = channels[arg1].solo;
 
                 // Clear all solo states
-                for (int i = 0; i < 8; ++i) channels[i].solo = false;
+                for (int i = 0; i < common_state->num_channels; ++i) channels[i].solo = false;
 
                 if (!wasSolo) {
                     // New solo: set this channel solo, mute all, unmute this one
                     channels[arg1].solo = true;
                     regroove_mute_all(mod);
-                    for (int i = 0; i < 8; ++i) channels[i].mute = true;
+                    for (int i = 0; i < common_state->num_channels; ++i) channels[i].mute = true;
                     // Unmute soloed channel
                     regroove_toggle_channel_mute(mod, arg1);
                     channels[arg1].mute = false;
                 } else {
                     // Un-solo: unmute all
                     regroove_unmute_all(mod);
-                    for (int i = 0; i < 8; ++i) channels[i].mute = false;
+                    for (int i = 0; i < common_state->num_channels; ++i) channels[i].mute = false;
                 }
             }
             break;
         }
         case ACT_MUTE_CHANNEL: {
-            if (mod && arg1 >= 0 && arg1 < 8) {
+            if (mod && arg1 >= 0 && arg1 < common_state->num_channels) {
                 // If soloed, un-solo and unmute all
                 if (channels[arg1].solo) {
                     channels[arg1].solo = false;
                     regroove_unmute_all(mod);
-                    for (int i = 0; i < 8; ++i) channels[i].mute = false;
+                    for (int i = 0; i < common_state->num_channels; ++i) channels[i].mute = false;
                 } else {
-                    // Toggle mute just for this channel
+                    // Toggle mute just for this channel, remove solo
                     channels[arg1].mute = !channels[arg1].mute;
                     regroove_toggle_channel_mute(mod, arg1);
+                    for (int i = 0; i < common_state->num_channels; ++i) channels[i].solo = false;
                 }
             }
             break;
         }
         case ACT_VOLUME_CHANNEL:
-            if (mod && arg1 >= 0 && arg1 < 8) {
+            if (mod && arg1 >= 0 && arg1 < common_state->num_channels) {
                 regroove_set_channel_volume(mod, arg1, (double)arg2);
                 channels[arg1].volume = arg2;
             }
@@ -309,7 +315,7 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
         case ACT_MUTE_ALL:
             if (mod) {
                 regroove_mute_all(mod);
-                for (int i = 0; i < 8; ++i) {
+                for (int i = 0; i < common_state->num_channels; ++i) {
                     channels[i].mute = true;
                     channels[i].solo = false;
                 }
@@ -318,7 +324,7 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
         case ACT_UNMUTE_ALL:
             if (mod) {
                 regroove_unmute_all(mod);
-                for (int i = 0; i < 8; ++i) {
+                for (int i = 0; i < common_state->num_channels; ++i) {
                     channels[i].mute = false;
                     channels[i].solo = false;
                 }
@@ -572,7 +578,7 @@ static void ShowMainUI() {
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
-    ImGui::Begin("MP-1210: Direct Interaction Groove Interface", nullptr, rootFlags);
+    ImGui::Begin(appname, nullptr, rootFlags);
 
     // Layout constants
     const float BUTTON_SIZE = 48.0f;
@@ -731,8 +737,12 @@ static void ShowMainUI() {
 
     ImVec2 origin = ImGui::GetCursorPos();
 
-    // 8 channel columns
-    for (int i = 0; i < 8; ++i) {
+    // Channel columns (only draw if module is loaded)
+    // Note: UI currently displays up to 8 channels due to layout constraints
+    int num_channels = (common_state && common_state->player) ? common_state->num_channels : 0;
+    //if (num_channels > 8) num_channels = 8;
+
+    for (int i = 0; i < num_channels; ++i) {
         float colX = origin.x + i * (sliderW + spacing);
         ImGui::SetCursorPos(ImVec2(colX, origin.y + 8.0f));
         ImGui::BeginGroup();
@@ -767,9 +777,9 @@ static void ShowMainUI() {
         ImGui::EndGroup();
     }
 
-    // 9th column: PITCH slider
+    // Pitch slider column (positioned after channels)
     {
-        float colX = origin.x + 8 * (sliderW + spacing);
+        float colX = origin.x + num_channels * (sliderW + spacing);
         ImGui::SetCursorPos(ImVec2(colX, origin.y + 8.0f));
         ImGui::BeginGroup();
         ImGui::Text("Pitch");
@@ -881,7 +891,7 @@ int main(int argc, char* argv[]) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_Window* window = SDL_CreateWindow(
-        "regroove nanokontrol2 UI", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        appname, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         1200, 640, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE
     );
     if (!window) return 1;
