@@ -213,7 +213,8 @@ enum GuiAction {
     ACT_VOLUME_CHANNEL,
     ACT_MUTE_ALL,
     ACT_UNMUTE_ALL,
-    ACT_JUMP_TO_ORDER
+    ACT_JUMP_TO_ORDER,
+    ACT_JUMP_TO_PATTERN
 };
 
 void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
@@ -383,6 +384,11 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
                 regroove_jump_to_order(mod, arg1);
             }
             break;
+        case ACT_JUMP_TO_PATTERN:
+            if (mod && arg1 >= 0) {
+                regroove_jump_to_pattern(mod, arg1);
+            }
+            break;
     }
 }
 
@@ -496,6 +502,9 @@ static void handle_input_event(InputEvent *event) {
             break;
         case ACTION_JUMP_TO_ORDER:
             dispatch_action(ACT_JUMP_TO_ORDER, event->parameter);
+            break;
+        case ACTION_JUMP_TO_PATTERN:
+            dispatch_action(ACT_JUMP_TO_PATTERN, event->parameter);
             break;
         default:
             break;
@@ -1847,6 +1856,14 @@ static void ShowMainUI() {
                     ImGui::InputInt("##param", &pad->parameter);
                     // Clamp to valid order range (will be validated at runtime)
                     if (pad->parameter < 0) pad->parameter = 0;
+                } else if (pad->action == ACTION_JUMP_TO_PATTERN) {
+                    ImGui::SameLine();
+                    ImGui::Text("Pattern:");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(60.0f);
+                    ImGui::InputInt("##param", &pad->parameter);
+                    // Clamp to valid pattern range (will be validated at runtime)
+                    if (pad->parameter < 0) pad->parameter = 0;
                 }
 
                 // Show MIDI note mapping info
@@ -1916,7 +1933,7 @@ static void ShowMainUI() {
                 // Display parameter
                 if (km->action == ACTION_CHANNEL_MUTE || km->action == ACTION_CHANNEL_SOLO ||
                     km->action == ACTION_CHANNEL_VOLUME || km->action == ACTION_TRIGGER_PAD ||
-                    km->action == ACTION_JUMP_TO_ORDER) {
+                    km->action == ACTION_JUMP_TO_ORDER || km->action == ACTION_JUMP_TO_PATTERN) {
                     ImGui::Text("%d", km->parameter);
                 } else {
                     ImGui::Text("-");
@@ -2079,7 +2096,7 @@ static void ShowMainUI() {
                 // Display parameter
                 if (mm->action == ACTION_CHANNEL_MUTE || mm->action == ACTION_CHANNEL_SOLO ||
                     mm->action == ACTION_CHANNEL_VOLUME || mm->action == ACTION_TRIGGER_PAD ||
-                    mm->action == ACTION_JUMP_TO_ORDER) {
+                    mm->action == ACTION_JUMP_TO_ORDER || mm->action == ACTION_JUMP_TO_PATTERN) {
                     ImGui::Text("%d", mm->parameter);
                 } else {
                     ImGui::Text("-");

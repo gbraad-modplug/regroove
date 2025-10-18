@@ -268,6 +268,15 @@ void handle_input_event(InputEvent *event) {
                 }
             }
             break;
+        case ACTION_JUMP_TO_PATTERN:
+            if (common_state->player && event->parameter >= 0) {
+                int num_patterns = regroove_get_num_patterns(common_state->player);
+                if (event->parameter < num_patterns) {
+                    regroove_jump_to_pattern(common_state->player, event->parameter);
+                    printf("Jump to Pattern %d\n", event->parameter);
+                }
+            }
+            break;
         default:
             break;
     }
