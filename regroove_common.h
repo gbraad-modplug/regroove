@@ -37,11 +37,19 @@ void regroove_filelist_prev(RegrooveFileList *list);
 // Free file list
 void regroove_filelist_destroy(RegrooveFileList *list);
 
+// Device configuration
+typedef struct {
+    int midi_device_0;  // MIDI device 0 port (-1 = not configured)
+    int midi_device_1;  // MIDI device 1 port (-1 = not configured)
+    int audio_device;   // Audio device index (-1 = default)
+} RegrooveDeviceConfig;
+
 // Common playback state
 typedef struct {
     Regroove *player;
     InputMappings *input_mappings;
     RegrooveFileList *file_list;
+    RegrooveDeviceConfig device_config;
     int paused;
     int num_channels;
     double pitch;

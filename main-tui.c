@@ -236,7 +236,7 @@ void handle_input_event(InputEvent *event) {
 }
 
 // --- MIDI HANDLING: uses unified control functions and InputMappings ---
-void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value, void *userdata) {
+void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value, int device_id, void *userdata) {
     (void)userdata;
 
     // Only handle Control Change messages
@@ -245,7 +245,7 @@ void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value
     // Query input mappings
     InputEvent event;
     if (common_state && common_state->input_mappings &&
-        input_mappings_get_midi_event(common_state->input_mappings, cc, value, &event)) {
+        input_mappings_get_midi_event(common_state->input_mappings, device_id, cc, value, &event)) {
         handle_input_event(&event);
     }
 }
@@ -360,8 +360,23 @@ int main(int argc, char *argv[]) {
 
     int midi_ports = midi_list_ports();
     if (midi_ports > 0) {
-        if (midi_init(my_midi_mapping, NULL, midi_port) != 0)
-            printf("No MIDI available. Running with keyboard control only.\n");
+        // Use configured MIDI devices from INI, with command-line override for device 0
+        int ports[MIDI_MAX_DEVICES];
+        ports[0] = (midi_port >= 0) ? midi_port : common_state->device_config.midi_device_0;
+        ports[1] = common_state->device_config.midi_device_1;
+
+        // Count how many devices to open
+        int num_devices = 0;
+        if (ports[0] >= 0) num_devices = 1;
+        if (ports[1] >= 0) num_devices = 2;
+
+        if (num_devices > 0) {
+            if (midi_init_multi(my_midi_mapping, NULL, ports, num_devices) != 0) {
+                printf("No MIDI available. Running with keyboard control only.\n");
+            }
+        } else {
+            printf("No MIDI devices configured. Running with keyboard control only.\n");
+        }
     } else {
         printf("No MIDI available. Running with keyboard control only.\n");
     }

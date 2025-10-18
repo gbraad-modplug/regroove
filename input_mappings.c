@@ -103,42 +103,43 @@ void input_mappings_reset_defaults(InputMappings *mappings) {
     mappings->keyboard_count = 0;
 
     // Default MIDI mappings (based on current implementation)
+    // device_id = -1 means any device, 0 = device 0, 1 = device 1
     MidiMapping default_midi[] = {
-        {41, ACTION_PLAY, 0, 64, 0},
-        {42, ACTION_STOP, 0, 64, 0},
-        {46, ACTION_PATTERN_MODE_TOGGLE, 0, 64, 0},
-        {44, ACTION_NEXT_ORDER, 0, 64, 0},
-        {43, ACTION_PREV_ORDER, 0, 64, 0},
-        {60, ACTION_FILE_LOAD, 0, 64, 0},
-        {61, ACTION_FILE_PREV, 0, 64, 0},
-        {62, ACTION_FILE_NEXT, 0, 64, 0},
+        {-1, 41, ACTION_PLAY, 0, 64, 0},
+        {-1, 42, ACTION_STOP, 0, 64, 0},
+        {-1, 46, ACTION_PATTERN_MODE_TOGGLE, 0, 64, 0},
+        {-1, 44, ACTION_NEXT_ORDER, 0, 64, 0},
+        {-1, 43, ACTION_PREV_ORDER, 0, 64, 0},
+        {-1, 60, ACTION_FILE_LOAD, 0, 64, 0},
+        {-1, 61, ACTION_FILE_PREV, 0, 64, 0},
+        {-1, 62, ACTION_FILE_NEXT, 0, 64, 0},
         // Channel solo (CC 32-39)
-        {32, ACTION_CHANNEL_SOLO, 0, 64, 0},
-        {33, ACTION_CHANNEL_SOLO, 1, 64, 0},
-        {34, ACTION_CHANNEL_SOLO, 2, 64, 0},
-        {35, ACTION_CHANNEL_SOLO, 3, 64, 0},
-        {36, ACTION_CHANNEL_SOLO, 4, 64, 0},
-        {37, ACTION_CHANNEL_SOLO, 5, 64, 0},
-        {38, ACTION_CHANNEL_SOLO, 6, 64, 0},
-        {39, ACTION_CHANNEL_SOLO, 7, 64, 0},
+        {-1, 32, ACTION_CHANNEL_SOLO, 0, 64, 0},
+        {-1, 33, ACTION_CHANNEL_SOLO, 1, 64, 0},
+        {-1, 34, ACTION_CHANNEL_SOLO, 2, 64, 0},
+        {-1, 35, ACTION_CHANNEL_SOLO, 3, 64, 0},
+        {-1, 36, ACTION_CHANNEL_SOLO, 4, 64, 0},
+        {-1, 37, ACTION_CHANNEL_SOLO, 5, 64, 0},
+        {-1, 38, ACTION_CHANNEL_SOLO, 6, 64, 0},
+        {-1, 39, ACTION_CHANNEL_SOLO, 7, 64, 0},
         // Channel mute (CC 48-55)
-        {48, ACTION_CHANNEL_MUTE, 0, 64, 0},
-        {49, ACTION_CHANNEL_MUTE, 1, 64, 0},
-        {50, ACTION_CHANNEL_MUTE, 2, 64, 0},
-        {51, ACTION_CHANNEL_MUTE, 3, 64, 0},
-        {52, ACTION_CHANNEL_MUTE, 4, 64, 0},
-        {53, ACTION_CHANNEL_MUTE, 5, 64, 0},
-        {54, ACTION_CHANNEL_MUTE, 6, 64, 0},
-        {55, ACTION_CHANNEL_MUTE, 7, 64, 0},
+        {-1, 48, ACTION_CHANNEL_MUTE, 0, 64, 0},
+        {-1, 49, ACTION_CHANNEL_MUTE, 1, 64, 0},
+        {-1, 50, ACTION_CHANNEL_MUTE, 2, 64, 0},
+        {-1, 51, ACTION_CHANNEL_MUTE, 3, 64, 0},
+        {-1, 52, ACTION_CHANNEL_MUTE, 4, 64, 0},
+        {-1, 53, ACTION_CHANNEL_MUTE, 5, 64, 0},
+        {-1, 54, ACTION_CHANNEL_MUTE, 6, 64, 0},
+        {-1, 55, ACTION_CHANNEL_MUTE, 7, 64, 0},
         // Channel volume (CC 0-7) - continuous controls
-        {0, ACTION_CHANNEL_VOLUME, 0, 0, 1},
-        {1, ACTION_CHANNEL_VOLUME, 1, 0, 1},
-        {2, ACTION_CHANNEL_VOLUME, 2, 0, 1},
-        {3, ACTION_CHANNEL_VOLUME, 3, 0, 1},
-        {4, ACTION_CHANNEL_VOLUME, 4, 0, 1},
-        {5, ACTION_CHANNEL_VOLUME, 5, 0, 1},
-        {6, ACTION_CHANNEL_VOLUME, 6, 0, 1},
-        {7, ACTION_CHANNEL_VOLUME, 7, 0, 1},
+        {-1, 0, ACTION_CHANNEL_VOLUME, 0, 0, 1},
+        {-1, 1, ACTION_CHANNEL_VOLUME, 1, 0, 1},
+        {-1, 2, ACTION_CHANNEL_VOLUME, 2, 0, 1},
+        {-1, 3, ACTION_CHANNEL_VOLUME, 3, 0, 1},
+        {-1, 4, ACTION_CHANNEL_VOLUME, 4, 0, 1},
+        {-1, 5, ACTION_CHANNEL_VOLUME, 5, 0, 1},
+        {-1, 6, ACTION_CHANNEL_VOLUME, 6, 0, 1},
+        {-1, 7, ACTION_CHANNEL_VOLUME, 7, 0, 1},
     };
 
     int default_midi_count = sizeof(default_midi) / sizeof(default_midi[0]);
@@ -232,11 +233,11 @@ int input_mappings_load(InputMappings *mappings, const char *filepath) {
         char *value = trim(eq + 1);
 
         if (section == SECTION_MIDI) {
-            // Format: cc<number> = action[,parameter[,continuous]]
+            // Format: cc<number> = action[,parameter[,continuous[,device_id]]]
             if (strncmp(key, "cc", 2) == 0) {
                 int cc = atoi(key + 2);
                 char action_str[64];
-                int param = 0, continuous = 0;
+                int param = 0, continuous = 0, device_id = -1;
 
                 strncpy(action_str, value, sizeof(action_str) - 1);
                 action_str[sizeof(action_str) - 1] = '\0';
@@ -255,13 +256,16 @@ int input_mappings_load(InputMappings *mappings, const char *filepath) {
                 tok = strtok(NULL, ",");
                 if (tok) continuous = atoi(tok);
 
+                tok = strtok(NULL, ",");
+                if (tok) device_id = atoi(tok);
+
                 // Threshold is automatically set based on continuous flag
                 int threshold = continuous ? 0 : 64;
 
                 // Add mapping if we have capacity
                 if (mappings->midi_count < mappings->midi_capacity) {
                     mappings->midi_mappings[mappings->midi_count++] = (MidiMapping){
-                        cc, action, param, threshold, continuous
+                        device_id, cc, action, param, threshold, continuous
                     };
                 }
             }
@@ -331,17 +335,19 @@ int input_mappings_save(InputMappings *mappings, const char *filepath) {
     fprintf(f, "# Regroove Input Mappings Configuration\n\n");
 
     fprintf(f, "[midi]\n");
-    fprintf(f, "# Format: cc<number> = action[,parameter[,continuous]]\n");
+    fprintf(f, "# Format: cc<number> = action[,parameter[,continuous[,device_id]]]\n");
     fprintf(f, "# continuous: 1 for continuous controls (faders/knobs), 0 for buttons (default)\n");
+    fprintf(f, "# device_id: -1 for any device (default), 0 for device 0, 1 for device 1\n");
     fprintf(f, "# Buttons trigger at MIDI value >= 64, continuous controls respond to all values\n\n");
 
     for (int i = 0; i < mappings->midi_count; i++) {
         MidiMapping *m = &mappings->midi_mappings[i];
-        fprintf(f, "cc%d = %s,%d,%d\n",
+        fprintf(f, "cc%d = %s,%d,%d,%d\n",
                 m->cc_number,
                 input_action_name(m->action),
                 m->parameter,
-                m->continuous);
+                m->continuous,
+                m->device_id);
     }
 
     fprintf(f, "\n[keyboard]\n");
@@ -382,12 +388,13 @@ int input_mappings_save(InputMappings *mappings, const char *filepath) {
     return 0;
 }
 
-int input_mappings_get_midi_event(InputMappings *mappings, int cc, int value, InputEvent *out_event) {
+int input_mappings_get_midi_event(InputMappings *mappings, int device_id, int cc, int value, InputEvent *out_event) {
     if (!mappings || !out_event) return 0;
 
     for (int i = 0; i < mappings->midi_count; i++) {
         MidiMapping *m = &mappings->midi_mappings[i];
-        if (m->cc_number == cc) {
+        // Match if CC matches and either device matches or mapping is for any device (-1)
+        if (m->cc_number == cc && (m->device_id == -1 || m->device_id == device_id)) {
             // For continuous controls, always trigger
             // For buttons, check threshold
             if (m->continuous || value >= m->threshold) {

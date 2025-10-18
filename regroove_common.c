@@ -133,10 +133,24 @@ RegrooveCommonState* regroove_common_create(void) {
     state->paused = 1;
     state->pitch = 1.0;
 
+    // Initialize device config to defaults
+    state->device_config.midi_device_0 = -1;  // Not configured
+    state->device_config.midi_device_1 = -1;  // Not configured
+    state->device_config.audio_device = -1;   // Default device
+
     return state;
 }
 
-// Load input mappings from .ini file (with fallback to defaults)
+// Helper: Trim whitespace
+static char* trim_whitespace(char *str) {
+    while (isspace(*str)) str++;
+    char *end = str + strlen(str) - 1;
+    while (end > str && isspace(*end)) end--;
+    *(end + 1) = '\0';
+    return str;
+}
+
+// Load input mappings and device config from .ini file (with fallback to defaults)
 int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_path) {
     if (!state) return -1;
 
@@ -151,6 +165,46 @@ int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_pa
         // Failed to load, use defaults
         input_mappings_reset_defaults(state->input_mappings);
         return -1;
+    }
+
+    // Parse device configuration from the same INI file
+    FILE *f = fopen(ini_path, "r");
+    if (f) {
+        char line[512];
+        int in_devices_section = 0;
+
+        while (fgets(line, sizeof(line), f)) {
+            char *trimmed = trim_whitespace(line);
+
+            // Skip empty lines and comments
+            if (trimmed[0] == '\0' || trimmed[0] == '#' || trimmed[0] == ';') continue;
+
+            // Check for [devices] section
+            if (trimmed[0] == '[') {
+                in_devices_section = (strstr(trimmed, "[devices]") != NULL);
+                continue;
+            }
+
+            // Parse device settings if we're in the [devices] section
+            if (in_devices_section) {
+                char *eq = strchr(trimmed, '=');
+                if (!eq) continue;
+
+                *eq = '\0';
+                char *key = trim_whitespace(trimmed);
+                char *value = trim_whitespace(eq + 1);
+
+                if (strcmp(key, "midi_device_0") == 0) {
+                    state->device_config.midi_device_0 = atoi(value);
+                } else if (strcmp(key, "midi_device_1") == 0) {
+                    state->device_config.midi_device_1 = atoi(value);
+                } else if (strcmp(key, "audio_device") == 0) {
+                    state->device_config.audio_device = atoi(value);
+                }
+            }
+        }
+
+        fclose(f);
     }
 
     return 0;

@@ -5,13 +5,24 @@
 extern "C" {
 #endif
 
-typedef void (*MidiEventCallback)(unsigned char status, unsigned char data1, unsigned char data2, void *userdata);
+// Maximum number of MIDI input devices
+#define MIDI_MAX_DEVICES 2
+
+typedef void (*MidiEventCallback)(unsigned char status, unsigned char data1, unsigned char data2, int device_id, void *userdata);
 
 /**
  * Initialize MIDI input and set the event callback.
  * Returns 0 on success, -1 on failure.
  */
 int midi_init(MidiEventCallback cb, void *userdata, int port);
+
+/**
+ * Initialize multiple MIDI inputs.
+ * ports: array of port numbers (-1 = don't open)
+ * num_ports: number of entries in ports array (max MIDI_MAX_DEVICES)
+ * Returns number of successfully opened devices.
+ */
+int midi_init_multi(MidiEventCallback cb, void *userdata, const int *ports, int num_ports);
 
 /**
  * Deinitialize MIDI input.

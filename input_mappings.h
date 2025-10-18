@@ -38,6 +38,7 @@ typedef struct {
 
 // MIDI mapping entry
 typedef struct {
+    int device_id;           // MIDI device ID (0 or 1, -1 = any device)
     int cc_number;           // MIDI CC number (0-127, -1 = unused)
     InputAction action;      // Action to trigger
     int parameter;           // Action parameter (channel index, etc.)
@@ -78,7 +79,7 @@ int input_mappings_save(InputMappings *mappings, const char *filepath);
 void input_mappings_reset_defaults(InputMappings *mappings);
 
 // Query mappings - returns 1 if action found, 0 otherwise
-int input_mappings_get_midi_event(InputMappings *mappings, int cc, int value, InputEvent *out_event);
+int input_mappings_get_midi_event(InputMappings *mappings, int device_id, int cc, int value, InputEvent *out_event);
 int input_mappings_get_keyboard_event(InputMappings *mappings, int key, InputEvent *out_event);
 
 // Get action name (for debugging/display)

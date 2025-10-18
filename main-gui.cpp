@@ -477,7 +477,7 @@ void handle_keyboard(SDL_Event &e, SDL_Window *window) {
     }
 }
 
-void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value, void *userdata) {
+void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value, int device_id, void *userdata) {
     (void)userdata;
 
     // Only handle Control Change messages
@@ -486,7 +486,7 @@ void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value
     // Query input mappings
     if (common_state && common_state->input_mappings) {
         InputEvent event;
-        if (input_mappings_get_midi_event(common_state->input_mappings, cc, value, &event)) {
+        if (input_mappings_get_midi_event(common_state->input_mappings, device_id, cc, value, &event)) {
             handle_input_event(&event);
         }
     }
@@ -917,7 +917,21 @@ int main(int argc, char* argv[]) {
     ImGui_ImplOpenGL2_Init();
     //if (load_module(module_path) != 0) return 1;
     int midi_ports = midi_list_ports();
-    if (midi_ports > 0) midi_init(my_midi_mapping, NULL, midi_port);
+    if (midi_ports > 0) {
+        // Use configured MIDI devices from INI, with command-line override for device 0
+        int ports[MIDI_MAX_DEVICES];
+        ports[0] = (midi_port >= 0) ? midi_port : common_state->device_config.midi_device_0;
+        ports[1] = common_state->device_config.midi_device_1;
+
+        // Count how many devices to open
+        int num_devices = 0;
+        if (ports[0] >= 0) num_devices = 1;
+        if (ports[1] >= 0) num_devices = 2;
+
+        if (num_devices > 0) {
+            midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
+        }
+    }
     bool running = true;
     while (running) {
         SDL_Event e;
