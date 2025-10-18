@@ -626,7 +626,7 @@ static void ShowMainUI() {
         }
 
         std::snprintf(lcd, sizeof(lcd),
-            "Pat:%02d Ord:%02d Loop:%s\nPitch:%.2f\nFile:%.*s",
+            "SO:%02d PT:%02d Loop:%s\nPitch:%.2f\nFile:%.*s",
             pattern, order, loop_enabled ? "ON" : "OFF",
             MapPitchFader(pitch_slider),
             MAX_FILENAME_LEN, file_disp);
@@ -660,6 +660,7 @@ static void ShowMainUI() {
     ImGui::EndGroup();
     ImGui::Dummy(ImVec2(0, 8.0f));
 
+    ImGui::BeginGroup();
     // STOP BUTTON
     if (!playing) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.25f, 0.20f, 1.0f)); // red
@@ -684,7 +685,13 @@ static void ShowMainUI() {
         if (ImGui::Button("|>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_PLAY);
     }
 
+    ImGui::SameLine();
+
+    // Performance recording
+    //ImGui::Button("O", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
+
     ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
+
     if (ImGui::Button("<<", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_PREV_ORDER);
     ImGui::SameLine();
     if (ImGui::Button(">>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_NEXT_ORDER);
@@ -711,6 +718,31 @@ static void ShowMainUI() {
     } else {
         if (ImGui::Button("O∞", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_TOGGLE_LOOP);
     }
+
+    ImGui::EndGroup();
+
+    ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
+
+    ImGui::BeginGroup();
+    // Show volume sliders
+    ImGui::Button("VOL", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
+    ImGui::SameLine();
+    // Show pads
+    ImGui::Button("PADS", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
+    //ImGui::SameLine();
+    // Shows effects
+    //ImGui::Button("FX", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
+    ImGui::EndGroup();
+
+    ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
+
+    //ImGui::BeginGroup();
+    // Setup application
+    //ImGui::Button("SETUP", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
+    //ImGui::SameLine();
+    // Input learning mode
+    //ImGui::Button("LEARN", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
+    //ImGui::EndGroup();
 
     ImGui::EndChild();
 
