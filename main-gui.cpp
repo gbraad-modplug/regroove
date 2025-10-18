@@ -292,11 +292,11 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
         }
         case ACT_MUTE_CHANNEL: {
             if (mod && arg1 >= 0 && arg1 < common_state->num_channels) {
-                // If soloed, un-solo and unmute all
+                // If soloed, un-solo and mute all
                 if (channels[arg1].solo) {
                     channels[arg1].solo = false;
-                    regroove_unmute_all(mod);
-                    for (int i = 0; i < common_state->num_channels; ++i) channels[i].mute = false;
+                    regroove_mute_all(mod);
+                    for (int i = 0; i < common_state->num_channels; ++i) channels[i].mute = true;
                 } else {
                     // Toggle mute just for this channel, remove solo
                     channels[arg1].mute = !channels[arg1].mute;
@@ -838,13 +838,16 @@ static void ShowMainUI() {
 int main(int argc, char* argv[]) {
     int midi_port = -1;
     const char *module_path = NULL;
+    const char *config_file = "regroove.ini";
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "-m") && i + 1 < argc)
             midi_port = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "-c") && i + 1 < argc)
+            config_file = argv[++i];
         else if (!module_path) module_path = argv[i];
     }
     if (!module_path) {
-        fprintf(stderr, "Usage: %s directory|file.mod [-m mididevice]\n", argv[0]);
+        fprintf(stderr, "Usage: %s directory|file.mod [-m mididevice] [-c config.ini]\n", argv[0]);
         return 1;
     }
 
@@ -855,11 +858,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Load input mappings from regroove.ini
-    if (regroove_common_load_mappings(common_state, "regroove.ini") != 0) {
-        printf("No regroove.ini found, using default mappings\n");
+    // Load input mappings from config file
+    if (regroove_common_load_mappings(common_state, config_file) != 0) {
+        printf("No %s found, using default mappings\n", config_file);
     } else {
-        printf("Loaded input mappings from regroove.ini\n");
+        printf("Loaded input mappings from %s\n", config_file);
     }
 
     // Load file list from directory

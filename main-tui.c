@@ -259,13 +259,16 @@ int is_directory(const char *path) {
 
 int main(int argc, char *argv[]) {
     int midi_port = -1;
+    const char *config_file = "regroove.ini";
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "-m") && i + 1 < argc) {
             midi_port = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "-c") && i + 1 < argc) {
+            config_file = argv[++i];
         }
     }
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s file.mod|dir [-m mididevice]\n", argv[0]);
+        fprintf(stderr, "Usage: %s file.mod|dir [-m mididevice] [-c config.ini]\n", argv[0]);
         return 1;
     }
 
@@ -308,11 +311,11 @@ int main(int argc, char *argv[]) {
     }
     printf("\n");
 
-    // Try to load custom mappings from regroove.ini
-    if (regroove_common_load_mappings(common_state, "regroove.ini") != 0) {
-        printf("No regroove.ini found, using default mappings\n");
+    // Try to load custom mappings from config file
+    if (regroove_common_load_mappings(common_state, config_file) != 0) {
+        printf("No %s found, using default mappings\n", config_file);
     } else {
-        printf("Loaded input mappings from regroove.ini\n");
+        printf("Loaded input mappings from %s\n", config_file);
     }
 
     struct RegrooveCallbacks cbs = {
