@@ -40,7 +40,8 @@ static float loop_blink = 0.0f;
 enum UIMode {
     UI_MODE_VOLUME = 0,
     UI_MODE_PADS = 1,
-    UI_MODE_SETTINGS = 2
+    UI_MODE_SETTINGS = 2,
+    UI_MODE_INFO = 3
 };
 static UIMode ui_mode = UI_MODE_VOLUME;
 
@@ -1193,6 +1194,16 @@ static void ShowMainUI() {
         ui_mode = UI_MODE_SETTINGS;
     }
     ImGui::PopStyleColor();
+
+    ImGui::Dummy(ImVec2(0, 8.0f));
+
+    // INFO button with active state highlighting
+    ImVec4 infoCol = (ui_mode == UI_MODE_INFO) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, infoCol);
+    if (ImGui::Button("INFO", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_INFO;
+    }
+    ImGui::PopStyleColor();
     ImGui::EndGroup();
 
     ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
@@ -1402,6 +1413,161 @@ static void ShowMainUI() {
                 ImGui::PopStyleColor(3);
             }
         }
+    }
+    else if (ui_mode == UI_MODE_INFO) {
+        // INFO MODE: Show song/module information
+
+        ImGui::SetCursorPos(ImVec2(origin.x + 16.0f, origin.y + 16.0f));
+
+        // Make the entire info area scrollable
+        ImGui::BeginChild("##info_scroll", ImVec2(rightW - 32.0f, contentHeight - 32.0f), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+        Regroove *mod = common_state ? common_state->player : NULL;
+
+        if (!mod) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No module loaded");
+        } else {
+            // Song/Module Information Section
+            ImGui::Text("Module Information");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Current file name
+            if (common_state->file_list && common_state->file_list->count > 0) {
+                const char* current_file = common_state->file_list->filenames[common_state->file_list->current_index];
+                ImGui::Text("File:");
+                ImGui::SameLine(150.0f);
+                ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "%s", current_file);
+            }
+
+            // Number of channels
+            ImGui::Text("Channels:");
+            ImGui::SameLine(150.0f);
+            ImGui::Text("%d", common_state->num_channels);
+
+            // Number of orders
+            int num_orders = regroove_get_num_orders(mod);
+            ImGui::Text("Song Length:");
+            ImGui::SameLine(150.0f);
+            ImGui::Text("%d orders", num_orders);
+
+            // Pattern rows
+            ImGui::Text("Pattern Rows:");
+            ImGui::SameLine(150.0f);
+            ImGui::Text("%d rows", total_rows);
+
+            // Current playback position
+            int current_order = regroove_get_current_order(mod);
+            int current_pattern = regroove_get_current_pattern(mod);
+            int current_row = regroove_get_current_row(mod);
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+            ImGui::Text("Playback Information");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            ImGui::Text("Current Order:");
+            ImGui::SameLine(150.0f);
+            ImGui::Text("%d", current_order);
+
+            ImGui::Text("Current Pattern:");
+            ImGui::SameLine(150.0f);
+            ImGui::Text("%d", current_pattern);
+
+            ImGui::Text("Current Row:");
+            ImGui::SameLine(150.0f);
+            ImGui::Text("%d", current_row);
+
+            ImGui::Text("Play Mode:");
+            ImGui::SameLine(150.0f);
+            ImGui::Text("%s", loop_enabled ? "Pattern Loop" : "Song Mode");
+
+            double pitch = regroove_get_pitch(mod);
+            ImGui::Text("Pitch:");
+            ImGui::SameLine(150.0f);
+            ImGui::Text("%.2fx", pitch);
+
+            int custom_loop_rows = regroove_get_custom_loop_rows(mod);
+            if (custom_loop_rows > 0) {
+                ImGui::Text("Custom Loop:");
+                ImGui::SameLine(150.0f);
+                ImGui::Text("%d rows", custom_loop_rows);
+            }
+
+            // Channel status overview
+            ImGui::Dummy(ImVec2(0, 12.0f));
+            ImGui::Text("Channel Status");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Count muted and solo channels
+            int muted_count = 0;
+            int solo_count = 0;
+            for (int i = 0; i < common_state->num_channels; i++) {
+                if (channels[i].mute) muted_count++;
+                if (channels[i].solo) solo_count++;
+            }
+
+            ImGui::Text("Active Channels:");
+            ImGui::SameLine(150.0f);
+            ImGui::Text("%d / %d", common_state->num_channels - muted_count, common_state->num_channels);
+
+            if (muted_count > 0) {
+                ImGui::Text("Muted:");
+                ImGui::SameLine(150.0f);
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%d channels", muted_count);
+            }
+
+            if (solo_count > 0) {
+                ImGui::Text("Solo:");
+                ImGui::SameLine(150.0f);
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "%d channels", solo_count);
+            }
+
+            // Order/Pattern table
+            ImGui::Dummy(ImVec2(0, 12.0f));
+            ImGui::Text("Order List");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            ImGui::BeginChild("##order_list", ImVec2(rightW - 64.0f, 250.0f), true);
+
+            ImGui::Columns(2, "order_columns");
+            ImGui::SetColumnWidth(0, 80.0f);
+            ImGui::SetColumnWidth(1, 100.0f);
+
+            ImGui::Text("Order"); ImGui::NextColumn();
+            ImGui::Text("Pattern"); ImGui::NextColumn();
+            ImGui::Separator();
+
+            for (int i = 0; i < num_orders; i++) {
+                int pat = regroove_get_order_pattern(mod, i);
+
+                // Highlight current order
+                if (i == current_order) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                    ImGui::Text("> %d", i);
+                    ImGui::PopStyleColor();
+                } else {
+                    ImGui::Text("  %d", i);
+                }
+                ImGui::NextColumn();
+
+                if (i == current_order) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                    ImGui::Text("%d", pat);
+                    ImGui::PopStyleColor();
+                } else {
+                    ImGui::Text("%d", pat);
+                }
+                ImGui::NextColumn();
+            }
+
+            ImGui::Columns(1);
+            ImGui::EndChild();
+        }
+
+        ImGui::EndChild(); // End info_scroll child window
     }
     else if (ui_mode == UI_MODE_SETTINGS) {
         // SETTINGS MODE: Show device configuration and input mappings
