@@ -1608,6 +1608,75 @@ static void ShowMainUI() {
 
         ImGui::Dummy(ImVec2(0, 20.0f));
 
+        // Trigger Pad Configuration
+        ImGui::Text("Trigger Pad Configuration");
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
+        // Display trigger pads in a scrollable region
+        ImGui::BeginChild("##pad_config_scroll", ImVec2(rightW - 32.0f, 200.0f), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+        for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+            ImGui::PushID(i);
+
+            // Pad number
+            ImGui::Text("Pad %d:", i + 1);
+            ImGui::SameLine(80.0f);
+
+            // Action dropdown
+            const char* current_action = input_action_name(trigger_pads[i].action);
+            if (ImGui::BeginCombo("##action", current_action, ImGuiComboFlags_WidthFitPreview)) {
+                // List all available actions
+                for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
+                    InputAction act = (InputAction)a;
+                    const char* action_name = input_action_name(act);
+                    bool is_selected = (trigger_pads[i].action == act);
+
+                    if (ImGui::Selectable(action_name, is_selected)) {
+                        trigger_pads[i].action = act;
+                        // Reset parameter to 0 when changing action
+                        trigger_pads[i].parameter = 0;
+                    }
+
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            // Show parameter input for actions that need it
+            if (trigger_pads[i].action == ACTION_CHANNEL_MUTE ||
+                trigger_pads[i].action == ACTION_CHANNEL_SOLO ||
+                trigger_pads[i].action == ACTION_CHANNEL_VOLUME) {
+                ImGui::SameLine();
+                ImGui::Text("Ch:");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(60.0f);
+                ImGui::InputInt("##param", &trigger_pads[i].parameter);
+                // Clamp to valid channel range
+                if (trigger_pads[i].parameter < 0) trigger_pads[i].parameter = 0;
+                if (trigger_pads[i].parameter >= MAX_CHANNELS) trigger_pads[i].parameter = MAX_CHANNELS - 1;
+            }
+
+            // Show MIDI note mapping info
+            ImGui::SameLine();
+            if (trigger_pads[i].midi_note >= 0) {
+                ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Note:%d Dev:%d",
+                                   trigger_pads[i].midi_note, trigger_pads[i].midi_device);
+            } else {
+                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No MIDI mapping");
+            }
+
+            ImGui::PopID();
+        }
+
+        ImGui::EndChild();
+
+        ImGui::Dummy(ImVec2(0, 12.0f));
+        ImGui::TextWrapped("Use LEARN mode in PADS view to assign MIDI notes and keyboard shortcuts to trigger pads.");
+
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
         // Save button to persist settings
         if (ImGui::Button("Save Settings", ImVec2(180.0f, 40.0f))) {
             if (common_state && common_state->input_mappings) {
