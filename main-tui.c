@@ -60,7 +60,8 @@ static void my_row_callback(int order, int row, void *userdata) {
     //printf("[ROW] Order %d, Row %d\n", order, row);
 }
 static void my_loop_callback(int order, int pattern, void *userdata) {
-    printf("[LOOP] Loop/retrigger at Order %d (Pattern %d)\n", order, pattern);
+    printf("[LOOP] Pattern looped at Order %d (Pattern %d)\n", order, pattern);
+    (void)userdata;
 }
 
 static void my_song_callback(void *userdata) {
@@ -160,14 +161,16 @@ void handle_input_event(InputEvent *event) {
             }
             break;
         case ACTION_PATTERN_MODE_TOGGLE:
-            regroove_common_pattern_mode_toggle(common_state);
             if (common_state->player) {
-                int new_mode = regroove_get_pattern_mode(common_state->player);
-                if (new_mode)
+                // Get current mode BEFORE toggling
+                int old_mode = regroove_get_pattern_mode(common_state->player);
+                regroove_common_pattern_mode_toggle(common_state);
+                // Print message based on what mode we're switching TO (opposite of old_mode)
+                if (!old_mode) // Was in song mode (0), now switching to pattern mode (1)
                     printf("Pattern mode ON (looping pattern %d at order %d)\n",
                            regroove_get_current_pattern(common_state->player),
                            regroove_get_current_order(common_state->player));
-                else
+                else // Was in pattern mode (1), now switching to song mode (0)
                     printf("Song mode ON\n");
             }
             break;
