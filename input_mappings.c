@@ -108,6 +108,37 @@ void input_mappings_reset_defaults(InputMappings *mappings) {
     mappings->midi_count = 0;
     mappings->keyboard_count = 0;
 
+    // Initialize trigger pads with default configuration
+    for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+        mappings->trigger_pads[i].action = ACTION_NONE;
+        mappings->trigger_pads[i].parameter = 0;
+        mappings->trigger_pads[i].midi_note = -1;
+        mappings->trigger_pads[i].midi_device = -1;
+    }
+
+    // Set up default bindings for trigger pads
+    mappings->trigger_pads[0].action = ACTION_PLAY_PAUSE;           // P1: Play/Pause
+    mappings->trigger_pads[1].action = ACTION_STOP;                 // P2: Stop
+    mappings->trigger_pads[2].action = ACTION_RETRIGGER;            // P3: Retrigger
+    mappings->trigger_pads[3].action = ACTION_PATTERN_MODE_TOGGLE;  // P4: Loop toggle
+
+    mappings->trigger_pads[4].action = ACTION_PREV_ORDER;           // P5: Previous order
+    mappings->trigger_pads[5].action = ACTION_NEXT_ORDER;           // P6: Next order
+    mappings->trigger_pads[6].action = ACTION_HALVE_LOOP;           // P7: Halve loop
+    mappings->trigger_pads[7].action = ACTION_FULL_LOOP;            // P8: Full loop
+
+    // Pads 9-12: Channel mutes for first 4 channels
+    for (int i = 0; i < 4; i++) {
+        mappings->trigger_pads[8 + i].action = ACTION_CHANNEL_MUTE;
+        mappings->trigger_pads[8 + i].parameter = i;
+    }
+
+    // Pads 13-16: Reserved for user configuration
+    mappings->trigger_pads[12].action = ACTION_MUTE_ALL;            // P13: Mute all
+    mappings->trigger_pads[13].action = ACTION_UNMUTE_ALL;          // P14: Unmute all
+    mappings->trigger_pads[14].action = ACTION_LOOP_TILL_ROW;       // P15: Loop till row
+    // P16 is unassigned (ACTION_NONE)
+
     // Default MIDI mappings (based on current implementation)
     // device_id = -1 means any device, 0 = device 0, 1 = device 1
     MidiMapping default_midi[] = {
@@ -221,11 +252,19 @@ int input_mappings_load(InputMappings *mappings, const char *filepath) {
     if (!f) return -1;
 
     char line[512];
-    enum { SECTION_NONE, SECTION_MIDI, SECTION_KEYBOARD } section = SECTION_NONE;
+    enum { SECTION_NONE, SECTION_MIDI, SECTION_KEYBOARD, SECTION_TRIGGER_PADS } section = SECTION_NONE;
 
     // Clear existing mappings
     mappings->midi_count = 0;
     mappings->keyboard_count = 0;
+
+    // Reset trigger pads to defaults
+    for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+        mappings->trigger_pads[i].action = ACTION_NONE;
+        mappings->trigger_pads[i].parameter = 0;
+        mappings->trigger_pads[i].midi_note = -1;
+        mappings->trigger_pads[i].midi_device = -1;
+    }
 
     while (fgets(line, sizeof(line), f)) {
         char *trimmed = trim(line);
@@ -237,6 +276,7 @@ int input_mappings_load(InputMappings *mappings, const char *filepath) {
         if (trimmed[0] == '[') {
             if (strstr(trimmed, "[midi]")) section = SECTION_MIDI;
             else if (strstr(trimmed, "[keyboard]")) section = SECTION_KEYBOARD;
+            else if (strstr(trimmed, "[trigger_pads]")) section = SECTION_TRIGGER_PADS;
             else section = SECTION_NONE;
             continue;
         }
@@ -343,6 +383,42 @@ int input_mappings_load(InputMappings *mappings, const char *filepath) {
                     };
                 }
             }
+        } else if (section == SECTION_TRIGGER_PADS) {
+            // Format: pad<number> = action[,parameter[,midi_note[,midi_device]]]
+            if (strncmp(key, "pad", 3) == 0) {
+                int pad_num = atoi(key + 3);
+                if (pad_num < 1 || pad_num > MAX_TRIGGER_PADS) continue;
+                int pad_idx = pad_num - 1; // Convert to 0-based index
+
+                char action_str[64];
+                int param = 0, midi_note = -1, midi_device = -1;
+
+                strncpy(action_str, value, sizeof(action_str) - 1);
+                action_str[sizeof(action_str) - 1] = '\0';
+
+                char *tok = strtok(action_str, ",");
+                if (!tok) continue;
+
+                char trimmed_tok[64];
+                strncpy(trimmed_tok, tok, sizeof(trimmed_tok) - 1);
+                trimmed_tok[sizeof(trimmed_tok) - 1] = '\0';
+                InputAction action = parse_action(trim(trimmed_tok));
+
+                tok = strtok(NULL, ",");
+                if (tok) param = atoi(tok);
+
+                tok = strtok(NULL, ",");
+                if (tok) midi_note = atoi(tok);
+
+                tok = strtok(NULL, ",");
+                if (tok) midi_device = atoi(tok);
+
+                // Set trigger pad configuration
+                mappings->trigger_pads[pad_idx].action = action;
+                mappings->trigger_pads[pad_idx].parameter = param;
+                mappings->trigger_pads[pad_idx].midi_note = midi_note;
+                mappings->trigger_pads[pad_idx].midi_device = midi_device;
+            }
         }
     }
 
@@ -406,6 +482,21 @@ int input_mappings_save(InputMappings *mappings, const char *filepath) {
                 key_name,
                 input_action_name(k->action),
                 k->parameter);
+    }
+
+    fprintf(f, "\n[trigger_pads]\n");
+    fprintf(f, "# Format: pad<number> = action[,parameter[,midi_note[,midi_device]]]\n");
+    fprintf(f, "# midi_note: -1 = not mapped, 0-127 = MIDI note number\n");
+    fprintf(f, "# midi_device: -1 = any device (default), 0 = device 0, 1 = device 1\n\n");
+
+    for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+        TriggerPadConfig *p = &mappings->trigger_pads[i];
+        fprintf(f, "pad%d = %s,%d,%d,%d\n",
+                i + 1,
+                input_action_name(p->action),
+                p->parameter,
+                p->midi_note,
+                p->midi_device);
     }
 
     fclose(f);

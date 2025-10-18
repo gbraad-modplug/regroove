@@ -56,6 +56,15 @@ typedef struct {
     int parameter;           // Action parameter (channel index, etc.)
 } KeyboardMapping;
 
+// Trigger pad configuration
+#define MAX_TRIGGER_PADS 16
+typedef struct {
+    InputAction action;      // Action to trigger
+    int parameter;           // Action parameter (channel index, etc.)
+    int midi_note;           // MIDI note number that triggers this pad (-1 = not mapped)
+    int midi_device;         // Which MIDI device (-1 = any)
+} TriggerPadConfig;
+
 // Input mappings configuration
 typedef struct {
     MidiMapping *midi_mappings;
@@ -64,6 +73,7 @@ typedef struct {
     KeyboardMapping *keyboard_mappings;
     int keyboard_count;
     int keyboard_capacity;
+    TriggerPadConfig trigger_pads[MAX_TRIGGER_PADS];
 } InputMappings;
 
 // Initialize input mappings system

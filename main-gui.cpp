@@ -44,16 +44,8 @@ enum UIMode {
 };
 static UIMode ui_mode = UI_MODE_VOLUME;
 
-// Trigger pad configuration
-#define MAX_TRIGGER_PADS 16
-struct TriggerPad {
-    InputAction action = ACTION_NONE;
-    int parameter = 0;
-    int midi_note = -1;  // MIDI note number that triggers this pad (-1 = not mapped)
-    int midi_device = -1; // Which MIDI device (-1 = any)
-    float fade = 0.0f;   // Visual feedback fade
-};
-static TriggerPad trigger_pads[MAX_TRIGGER_PADS];
+// Visual feedback for trigger pads (fade effect)
+static float trigger_pad_fade[MAX_TRIGGER_PADS] = {0.0f};
 
 // Shared state
 static RegrooveCommonState *common_state = NULL;
@@ -139,43 +131,6 @@ static void my_loop_song_callback(void *userdata) {
     playing = false;
 }
 
-// -----------------------------------------------------------------------------
-// Trigger Pad Initialization
-// -----------------------------------------------------------------------------
-
-static void init_trigger_pads_defaults() {
-    // Initialize all pads to no action
-    for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
-        trigger_pads[i].action = ACTION_NONE;
-        trigger_pads[i].parameter = 0;
-        trigger_pads[i].midi_note = -1;
-        trigger_pads[i].midi_device = -1;
-        trigger_pads[i].fade = 0.0f;
-    }
-
-    // Set up default bindings for common actions
-    trigger_pads[0].action = ACTION_PLAY_PAUSE;    // P1: Play/Pause
-    trigger_pads[1].action = ACTION_STOP;          // P2: Stop
-    trigger_pads[2].action = ACTION_RETRIGGER;     // P3: Retrigger
-    trigger_pads[3].action = ACTION_PATTERN_MODE_TOGGLE; // P4: Loop toggle
-
-    trigger_pads[4].action = ACTION_PREV_ORDER;    // P5: Previous order
-    trigger_pads[5].action = ACTION_NEXT_ORDER;    // P6: Next order
-    trigger_pads[6].action = ACTION_HALVE_LOOP;    // P7: Halve loop
-    trigger_pads[7].action = ACTION_FULL_LOOP;     // P8: Full loop
-
-    // Pads 9-12: Channel mutes for first 4 channels
-    for (int i = 0; i < 4; i++) {
-        trigger_pads[8 + i].action = ACTION_CHANNEL_MUTE;
-        trigger_pads[8 + i].parameter = i;
-    }
-
-    // Pads 13-16: Reserved for user configuration
-    trigger_pads[12].action = ACTION_MUTE_ALL;     // P13: Mute all
-    trigger_pads[13].action = ACTION_UNMUTE_ALL;   // P14: Unmute all
-    trigger_pads[14].action = ACTION_LOOP_TILL_ROW; // P15: Loop till row
-    // P16 is unassigned (ACTION_NONE)
-}
 
 // -----------------------------------------------------------------------------
 // Module Loading
@@ -509,14 +464,16 @@ static void handle_input_event(InputEvent *event) {
             dispatch_action(ACT_VOLUME_CHANNEL, event->parameter, event->value / 127.0f);
             break;
         case ACTION_TRIGGER_PAD:
-            if (event->parameter >= 0 && event->parameter < MAX_TRIGGER_PADS) {
+            if (common_state && common_state->input_mappings &&
+                event->parameter >= 0 && event->parameter < MAX_TRIGGER_PADS) {
+                TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[event->parameter];
                 // Trigger visual feedback
-                trigger_pads[event->parameter].fade = 1.0f;
+                trigger_pad_fade[event->parameter] = 1.0f;
                 // Execute the trigger pad's configured action
-                if (trigger_pads[event->parameter].action != ACTION_NONE) {
+                if (pad->action != ACTION_NONE) {
                     InputEvent pad_event;
-                    pad_event.action = trigger_pads[event->parameter].action;
-                    pad_event.parameter = trigger_pads[event->parameter].parameter;
+                    pad_event.action = pad->action;
+                    pad_event.parameter = pad->parameter;
                     pad_event.value = event->value;
                     handle_input_event(&pad_event);
                 }
@@ -614,10 +571,12 @@ static void unlearn_current_target() {
 
     if (learn_target_type == LEARN_TRIGGER_PAD) {
         // Remove MIDI note mapping from trigger pad
-        if (learn_target_pad_index >= 0 && learn_target_pad_index < MAX_TRIGGER_PADS) {
-            if (trigger_pads[learn_target_pad_index].midi_note != -1) {
-                trigger_pads[learn_target_pad_index].midi_note = -1;
-                trigger_pads[learn_target_pad_index].midi_device = -1;
+        if (common_state && common_state->input_mappings &&
+            learn_target_pad_index >= 0 && learn_target_pad_index < MAX_TRIGGER_PADS) {
+            TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[learn_target_pad_index];
+            if (pad->midi_note != -1) {
+                pad->midi_note = -1;
+                pad->midi_device = -1;
                 printf("Unlearned MIDI note mapping for Pad %d\n", learn_target_pad_index + 1);
                 removed_count++;
             }
@@ -731,9 +690,11 @@ static void learn_midi_mapping(int device_id, int cc_or_note, bool is_note) {
 
     if (is_note && learn_target_type == LEARN_TRIGGER_PAD) {
         // Map MIDI note to trigger pad
-        if (learn_target_pad_index >= 0 && learn_target_pad_index < MAX_TRIGGER_PADS) {
-            trigger_pads[learn_target_pad_index].midi_note = cc_or_note;
-            trigger_pads[learn_target_pad_index].midi_device = device_id;
+        if (common_state && common_state->input_mappings &&
+            learn_target_pad_index >= 0 && learn_target_pad_index < MAX_TRIGGER_PADS) {
+            TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[learn_target_pad_index];
+            pad->midi_note = cc_or_note;
+            pad->midi_device = device_id;
             printf("Learned MIDI note mapping: Note %d (device %d) -> Pad %d\n",
                    cc_or_note, device_id, learn_target_pad_index + 1);
         }
@@ -900,23 +861,26 @@ void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned ch
         int note = cc_or_note;
 
         // Check if any trigger pad is mapped to this MIDI note
-        for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
-            // Match device (if specified) and note
-            if (trigger_pads[i].midi_note == note &&
-                (trigger_pads[i].midi_device == -1 || trigger_pads[i].midi_device == device_id)) {
+        if (common_state && common_state->input_mappings) {
+            for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+                TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[i];
+                // Match device (if specified) and note
+                if (pad->midi_note == note &&
+                    (pad->midi_device == -1 || pad->midi_device == device_id)) {
 
-                // Trigger visual feedback
-                trigger_pads[i].fade = 1.0f;
+                    // Trigger visual feedback
+                    trigger_pad_fade[i] = 1.0f;
 
-                // Execute the configured action
-                if (trigger_pads[i].action != ACTION_NONE) {
-                    InputEvent event;
-                    event.action = trigger_pads[i].action;
-                    event.parameter = trigger_pads[i].parameter;
-                    event.value = value;
-                    handle_input_event(&event);
+                    // Execute the configured action
+                    if (pad->action != ACTION_NONE) {
+                        InputEvent event;
+                        event.action = pad->action;
+                        event.parameter = pad->parameter;
+                        event.value = value;
+                        handle_input_event(&event);
+                    }
+                    break; // Only trigger the first matching pad
                 }
-                break; // Only trigger the first matching pad
             }
         }
         return;
@@ -1355,7 +1319,7 @@ static void ShowMainUI() {
 
         // Fade trigger pads
         for (int i = 0; i < MAX_TRIGGER_PADS; i++)
-            trigger_pads[i].fade = fmaxf(trigger_pads[i].fade - 0.02f, 0.0f);
+            trigger_pad_fade[i] = fmaxf(trigger_pad_fade[i] - 0.02f, 0.0f);
 
         // Calculate pad layout (4x4 grid)
         const int PADS_PER_ROW = 4;
@@ -1387,7 +1351,7 @@ static void ShowMainUI() {
                 ImGui::SetCursorPos(ImVec2(posX, posY));
 
                 // Pad color with fade effect
-                float brightness = trigger_pads[idx].fade;
+                float brightness = trigger_pad_fade[idx];
                 ImVec4 padCol = ImVec4(
                     0.18f + brightness * 0.50f,
                     0.27f + brightness * 0.40f,
@@ -1404,13 +1368,14 @@ static void ShowMainUI() {
                 if (ImGui::Button(label, ImVec2(padSize, padSize))) {
                     if (learn_mode_active) {
                         start_learn_for_pad(idx);
-                    } else {
-                        trigger_pads[idx].fade = 1.0f;
+                    } else if (common_state && common_state->input_mappings) {
+                        trigger_pad_fade[idx] = 1.0f;
                         // Execute the configured action for this pad
-                        if (trigger_pads[idx].action != ACTION_NONE) {
+                        TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[idx];
+                        if (pad->action != ACTION_NONE) {
                             InputEvent event;
-                            event.action = trigger_pads[idx].action;
-                            event.parameter = trigger_pads[idx].parameter;
+                            event.action = pad->action;
+                            event.parameter = pad->parameter;
                             event.value = 127; // Full value for trigger pads
                             handle_input_event(&event);
                         }
@@ -1615,59 +1580,62 @@ static void ShowMainUI() {
         // Display trigger pads in a scrollable region
         ImGui::BeginChild("##pad_config_scroll", ImVec2(rightW - 32.0f, 200.0f), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
-        for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
-            ImGui::PushID(i);
+        if (common_state && common_state->input_mappings) {
+            for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+                ImGui::PushID(i);
+                TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[i];
 
-            // Pad number
-            ImGui::Text("Pad %d:", i + 1);
-            ImGui::SameLine(80.0f);
+                // Pad number
+                ImGui::Text("Pad %d:", i + 1);
+                ImGui::SameLine(80.0f);
 
-            // Action dropdown
-            const char* current_action = input_action_name(trigger_pads[i].action);
-            if (ImGui::BeginCombo("##action", current_action, ImGuiComboFlags_WidthFitPreview)) {
-                // List all available actions
-                for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
-                    InputAction act = (InputAction)a;
-                    const char* action_name = input_action_name(act);
-                    bool is_selected = (trigger_pads[i].action == act);
+                // Action dropdown
+                const char* current_action = input_action_name(pad->action);
+                if (ImGui::BeginCombo("##action", current_action, ImGuiComboFlags_WidthFitPreview)) {
+                    // List all available actions
+                    for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
+                        InputAction act = (InputAction)a;
+                        const char* action_name = input_action_name(act);
+                        bool is_selected = (pad->action == act);
 
-                    if (ImGui::Selectable(action_name, is_selected)) {
-                        trigger_pads[i].action = act;
-                        // Reset parameter to 0 when changing action
-                        trigger_pads[i].parameter = 0;
+                        if (ImGui::Selectable(action_name, is_selected)) {
+                            pad->action = act;
+                            // Reset parameter to 0 when changing action
+                            pad->parameter = 0;
+                        }
+
+                        if (is_selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
                     }
-
-                    if (is_selected) {
-                        ImGui::SetItemDefaultFocus();
-                    }
+                    ImGui::EndCombo();
                 }
-                ImGui::EndCombo();
-            }
 
-            // Show parameter input for actions that need it
-            if (trigger_pads[i].action == ACTION_CHANNEL_MUTE ||
-                trigger_pads[i].action == ACTION_CHANNEL_SOLO ||
-                trigger_pads[i].action == ACTION_CHANNEL_VOLUME) {
+                // Show parameter input for actions that need it
+                if (pad->action == ACTION_CHANNEL_MUTE ||
+                    pad->action == ACTION_CHANNEL_SOLO ||
+                    pad->action == ACTION_CHANNEL_VOLUME) {
+                    ImGui::SameLine();
+                    ImGui::Text("Ch:");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(60.0f);
+                    ImGui::InputInt("##param", &pad->parameter);
+                    // Clamp to valid channel range
+                    if (pad->parameter < 0) pad->parameter = 0;
+                    if (pad->parameter >= MAX_CHANNELS) pad->parameter = MAX_CHANNELS - 1;
+                }
+
+                // Show MIDI note mapping info
                 ImGui::SameLine();
-                ImGui::Text("Ch:");
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(60.0f);
-                ImGui::InputInt("##param", &trigger_pads[i].parameter);
-                // Clamp to valid channel range
-                if (trigger_pads[i].parameter < 0) trigger_pads[i].parameter = 0;
-                if (trigger_pads[i].parameter >= MAX_CHANNELS) trigger_pads[i].parameter = MAX_CHANNELS - 1;
-            }
+                if (pad->midi_note >= 0) {
+                    ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Note:%d Dev:%d",
+                                       pad->midi_note, pad->midi_device);
+                } else {
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No MIDI mapping");
+                }
 
-            // Show MIDI note mapping info
-            ImGui::SameLine();
-            if (trigger_pads[i].midi_note >= 0) {
-                ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Note:%d Dev:%d",
-                                   trigger_pads[i].midi_note, trigger_pads[i].midi_device);
-            } else {
-                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No MIDI mapping");
+                ImGui::PopID();
             }
-
-            ImGui::PopID();
         }
 
         ImGui::EndChild();
@@ -1784,9 +1752,6 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Failed to create common state\n");
         return 1;
     }
-
-    // Initialize trigger pads with defaults
-    init_trigger_pads_defaults();
 
     // Track the config file for saving learned mappings
     current_config_file = config_file;
