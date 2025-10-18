@@ -62,6 +62,7 @@ static const char *current_config_file = "regroove.ini"; // Track config file fo
 // Audio device state
 static std::vector<std::string> audio_device_names;
 static int selected_audio_device = -1;
+static SDL_AudioDeviceID audio_device_id = 0;
 
 void refresh_audio_devices() {
     audio_device_names.clear();
@@ -219,7 +220,7 @@ static int load_module(const char *path) {
     regroove_set_custom_loop_rows(mod, 0); // 0 disables custom loop
     regroove_set_pitch(mod, MapPitchFader(0.0f)); // Reset pitch
 
-    SDL_PauseAudio(1);
+    if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 1);
     playing = false;
     for (int i = 0; i < 16; i++) step_fade[i] = 0.0f;
     return 0;
@@ -256,13 +257,13 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
     switch (act) {
         case ACT_PLAY:
             if (mod) {
-                SDL_PauseAudio(0);
+                if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 0);
                 playing = true;
             }
             break;
         case ACT_STOP:
             if (mod) {
-                SDL_PauseAudio(1);
+                if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 1);
                 playing = false;
             }
             break;
@@ -1436,11 +1437,16 @@ static void ShowMainUI() {
         ImGui::Text("MIDI Device 0:");
         ImGui::SameLine(150.0f);
         int current_device_0 = common_state ? common_state->device_config.midi_device_0 : -1;
-        char device_0_label[32];
+        char device_0_label[128];
         if (current_device_0 == -1) {
             snprintf(device_0_label, sizeof(device_0_label), "None");
         } else {
-            snprintf(device_0_label, sizeof(device_0_label), "Port %d", current_device_0);
+            char port_name[128];
+            if (midi_get_port_name(current_device_0, port_name, sizeof(port_name)) == 0) {
+                snprintf(device_0_label, sizeof(device_0_label), "%s", port_name);
+            } else {
+                snprintf(device_0_label, sizeof(device_0_label), "Port %d", current_device_0);
+            }
         }
 
         if (ImGui::BeginCombo("##midi_device_0", device_0_label)) {
@@ -1462,8 +1468,13 @@ static void ShowMainUI() {
                 }
             }
             for (int i = 0; i < num_midi_ports; i++) {
-                char label[32];
-                snprintf(label, sizeof(label), "Port %d", i);
+                char label[128];
+                char port_name[128];
+                if (midi_get_port_name(i, port_name, sizeof(port_name)) == 0) {
+                    snprintf(label, sizeof(label), "%s", port_name);
+                } else {
+                    snprintf(label, sizeof(label), "Port %d", i);
+                }
                 if (ImGui::Selectable(label, current_device_0 == i)) {
                     if (common_state) {
                         common_state->device_config.midi_device_0 = i;
@@ -1491,11 +1502,16 @@ static void ShowMainUI() {
         ImGui::Text("MIDI Device 1:");
         ImGui::SameLine(150.0f);
         int current_device_1 = common_state ? common_state->device_config.midi_device_1 : -1;
-        char device_1_label[32];
+        char device_1_label[128];
         if (current_device_1 == -1) {
             snprintf(device_1_label, sizeof(device_1_label), "None");
         } else {
-            snprintf(device_1_label, sizeof(device_1_label), "Port %d", current_device_1);
+            char port_name[128];
+            if (midi_get_port_name(current_device_1, port_name, sizeof(port_name)) == 0) {
+                snprintf(device_1_label, sizeof(device_1_label), "%s", port_name);
+            } else {
+                snprintf(device_1_label, sizeof(device_1_label), "Port %d", current_device_1);
+            }
         }
 
         if (ImGui::BeginCombo("##midi_device_1", device_1_label)) {
@@ -1517,8 +1533,13 @@ static void ShowMainUI() {
                 }
             }
             for (int i = 0; i < num_midi_ports; i++) {
-                char label[32];
-                snprintf(label, sizeof(label), "Port %d", i);
+                char label[128];
+                char port_name[128];
+                if (midi_get_port_name(i, port_name, sizeof(port_name)) == 0) {
+                    snprintf(label, sizeof(label), "%s", port_name);
+                } else {
+                    snprintf(label, sizeof(label), "Port %d", i);
+                }
                 if (ImGui::Selectable(label, current_device_1 == i)) {
                     if (common_state) {
                         common_state->device_config.midi_device_1 = i;
@@ -1708,6 +1729,9 @@ int main(int argc, char* argv[]) {
         printf("Loaded input mappings from %s\n", config_file);
     }
 
+    // Apply loaded audio device setting to UI variable
+    selected_audio_device = common_state->device_config.audio_device;
+
     // Load file list from directory
     std::string dir_path;
     struct stat st;
@@ -1752,7 +1776,18 @@ int main(int argc, char* argv[]) {
     spec.samples = 256;
     spec.callback = audio_callback;
     spec.userdata = NULL;
-    if (SDL_OpenAudio(&spec, NULL) < 0) return 1;
+    // Open audio device (use selected device or NULL for default)
+    const char* device_name = NULL;
+    if (selected_audio_device >= 0) {
+        device_name = SDL_GetAudioDeviceName(selected_audio_device, 0);
+    }
+    audio_device_id = SDL_OpenAudioDevice(device_name, 0, &spec, NULL, 0);
+    if (audio_device_id == 0) {
+        fprintf(stderr, "SDL_OpenAudioDevice failed: %s\n", SDL_GetError());
+        return 1;
+    }
+    // Store audio device ID in common state for use by common functions
+    common_state->audio_device_id = audio_device_id;
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ApplyFlatBlackRedSkin();
@@ -1798,8 +1833,10 @@ int main(int argc, char* argv[]) {
         SDL_Delay(10);
     }
     midi_deinit();
-    SDL_PauseAudio(1);
-    SDL_CloseAudio();
+    if (audio_device_id) {
+        SDL_PauseAudioDevice(audio_device_id, 1);
+        SDL_CloseAudioDevice(audio_device_id);
+    }
 
     regroove_common_destroy(common_state);
 

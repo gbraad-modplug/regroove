@@ -216,14 +216,20 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
     if (!state || !path) return -1;
 
     // Lock audio before destroying old module
-    SDL_LockAudio();
+    if (state->audio_device_id) {
+        SDL_LockAudioDevice(state->audio_device_id);
+    }
     if (state->player) {
         Regroove *old = state->player;
         state->player = NULL;
-        SDL_UnlockAudio();
+        if (state->audio_device_id) {
+            SDL_UnlockAudioDevice(state->audio_device_id);
+        }
         regroove_destroy(old);
     } else {
-        SDL_UnlockAudio();
+        if (state->audio_device_id) {
+            SDL_UnlockAudioDevice(state->audio_device_id);
+        }
     }
 
     // Create new module
@@ -233,9 +239,13 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
     }
 
     // Lock audio and assign new module
-    SDL_LockAudio();
+    if (state->audio_device_id) {
+        SDL_LockAudioDevice(state->audio_device_id);
+    }
     state->player = mod;
-    SDL_UnlockAudio();
+    if (state->audio_device_id) {
+        SDL_UnlockAudioDevice(state->audio_device_id);
+    }
 
     // Update state
     state->num_channels = regroove_get_num_channels(mod);
@@ -247,7 +257,9 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
     }
 
     // Pause audio
-    SDL_PauseAudio(1);
+    if (state->audio_device_id) {
+        SDL_PauseAudioDevice(state->audio_device_id, 1);
+    }
 
     return 0;
 }
@@ -258,10 +270,14 @@ void regroove_common_destroy(RegrooveCommonState *state) {
 
     // Safely destroy player
     if (state->player) {
-        SDL_LockAudio();
+        if (state->audio_device_id) {
+            SDL_LockAudioDevice(state->audio_device_id);
+        }
         Regroove *tmp = state->player;
         state->player = NULL;
-        SDL_UnlockAudio();
+        if (state->audio_device_id) {
+            SDL_UnlockAudioDevice(state->audio_device_id);
+        }
         regroove_destroy(tmp);
     }
 
@@ -283,7 +299,9 @@ void regroove_common_play_pause(RegrooveCommonState *state, int play) {
     if (!state || !state->player) return;
 
     state->paused = !play;
-    SDL_PauseAudio(!play);
+    if (state->audio_device_id) {
+        SDL_PauseAudioDevice(state->audio_device_id, !play);
+    }
 }
 
 void regroove_common_retrigger(RegrooveCommonState *state) {

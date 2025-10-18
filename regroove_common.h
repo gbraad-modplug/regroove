@@ -53,6 +53,7 @@ typedef struct {
     int paused;
     int num_channels;
     double pitch;
+    unsigned int audio_device_id;  // SDL_AudioDeviceID for device-specific audio control
 } RegrooveCommonState;
 
 // Initialize common state

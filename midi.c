@@ -19,7 +19,7 @@ static void rtmidi_event_callback_1(double dt, const unsigned char *msg, size_t 
 }
 
 int midi_list_ports(void) {
-    if (access("/dev/snd/seq", F_OK) != 0) return 0;   
+    if (access("/dev/snd/seq", F_OK) != 0) return 0;
     RtMidiInPtr temp = rtmidi_in_create_default();
     if (!temp) return 0; // <- If NULL, bail out instantly
     unsigned int nports = 0;
@@ -35,6 +35,24 @@ int midi_list_ports(void) {
     }
     rtmidi_in_free(temp);
     return nports;
+}
+
+int midi_get_port_name(int port, char *name_out, int bufsize) {
+    if (!name_out || bufsize <= 0) return -1;
+    if (access("/dev/snd/seq", F_OK) != 0) return -1;
+
+    RtMidiInPtr temp = rtmidi_in_create_default();
+    if (!temp) return -1;
+
+    unsigned int nports = rtmidi_get_port_count(temp);
+    if (port < 0 || port >= (int)nports) {
+        rtmidi_in_free(temp);
+        return -1;
+    }
+
+    rtmidi_get_port_name(temp, port, name_out, &bufsize);
+    rtmidi_in_free(temp);
+    return 0;
 }
 
 int midi_init(MidiEventCallback cb, void *userdata, int port) {

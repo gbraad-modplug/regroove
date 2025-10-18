@@ -35,6 +35,15 @@ void midi_deinit(void);
  */
 int midi_list_ports(void);
 
+/**
+ * Get the name of a MIDI input port.
+ * port: port index
+ * name_out: buffer to store the port name
+ * bufsize: size of name_out buffer
+ * Returns 0 on success, -1 on failure.
+ */
+int midi_get_port_name(int port, char *name_out, int bufsize);
+
 #ifdef __cplusplus
 }
 #endif

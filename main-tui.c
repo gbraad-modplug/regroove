@@ -14,6 +14,7 @@ static struct termios orig_termios;
 
 // --- Shared state ---
 static RegrooveCommonState *common_state = NULL;
+static SDL_AudioDeviceID audio_device_id = 0;
 
 // --- Trigger pad configuration ---
 #define MAX_TRIGGER_PADS 16
@@ -452,12 +453,22 @@ int main(int argc, char *argv[]) {
         regroove_common_destroy(common_state);
         return 1;
     }
-    if (SDL_OpenAudio(&spec, NULL) < 0) {
-        fprintf(stderr, "SDL_OpenAudio failed: %s\n", SDL_GetError());
+
+    // Open audio device (use selected device or NULL for default)
+    const char* device_name = NULL;
+    int selected_audio_device = common_state->device_config.audio_device;
+    if (selected_audio_device >= 0) {
+        device_name = SDL_GetAudioDeviceName(selected_audio_device, 0);
+    }
+    audio_device_id = SDL_OpenAudioDevice(device_name, 0, &spec, NULL, 0);
+    if (audio_device_id == 0) {
+        fprintf(stderr, "SDL_OpenAudioDevice failed: %s\n", SDL_GetError());
         regroove_common_destroy(common_state);
         SDL_Quit();
         return 1;
     }
+    // Store audio device ID in common state for use by common functions
+    common_state->audio_device_id = audio_device_id;
     signal(SIGINT, handle_sigint);
 
     tty_make_raw_nonblocking();
@@ -485,7 +496,7 @@ int main(int argc, char *argv[]) {
         printf("No MIDI available. Running with keyboard control only.\n");
     }
 
-    SDL_PauseAudio(1);
+    if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 1);
 
     while (running) {
         int k = read_key_nonblocking();
@@ -504,8 +515,10 @@ int main(int argc, char *argv[]) {
     midi_deinit();
 
     // Safely stop audio and destroy module
-    SDL_PauseAudio(1);
-    SDL_CloseAudio();
+    if (audio_device_id) {
+        SDL_PauseAudioDevice(audio_device_id, 1);
+        SDL_CloseAudioDevice(audio_device_id);
+    }
 
     regroove_common_destroy(common_state);
 
