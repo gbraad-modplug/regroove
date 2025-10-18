@@ -24,6 +24,7 @@ static InputAction parse_action(const char *str) {
     if (strcmp(str, "pitch_up") == 0) return ACTION_PITCH_UP;
     if (strcmp(str, "pitch_down") == 0) return ACTION_PITCH_DOWN;
     if (strcmp(str, "pitch_set") == 0) return ACTION_PITCH_SET;
+    if (strcmp(str, "pitch_reset") == 0) return ACTION_PITCH_RESET;
     if (strcmp(str, "quit") == 0) return ACTION_QUIT;
     if (strcmp(str, "file_prev") == 0) return ACTION_FILE_PREV;
     if (strcmp(str, "file_next") == 0) return ACTION_FILE_NEXT;
@@ -53,6 +54,7 @@ const char* input_action_name(InputAction action) {
         case ACTION_PITCH_UP: return "pitch_up";
         case ACTION_PITCH_DOWN: return "pitch_down";
         case ACTION_PITCH_SET: return "pitch_set";
+        case ACTION_PITCH_RESET: return "pitch_reset";
         case ACTION_QUIT: return "quit";
         case ACTION_FILE_PREV: return "file_prev";
         case ACTION_FILE_NEXT: return "file_next";

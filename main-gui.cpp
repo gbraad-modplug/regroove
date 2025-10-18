@@ -458,6 +458,9 @@ static void handle_input_event(InputEvent *event) {
                 dispatch_action(ACT_SET_PITCH, -1, pitch_value);
             }
             break;
+        case ACTION_PITCH_RESET:
+            dispatch_action(ACT_PITCH_RESET);
+            break;
         case ACTION_QUIT:
             {
                 SDL_Event quit;
@@ -567,6 +570,104 @@ static void learn_keyboard_mapping(int key) {
     learn_target_type = LEARN_NONE;
 }
 
+// Helper function to unlearn (remove all mappings for current target)
+static void unlearn_current_target() {
+    if (!common_state || !common_state->input_mappings) return;
+    if (learn_target_type == LEARN_NONE) return;
+
+    int removed_count = 0;
+
+    if (learn_target_type == LEARN_TRIGGER_PAD) {
+        // Remove MIDI note mapping from trigger pad
+        if (learn_target_pad_index >= 0 && learn_target_pad_index < MAX_TRIGGER_PADS) {
+            if (trigger_pads[learn_target_pad_index].midi_note != -1) {
+                trigger_pads[learn_target_pad_index].midi_note = -1;
+                trigger_pads[learn_target_pad_index].midi_device = -1;
+                printf("Unlearned MIDI note mapping for Pad %d\n", learn_target_pad_index + 1);
+                removed_count++;
+            }
+        }
+
+        // Remove keyboard mappings for this trigger pad
+        for (int i = 0; i < common_state->input_mappings->keyboard_count; i++) {
+            KeyboardMapping *k = &common_state->input_mappings->keyboard_mappings[i];
+            if (k->action == ACTION_TRIGGER_PAD && k->parameter == learn_target_pad_index) {
+                // Remove this mapping by shifting others down
+                for (int j = i; j < common_state->input_mappings->keyboard_count - 1; j++) {
+                    common_state->input_mappings->keyboard_mappings[j] =
+                        common_state->input_mappings->keyboard_mappings[j + 1];
+                }
+                common_state->input_mappings->keyboard_count--;
+                printf("Unlearned keyboard mapping for Pad %d\n", learn_target_pad_index + 1);
+                removed_count++;
+                i--; // Check this index again since we shifted
+            }
+        }
+
+        // Remove MIDI CC mappings for this trigger pad
+        for (int i = 0; i < common_state->input_mappings->midi_count; i++) {
+            MidiMapping *m = &common_state->input_mappings->midi_mappings[i];
+            if (m->action == ACTION_TRIGGER_PAD && m->parameter == learn_target_pad_index) {
+                // Remove this mapping
+                for (int j = i; j < common_state->input_mappings->midi_count - 1; j++) {
+                    common_state->input_mappings->midi_mappings[j] =
+                        common_state->input_mappings->midi_mappings[j + 1];
+                }
+                common_state->input_mappings->midi_count--;
+                printf("Unlearned MIDI CC mapping for Pad %d\n", learn_target_pad_index + 1);
+                removed_count++;
+                i--; // Check this index again since we shifted
+            }
+        }
+    } else if (learn_target_type == LEARN_ACTION) {
+        // Remove keyboard mappings for this action
+        for (int i = 0; i < common_state->input_mappings->keyboard_count; i++) {
+            KeyboardMapping *k = &common_state->input_mappings->keyboard_mappings[i];
+            if (k->action == learn_target_action && k->parameter == learn_target_parameter) {
+                // Remove this mapping by shifting others down
+                for (int j = i; j < common_state->input_mappings->keyboard_count - 1; j++) {
+                    common_state->input_mappings->keyboard_mappings[j] =
+                        common_state->input_mappings->keyboard_mappings[j + 1];
+                }
+                common_state->input_mappings->keyboard_count--;
+                printf("Unlearned keyboard mapping for %s (param=%d)\n",
+                       input_action_name(learn_target_action), learn_target_parameter);
+                removed_count++;
+                i--; // Check this index again since we shifted
+            }
+        }
+
+        // Remove MIDI mappings for this action
+        for (int i = 0; i < common_state->input_mappings->midi_count; i++) {
+            MidiMapping *m = &common_state->input_mappings->midi_mappings[i];
+            if (m->action == learn_target_action && m->parameter == learn_target_parameter) {
+                // Remove this mapping
+                for (int j = i; j < common_state->input_mappings->midi_count - 1; j++) {
+                    common_state->input_mappings->midi_mappings[j] =
+                        common_state->input_mappings->midi_mappings[j + 1];
+                }
+                common_state->input_mappings->midi_count--;
+                printf("Unlearned MIDI mapping for %s (param=%d)\n",
+                       input_action_name(learn_target_action), learn_target_parameter);
+                removed_count++;
+                i--; // Check this index again since we shifted
+            }
+        }
+    }
+
+    if (removed_count > 0) {
+        // Save the updated mappings to config
+        save_mappings_to_config();
+        printf("Removed %d mapping(s)\n", removed_count);
+    } else {
+        printf("No mappings to remove\n");
+    }
+
+    // Exit learn mode
+    learn_mode_active = false;
+    learn_target_type = LEARN_NONE;
+}
+
 // Helper functions to start learn mode for different targets
 static void start_learn_for_action(InputAction action, int parameter = 0) {
     learn_mode_active = true;
@@ -574,7 +675,7 @@ static void start_learn_for_action(InputAction action, int parameter = 0) {
     learn_target_action = action;
     learn_target_parameter = parameter;
     learn_target_pad_index = -1;
-    printf("Learn mode: Waiting for input for action %s (param=%d)...\n",
+    printf("Learn mode: Waiting for input for action %s (param=%d)... (Click LEARN again to unlearn)\n",
            input_action_name(action), parameter);
 }
 
@@ -585,7 +686,7 @@ static void start_learn_for_pad(int pad_index) {
     learn_target_action = ACTION_NONE;
     learn_target_parameter = 0;
     learn_target_pad_index = pad_index;
-    printf("Learn mode: Waiting for input for Pad %d...\n", pad_index + 1);
+    printf("Learn mode: Waiting for input for Pad %d... (Click LEARN again to unlearn)\n", pad_index + 1);
 }
 
 // Learn MIDI mapping for current target
@@ -1063,13 +1164,19 @@ static void ShowMainUI() {
     ImVec4 learnCol = learn_mode_active ? ImVec4(0.90f, 0.16f, 0.18f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_Button, learnCol);
     if (ImGui::Button("LEARN", ImVec2(BUTTON_SIZE * 2 + 8, BUTTON_SIZE))) {
-        learn_mode_active = !learn_mode_active;
-        if (!learn_mode_active) {
-            // Cancel learn mode
-            learn_target_type = LEARN_NONE;
-            learn_target_action = ACTION_NONE;
-            learn_target_parameter = 0;
-            learn_target_pad_index = -1;
+        if (learn_mode_active && learn_target_type != LEARN_NONE) {
+            // If we're waiting for input, unlearn the current target
+            unlearn_current_target();
+        } else {
+            // Toggle learn mode on/off
+            learn_mode_active = !learn_mode_active;
+            if (!learn_mode_active) {
+                // Cancel learn mode
+                learn_target_type = LEARN_NONE;
+                learn_target_action = ACTION_NONE;
+                learn_target_parameter = 0;
+                learn_target_pad_index = -1;
+            }
         }
     }
     ImGui::PopStyleColor();
@@ -1170,8 +1277,10 @@ static void ShowMainUI() {
                 }
             }
             ImGui::Dummy(ImVec2(0, 8.0f));
-            if (ImGui::Button("R##pitch_reset", ImVec2(sliderW, MUTE_SIZE)))
-                dispatch_action(ACT_PITCH_RESET);
+            if (ImGui::Button("R##pitch_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                if (learn_mode_active) start_learn_for_action(ACTION_PITCH_RESET);
+                else dispatch_action(ACT_PITCH_RESET);
+            }
             ImGui::EndGroup();
         }
     }

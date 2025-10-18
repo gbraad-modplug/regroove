@@ -19,6 +19,7 @@ typedef enum {
     ACTION_PITCH_UP,
     ACTION_PITCH_DOWN,
     ACTION_PITCH_SET,        // uses MIDI value for pitch (continuous control)
+    ACTION_PITCH_RESET,      // reset pitch to 1.0x
     ACTION_QUIT,
     ACTION_FILE_PREV,
     ACTION_FILE_NEXT,
