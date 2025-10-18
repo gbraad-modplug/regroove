@@ -11,6 +11,7 @@
 typedef enum {
     RG_CMD_NONE,
     RG_CMD_QUEUE_ORDER,
+    RG_CMD_JUMP_TO_PATTERN,
     RG_CMD_LOOP_TILL_ROW,
     RG_CMD_SET_PATTERN_MODE,
     RG_CMD_RETRIGGER_PATTERN,
@@ -178,6 +179,35 @@ static void process_commands(struct Regroove* g) {
                     g->has_queued_jump = 1;
                 }
                 break;
+            case RG_CMD_JUMP_TO_PATTERN: {
+                int pattern_index = cmd->arg1;
+                int target_order = -1;
+
+                // Find first order that contains this pattern
+                for (int i = 0; i < g->num_orders; ++i) {
+                    if (openmpt_module_get_order_pattern(g->mod, i) == pattern_index) {
+                        target_order = i;
+                        break;
+                    }
+                }
+
+                // If pattern not found in order list, use order 0 as fallback
+                if (target_order == -1) {
+                    target_order = 0;
+                }
+
+                // Update loop state for pattern mode
+                g->loop_order = target_order;
+                g->loop_pattern = pattern_index;
+                g->full_loop_rows = openmpt_module_get_pattern_num_rows(g->mod, pattern_index);
+                g->custom_loop_rows = 0;
+                g->prev_row = -1;
+
+                // Jump to the position
+                openmpt_module_set_position_order_row(g->mod, target_order, 0);
+                if (g->interactive_ok) reapply_mutes(g);
+                break;
+            }
             case RG_CMD_LOOP_TILL_ROW:
                 g->loop_order = cmd->arg1;
                 g->loop_pattern = openmpt_module_get_order_pattern(g->mod, cmd->arg1);
@@ -438,6 +468,19 @@ void regroove_queue_prev_order(Regroove* g) {
     int prev_order = cur_order > 0 ? cur_order - 1 : 0;
     enqueue_command(g, RG_CMD_QUEUE_ORDER, prev_order, 0);
 }
+void regroove_jump_to_order(Regroove* g, int order) {
+    if (order >= 0 && order < g->num_orders) {
+        enqueue_command(g, RG_CMD_QUEUE_ORDER, order, 0);
+    }
+}
+void regroove_jump_to_pattern(Regroove* g, int pattern) {
+    if (!g || !g->mod) return;
+    // Get total number of patterns to validate input
+    int num_patterns = openmpt_module_get_num_patterns(g->mod);
+    if (pattern >= 0 && pattern < num_patterns) {
+        enqueue_command(g, RG_CMD_JUMP_TO_PATTERN, pattern, 0);
+    }
+}
 void regroove_loop_till_row(Regroove* g, int row) {
     int cur_order = openmpt_module_get_current_order(g->mod);
     enqueue_command(g, RG_CMD_LOOP_TILL_ROW, cur_order, row);
@@ -479,6 +522,10 @@ void regroove_set_pitch(Regroove* g, double pitch) {
 
 // --- Info getters ---
 int regroove_get_num_orders(const Regroove* g) { return g->num_orders; }
+int regroove_get_num_patterns(const Regroove* g) {
+    if (!g || !g->mod) return 0;
+    return openmpt_module_get_num_patterns(g->mod);
+}
 int regroove_get_order_pattern(const Regroove* g, int order) {
     if (!g || !g->mod) return -1;
     return openmpt_module_get_order_pattern(g->mod, order);

@@ -33,6 +33,7 @@ static InputAction parse_action(const char *str) {
     if (strcmp(str, "channel_solo") == 0) return ACTION_CHANNEL_SOLO;
     if (strcmp(str, "channel_volume") == 0) return ACTION_CHANNEL_VOLUME;
     if (strcmp(str, "trigger_pad") == 0) return ACTION_TRIGGER_PAD;
+    if (strcmp(str, "jump_to_order") == 0) return ACTION_JUMP_TO_ORDER;
     return ACTION_NONE;
 }
 
@@ -63,6 +64,7 @@ const char* input_action_name(InputAction action) {
         case ACTION_CHANNEL_SOLO: return "channel_solo";
         case ACTION_CHANNEL_VOLUME: return "channel_volume";
         case ACTION_TRIGGER_PAD: return "trigger_pad";
+        case ACTION_JUMP_TO_ORDER: return "jump_to_order";
         default: return "none";
     }
 }

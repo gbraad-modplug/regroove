@@ -36,6 +36,8 @@ void regroove_process_commands(Regroove *g);
 void regroove_pattern_mode(Regroove *g, int on);
 void regroove_queue_next_order(Regroove *g);
 void regroove_queue_prev_order(Regroove *g);
+void regroove_jump_to_order(Regroove *g, int order);
+void regroove_jump_to_pattern(Regroove *g, int pattern);
 void regroove_loop_till_row(Regroove *g, int row);
 void regroove_retrigger_pattern(Regroove *g);
 void regroove_set_custom_loop_rows(Regroove *g, int rows);
@@ -50,6 +52,7 @@ void regroove_set_pitch(Regroove *g, double pitch);
 
 // State queries
 int regroove_get_num_orders(const Regroove *g);
+int regroove_get_num_patterns(const Regroove *g);
 int regroove_get_order_pattern(const Regroove *g, int order);
 int regroove_get_current_order(const Regroove *g);
 int regroove_get_current_pattern(const Regroove *g);

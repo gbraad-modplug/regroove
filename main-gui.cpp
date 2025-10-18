@@ -212,7 +212,8 @@ enum GuiAction {
     ACT_SOLO_CHANNEL,
     ACT_VOLUME_CHANNEL,
     ACT_MUTE_ALL,
-    ACT_UNMUTE_ALL
+    ACT_UNMUTE_ALL,
+    ACT_JUMP_TO_ORDER
 };
 
 void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
@@ -377,6 +378,11 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
                 }
             }
             break;
+        case ACT_JUMP_TO_ORDER:
+            if (mod && arg1 >= 0) {
+                regroove_jump_to_order(mod, arg1);
+            }
+            break;
     }
 }
 
@@ -487,6 +493,9 @@ static void handle_input_event(InputEvent *event) {
                     handle_input_event(&pad_event);
                 }
             }
+            break;
+        case ACTION_JUMP_TO_ORDER:
+            dispatch_action(ACT_JUMP_TO_ORDER, event->parameter);
             break;
         default:
             break;
@@ -1543,17 +1552,29 @@ static void ShowMainUI() {
             for (int i = 0; i < num_orders; i++) {
                 int pat = regroove_get_order_pattern(mod, i);
 
+                ImGui::PushID(i);
+
                 // Highlight current order
-                if (i == current_order) {
+                bool is_current = (i == current_order);
+                if (is_current) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-                    ImGui::Text("> %d", i);
+                }
+
+                // Make order number clickable (hot cue)
+                char order_label[16];
+                snprintf(order_label, sizeof(order_label), "%s%d", is_current ? "> " : "  ", i);
+                if (ImGui::Selectable(order_label, is_current, ImGuiSelectableFlags_SpanAllColumns)) {
+                    // Jump to this order (hot cue)
+                    dispatch_action(ACT_JUMP_TO_ORDER, i);
+                }
+
+                if (is_current) {
                     ImGui::PopStyleColor();
-                } else {
-                    ImGui::Text("  %d", i);
                 }
                 ImGui::NextColumn();
 
-                if (i == current_order) {
+                // Display pattern number
+                if (is_current) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
                     ImGui::Text("%d", pat);
                     ImGui::PopStyleColor();
@@ -1561,6 +1582,8 @@ static void ShowMainUI() {
                     ImGui::Text("%d", pat);
                 }
                 ImGui::NextColumn();
+
+                ImGui::PopID();
             }
 
             ImGui::Columns(1);
@@ -1816,6 +1839,14 @@ static void ShowMainUI() {
                     // Clamp to valid channel range
                     if (pad->parameter < 0) pad->parameter = 0;
                     if (pad->parameter >= MAX_CHANNELS) pad->parameter = MAX_CHANNELS - 1;
+                } else if (pad->action == ACTION_JUMP_TO_ORDER) {
+                    ImGui::SameLine();
+                    ImGui::Text("Order:");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(60.0f);
+                    ImGui::InputInt("##param", &pad->parameter);
+                    // Clamp to valid order range (will be validated at runtime)
+                    if (pad->parameter < 0) pad->parameter = 0;
                 }
 
                 // Show MIDI note mapping info
@@ -1884,7 +1915,8 @@ static void ShowMainUI() {
 
                 // Display parameter
                 if (km->action == ACTION_CHANNEL_MUTE || km->action == ACTION_CHANNEL_SOLO ||
-                    km->action == ACTION_CHANNEL_VOLUME || km->action == ACTION_TRIGGER_PAD) {
+                    km->action == ACTION_CHANNEL_VOLUME || km->action == ACTION_TRIGGER_PAD ||
+                    km->action == ACTION_JUMP_TO_ORDER) {
                     ImGui::Text("%d", km->parameter);
                 } else {
                     ImGui::Text("-");
@@ -2046,7 +2078,8 @@ static void ShowMainUI() {
 
                 // Display parameter
                 if (mm->action == ACTION_CHANNEL_MUTE || mm->action == ACTION_CHANNEL_SOLO ||
-                    mm->action == ACTION_CHANNEL_VOLUME || mm->action == ACTION_TRIGGER_PAD) {
+                    mm->action == ACTION_CHANNEL_VOLUME || mm->action == ACTION_TRIGGER_PAD ||
+                    mm->action == ACTION_JUMP_TO_ORDER) {
                     ImGui::Text("%d", mm->parameter);
                 } else {
                     ImGui::Text("-");

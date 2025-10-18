@@ -258,6 +258,16 @@ void handle_input_event(InputEvent *event) {
                 }
             }
             break;
+        case ACTION_JUMP_TO_ORDER:
+            if (common_state->player && event->parameter >= 0) {
+                int num_orders = regroove_get_num_orders(common_state->player);
+                if (event->parameter < num_orders) {
+                    regroove_jump_to_order(common_state->player, event->parameter);
+                    int pat = regroove_get_order_pattern(common_state->player, event->parameter);
+                    printf("Hot cue jump to Order %d (Pattern %d)\n", event->parameter, pat);
+                }
+            }
+            break;
         default:
             break;
     }
