@@ -1404,9 +1404,13 @@ static void ShowMainUI() {
         }
     }
     else if (ui_mode == UI_MODE_SETTINGS) {
-        // SETTINGS MODE: Show device configuration
+        // SETTINGS MODE: Show device configuration and input mappings
 
         ImGui::SetCursorPos(ImVec2(origin.x + 16.0f, origin.y + 16.0f));
+
+        // Make the entire settings area scrollable
+        ImGui::BeginChild("##settings_scroll", ImVec2(rightW - 32.0f, contentHeight - 32.0f), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
         ImGui::BeginGroup();
 
         ImGui::Text("MIDI Device Configuration");
@@ -1667,6 +1671,369 @@ static void ShowMainUI() {
         ImGui::TextWrapped("Use LEARN mode in PADS view to assign MIDI notes and keyboard shortcuts to trigger pads.");
 
         ImGui::Dummy(ImVec2(0, 20.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
+        // Keyboard Mappings Section
+        ImGui::Text("Keyboard Mappings");
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
+        // Static variables for new keyboard mapping
+        static InputAction new_kb_action = ACTION_PLAY_PAUSE;
+        static int new_kb_parameter = 0;
+        static int new_kb_key = ' ';
+        static char kb_key_buffer[32] = " ";
+
+        if (common_state && common_state->input_mappings) {
+            // Display existing keyboard mappings in a table
+            ImGui::BeginChild("##kb_mappings_list", ImVec2(rightW - 64.0f, 200.0f), true);
+
+            ImGui::Columns(4, "kb_columns");
+            ImGui::SetColumnWidth(0, 100.0f);
+            ImGui::SetColumnWidth(1, 200.0f);
+            ImGui::SetColumnWidth(2, 100.0f);
+            ImGui::SetColumnWidth(3, 80.0f);
+
+            ImGui::Text("Key"); ImGui::NextColumn();
+            ImGui::Text("Action"); ImGui::NextColumn();
+            ImGui::Text("Parameter"); ImGui::NextColumn();
+            ImGui::Text("Delete"); ImGui::NextColumn();
+            ImGui::Separator();
+
+            int delete_kb_index = -1;
+            for (int i = 0; i < common_state->input_mappings->keyboard_count; i++) {
+                KeyboardMapping *km = &common_state->input_mappings->keyboard_mappings[i];
+
+                // Display key
+                char key_display[32];
+                if (km->key >= 32 && km->key <= 126) {
+                    snprintf(key_display, sizeof(key_display), "'%c' (%d)", km->key, km->key);
+                } else {
+                    snprintf(key_display, sizeof(key_display), "Code %d", km->key);
+                }
+                ImGui::Text("%s", key_display); ImGui::NextColumn();
+
+                // Display action
+                ImGui::Text("%s", input_action_name(km->action)); ImGui::NextColumn();
+
+                // Display parameter
+                if (km->action == ACTION_CHANNEL_MUTE || km->action == ACTION_CHANNEL_SOLO ||
+                    km->action == ACTION_CHANNEL_VOLUME || km->action == ACTION_TRIGGER_PAD) {
+                    ImGui::Text("%d", km->parameter);
+                } else {
+                    ImGui::Text("-");
+                }
+                ImGui::NextColumn();
+
+                // Delete button
+                ImGui::PushID(i);
+                if (ImGui::Button("X", ImVec2(40.0f, 0.0f))) {
+                    delete_kb_index = i;
+                }
+                ImGui::PopID();
+                ImGui::NextColumn();
+            }
+
+            ImGui::Columns(1);
+            ImGui::EndChild();
+
+            // Handle deletion
+            if (delete_kb_index >= 0) {
+                for (int j = delete_kb_index; j < common_state->input_mappings->keyboard_count - 1; j++) {
+                    common_state->input_mappings->keyboard_mappings[j] =
+                        common_state->input_mappings->keyboard_mappings[j + 1];
+                }
+                common_state->input_mappings->keyboard_count--;
+                printf("Deleted keyboard mapping at index %d\n", delete_kb_index);
+            }
+
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Add new keyboard mapping UI
+            ImGui::Text("Add Keyboard Mapping:");
+            ImGui::Dummy(ImVec2(0, 4.0f));
+
+            // Key input
+            ImGui::Text("Key:");
+            ImGui::SameLine(150.0f);
+            ImGui::SetNextItemWidth(200.0f);
+            if (ImGui::InputText("##new_kb_key", kb_key_buffer, sizeof(kb_key_buffer))) {
+                if (kb_key_buffer[0] != '\0') {
+                    new_kb_key = kb_key_buffer[0];
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(Type a single character)");
+
+            // Action dropdown
+            ImGui::Text("Action:");
+            ImGui::SameLine(150.0f);
+            ImGui::SetNextItemWidth(200.0f);
+            if (ImGui::BeginCombo("##new_kb_action", input_action_name(new_kb_action))) {
+                for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
+                    InputAction act = (InputAction)a;
+                    if (ImGui::Selectable(input_action_name(act), new_kb_action == act)) {
+                        new_kb_action = act;
+                        new_kb_parameter = 0; // Reset parameter when changing action
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            // Parameter input (only for actions that need it)
+            if (new_kb_action == ACTION_CHANNEL_MUTE || new_kb_action == ACTION_CHANNEL_SOLO ||
+                new_kb_action == ACTION_CHANNEL_VOLUME || new_kb_action == ACTION_TRIGGER_PAD) {
+                ImGui::Text("Parameter:");
+                ImGui::SameLine(150.0f);
+                ImGui::SetNextItemWidth(100.0f);
+                ImGui::InputInt("##new_kb_param", &new_kb_parameter);
+                if (new_kb_parameter < 0) new_kb_parameter = 0;
+                if (new_kb_action == ACTION_TRIGGER_PAD && new_kb_parameter >= MAX_TRIGGER_PADS)
+                    new_kb_parameter = MAX_TRIGGER_PADS - 1;
+                if ((new_kb_action == ACTION_CHANNEL_MUTE || new_kb_action == ACTION_CHANNEL_SOLO ||
+                     new_kb_action == ACTION_CHANNEL_VOLUME) && new_kb_parameter >= MAX_CHANNELS)
+                    new_kb_parameter = MAX_CHANNELS - 1;
+            }
+
+            // Add button
+            if (ImGui::Button("Add Keyboard Mapping", ImVec2(200.0f, 0.0f))) {
+                if (common_state->input_mappings->keyboard_count < common_state->input_mappings->keyboard_capacity) {
+                    // Remove any existing mapping for this key
+                    for (int i = 0; i < common_state->input_mappings->keyboard_count; i++) {
+                        if (common_state->input_mappings->keyboard_mappings[i].key == new_kb_key) {
+                            for (int j = i; j < common_state->input_mappings->keyboard_count - 1; j++) {
+                                common_state->input_mappings->keyboard_mappings[j] =
+                                    common_state->input_mappings->keyboard_mappings[j + 1];
+                            }
+                            common_state->input_mappings->keyboard_count--;
+                            break;
+                        }
+                    }
+
+                    // Add new mapping
+                    KeyboardMapping new_mapping;
+                    new_mapping.key = new_kb_key;
+                    new_mapping.action = new_kb_action;
+                    new_mapping.parameter = new_kb_parameter;
+                    common_state->input_mappings->keyboard_mappings[common_state->input_mappings->keyboard_count++] = new_mapping;
+                    printf("Added keyboard mapping: key=%d -> %s (param=%d)\n",
+                           new_kb_key, input_action_name(new_kb_action), new_kb_parameter);
+                } else {
+                    printf("Keyboard mappings capacity reached\n");
+                }
+            }
+        }
+
+        ImGui::Dummy(ImVec2(0, 20.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
+        // MIDI CC Mappings Section
+        ImGui::Text("MIDI CC Mappings");
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
+        // Static variables for new MIDI mapping
+        static InputAction new_midi_action = ACTION_PLAY_PAUSE;
+        static int new_midi_parameter = 0;
+        static int new_midi_device = -1; // -1 = any device
+        static int new_midi_cc = 1;
+        static int new_midi_threshold = 64;
+        static int new_midi_continuous = 0;
+
+        if (common_state && common_state->input_mappings) {
+            // Display existing MIDI mappings in a table
+            ImGui::BeginChild("##midi_mappings_list", ImVec2(rightW - 64.0f, 200.0f), true);
+
+            ImGui::Columns(6, "midi_columns");
+            ImGui::SetColumnWidth(0, 80.0f);
+            ImGui::SetColumnWidth(1, 80.0f);
+            ImGui::SetColumnWidth(2, 180.0f);
+            ImGui::SetColumnWidth(3, 80.0f);
+            ImGui::SetColumnWidth(4, 100.0f);
+            ImGui::SetColumnWidth(5, 80.0f);
+
+            ImGui::Text("Device"); ImGui::NextColumn();
+            ImGui::Text("CC"); ImGui::NextColumn();
+            ImGui::Text("Action"); ImGui::NextColumn();
+            ImGui::Text("Param"); ImGui::NextColumn();
+            ImGui::Text("Mode"); ImGui::NextColumn();
+            ImGui::Text("Delete"); ImGui::NextColumn();
+            ImGui::Separator();
+
+            int delete_midi_index = -1;
+            for (int i = 0; i < common_state->input_mappings->midi_count; i++) {
+                MidiMapping *mm = &common_state->input_mappings->midi_mappings[i];
+
+                // Display device
+                if (mm->device_id == -1) {
+                    ImGui::Text("Any");
+                } else {
+                    ImGui::Text("%d", mm->device_id);
+                }
+                ImGui::NextColumn();
+
+                // Display CC number
+                ImGui::Text("CC%d", mm->cc_number); ImGui::NextColumn();
+
+                // Display action
+                ImGui::Text("%s", input_action_name(mm->action)); ImGui::NextColumn();
+
+                // Display parameter
+                if (mm->action == ACTION_CHANNEL_MUTE || mm->action == ACTION_CHANNEL_SOLO ||
+                    mm->action == ACTION_CHANNEL_VOLUME || mm->action == ACTION_TRIGGER_PAD) {
+                    ImGui::Text("%d", mm->parameter);
+                } else {
+                    ImGui::Text("-");
+                }
+                ImGui::NextColumn();
+
+                // Display mode
+                if (mm->continuous) {
+                    ImGui::Text("Continuous");
+                } else {
+                    ImGui::Text("Trigger@%d", mm->threshold);
+                }
+                ImGui::NextColumn();
+
+                // Delete button
+                ImGui::PushID(1000 + i);
+                if (ImGui::Button("X", ImVec2(40.0f, 0.0f))) {
+                    delete_midi_index = i;
+                }
+                ImGui::PopID();
+                ImGui::NextColumn();
+            }
+
+            ImGui::Columns(1);
+            ImGui::EndChild();
+
+            // Handle deletion
+            if (delete_midi_index >= 0) {
+                for (int j = delete_midi_index; j < common_state->input_mappings->midi_count - 1; j++) {
+                    common_state->input_mappings->midi_mappings[j] =
+                        common_state->input_mappings->midi_mappings[j + 1];
+                }
+                common_state->input_mappings->midi_count--;
+                printf("Deleted MIDI mapping at index %d\n", delete_midi_index);
+            }
+
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Add new MIDI mapping UI
+            ImGui::Text("Add MIDI CC Mapping:");
+            ImGui::Dummy(ImVec2(0, 4.0f));
+
+            // Device dropdown
+            ImGui::Text("Device:");
+            ImGui::SameLine(150.0f);
+            ImGui::SetNextItemWidth(150.0f);
+            const char* device_labels[] = { "Any", "Device 0", "Device 1" };
+            int device_combo_idx = new_midi_device == -1 ? 0 : new_midi_device + 1;
+            if (ImGui::BeginCombo("##new_midi_device", device_labels[device_combo_idx])) {
+                if (ImGui::Selectable("Any", new_midi_device == -1)) new_midi_device = -1;
+                if (ImGui::Selectable("Device 0", new_midi_device == 0)) new_midi_device = 0;
+                if (ImGui::Selectable("Device 1", new_midi_device == 1)) new_midi_device = 1;
+                ImGui::EndCombo();
+            }
+
+            // CC number
+            ImGui::Text("CC Number:");
+            ImGui::SameLine(150.0f);
+            ImGui::SetNextItemWidth(100.0f);
+            ImGui::InputInt("##new_midi_cc", &new_midi_cc);
+            if (new_midi_cc < 0) new_midi_cc = 0;
+            if (new_midi_cc > 127) new_midi_cc = 127;
+
+            // Action dropdown
+            ImGui::Text("Action:");
+            ImGui::SameLine(150.0f);
+            ImGui::SetNextItemWidth(200.0f);
+            if (ImGui::BeginCombo("##new_midi_action", input_action_name(new_midi_action))) {
+                for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
+                    InputAction act = (InputAction)a;
+                    if (ImGui::Selectable(input_action_name(act), new_midi_action == act)) {
+                        new_midi_action = act;
+                        new_midi_parameter = 0;
+                        // Auto-set continuous mode for volume and pitch controls
+                        if (act == ACTION_CHANNEL_VOLUME || act == ACTION_PITCH_SET) {
+                            new_midi_continuous = 1;
+                            new_midi_threshold = 0;
+                        } else {
+                            new_midi_continuous = 0;
+                            new_midi_threshold = 64;
+                        }
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            // Parameter input (only for actions that need it)
+            if (new_midi_action == ACTION_CHANNEL_MUTE || new_midi_action == ACTION_CHANNEL_SOLO ||
+                new_midi_action == ACTION_CHANNEL_VOLUME || new_midi_action == ACTION_TRIGGER_PAD) {
+                ImGui::Text("Parameter:");
+                ImGui::SameLine(150.0f);
+                ImGui::SetNextItemWidth(100.0f);
+                ImGui::InputInt("##new_midi_param", &new_midi_parameter);
+                if (new_midi_parameter < 0) new_midi_parameter = 0;
+                if (new_midi_action == ACTION_TRIGGER_PAD && new_midi_parameter >= MAX_TRIGGER_PADS)
+                    new_midi_parameter = MAX_TRIGGER_PADS - 1;
+                if ((new_midi_action == ACTION_CHANNEL_MUTE || new_midi_action == ACTION_CHANNEL_SOLO ||
+                     new_midi_action == ACTION_CHANNEL_VOLUME) && new_midi_parameter >= MAX_CHANNELS)
+                    new_midi_parameter = MAX_CHANNELS - 1;
+            }
+
+            // Mode selection
+            ImGui::Text("Mode:");
+            ImGui::SameLine(150.0f);
+            ImGui::Checkbox("Continuous", (bool*)&new_midi_continuous);
+            if (!new_midi_continuous) {
+                ImGui::SameLine();
+                ImGui::Text("Threshold:");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(100.0f);
+                ImGui::InputInt("##new_midi_threshold", &new_midi_threshold);
+                if (new_midi_threshold < 0) new_midi_threshold = 0;
+                if (new_midi_threshold > 127) new_midi_threshold = 127;
+            }
+
+            // Add button
+            if (ImGui::Button("Add MIDI Mapping", ImVec2(200.0f, 0.0f))) {
+                if (common_state->input_mappings->midi_count < common_state->input_mappings->midi_capacity) {
+                    // Check if this CC/device combo already exists, remove it
+                    for (int i = 0; i < common_state->input_mappings->midi_count; i++) {
+                        MidiMapping *m = &common_state->input_mappings->midi_mappings[i];
+                        if (m->cc_number == new_midi_cc &&
+                            (m->device_id == new_midi_device || m->device_id == -1 || new_midi_device == -1)) {
+                            for (int j = i; j < common_state->input_mappings->midi_count - 1; j++) {
+                                common_state->input_mappings->midi_mappings[j] =
+                                    common_state->input_mappings->midi_mappings[j + 1];
+                            }
+                            common_state->input_mappings->midi_count--;
+                            break;
+                        }
+                    }
+
+                    // Add new mapping
+                    MidiMapping new_mapping;
+                    new_mapping.device_id = new_midi_device;
+                    new_mapping.cc_number = new_midi_cc;
+                    new_mapping.action = new_midi_action;
+                    new_mapping.parameter = new_midi_parameter;
+                    new_mapping.threshold = new_midi_threshold;
+                    new_mapping.continuous = new_midi_continuous;
+                    common_state->input_mappings->midi_mappings[common_state->input_mappings->midi_count++] = new_mapping;
+                    printf("Added MIDI mapping: CC%d (device %d) -> %s (param=%d, %s)\n",
+                           new_midi_cc, new_midi_device, input_action_name(new_midi_action),
+                           new_midi_parameter, new_midi_continuous ? "continuous" : "trigger");
+                } else {
+                    printf("MIDI mappings capacity reached\n");
+                }
+            }
+        }
+
+        ImGui::Dummy(ImVec2(0, 20.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 20.0f));
 
         // Save button to persist settings
         if (ImGui::Button("Save Settings", ImVec2(180.0f, 40.0f))) {
@@ -1704,6 +2071,8 @@ static void ShowMainUI() {
         }
 
         ImGui::EndGroup();
+
+        ImGui::EndChild(); // End settings_scroll child window
     }
 
     ImGui::EndChild();
