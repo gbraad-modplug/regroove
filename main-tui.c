@@ -15,6 +15,51 @@ static struct termios orig_termios;
 // --- Shared state ---
 static RegrooveCommonState *common_state = NULL;
 
+// --- Trigger pad configuration ---
+#define MAX_TRIGGER_PADS 16
+typedef struct {
+    InputAction action;
+    int parameter;
+    int midi_note;   // MIDI note number that triggers this pad (-1 = not mapped)
+    int midi_device; // Which MIDI device (-1 = any)
+} TriggerPad;
+
+static TriggerPad trigger_pads[MAX_TRIGGER_PADS];
+
+// --- Trigger Pad Initialization ---
+static void init_trigger_pads_defaults(void) {
+    // Initialize all pads to no action
+    for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+        trigger_pads[i].action = ACTION_NONE;
+        trigger_pads[i].parameter = 0;
+        trigger_pads[i].midi_note = -1;
+        trigger_pads[i].midi_device = -1;
+    }
+
+    // Set up default bindings (same as GUI)
+    trigger_pads[0].action = ACTION_PLAY_PAUSE;         // P1: Play/Pause
+    trigger_pads[1].action = ACTION_STOP;               // P2: Stop
+    trigger_pads[2].action = ACTION_RETRIGGER;          // P3: Retrigger
+    trigger_pads[3].action = ACTION_PATTERN_MODE_TOGGLE; // P4: Loop toggle
+
+    trigger_pads[4].action = ACTION_PREV_ORDER;         // P5: Previous order
+    trigger_pads[5].action = ACTION_NEXT_ORDER;         // P6: Next order
+    trigger_pads[6].action = ACTION_HALVE_LOOP;         // P7: Halve loop
+    trigger_pads[7].action = ACTION_FULL_LOOP;          // P8: Full loop
+
+    // Pads 9-12: Channel mutes for first 4 channels
+    for (int i = 0; i < 4; i++) {
+        trigger_pads[8 + i].action = ACTION_CHANNEL_MUTE;
+        trigger_pads[8 + i].parameter = i;
+    }
+
+    // Pads 13-16: Reserved for user configuration
+    trigger_pads[12].action = ACTION_MUTE_ALL;          // P13: Mute all
+    trigger_pads[13].action = ACTION_UNMUTE_ALL;        // P14: Unmute all
+    trigger_pads[14].action = ACTION_LOOP_TILL_ROW;     // P15: Loop till row
+    // P16 is unassigned (ACTION_NONE)
+}
+
 static void handle_sigint(int sig) { (void)sig; running = 0; }
 static void tty_restore(void) {
     if (orig_termios.c_cflag) {
@@ -236,17 +281,43 @@ void handle_input_event(InputEvent *event) {
 }
 
 // --- MIDI HANDLING: uses unified control functions and InputMappings ---
-void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value, int device_id, void *userdata) {
+void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned char value, int device_id, void *userdata) {
     (void)userdata;
 
-    // Only handle Control Change messages
-    if ((status & 0xF0) != 0xB0) return;
+    unsigned char msg_type = status & 0xF0;
 
-    // Query input mappings
-    InputEvent event;
-    if (common_state && common_state->input_mappings &&
-        input_mappings_get_midi_event(common_state->input_mappings, device_id, cc, value, &event)) {
-        handle_input_event(&event);
+    // Handle Note-On messages for trigger pads
+    if (msg_type == 0x90 && value > 0) { // Note-On with velocity > 0
+        int note = cc_or_note;
+
+        // Check if any trigger pad is mapped to this MIDI note
+        for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+            // Match device (if specified) and note
+            if (trigger_pads[i].midi_note == note &&
+                (trigger_pads[i].midi_device == -1 || trigger_pads[i].midi_device == device_id)) {
+
+                // Execute the configured action
+                if (trigger_pads[i].action != ACTION_NONE) {
+                    InputEvent event;
+                    event.action = trigger_pads[i].action;
+                    event.parameter = trigger_pads[i].parameter;
+                    event.value = value;
+                    handle_input_event(&event);
+                }
+                break; // Only trigger the first matching pad
+            }
+        }
+        return;
+    }
+
+    // Handle Control Change messages for input mappings
+    if (msg_type == 0xB0) {
+        // Query input mappings
+        InputEvent event;
+        if (common_state && common_state->input_mappings &&
+            input_mappings_get_midi_event(common_state->input_mappings, device_id, cc_or_note, value, &event)) {
+            handle_input_event(&event);
+        }
     }
 }
 
@@ -310,6 +381,9 @@ int main(int argc, char *argv[]) {
         printf("  (or CC61/CC62/CC60 via MIDI)\n");
     }
     printf("\n");
+
+    // Initialize trigger pads with defaults
+    init_trigger_pads_defaults();
 
     // Try to load custom mappings from config file
     if (regroove_common_load_mappings(common_state, config_file) != 0) {
