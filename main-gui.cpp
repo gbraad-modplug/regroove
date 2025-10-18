@@ -36,6 +36,24 @@ static bool playing = false;
 static int pattern = 1, order = 1, total_rows = 64;
 static float loop_blink = 0.0f;
 
+// UI mode state
+enum UIMode {
+    UI_MODE_VOLUME = 0,
+    UI_MODE_PADS = 1
+};
+static UIMode ui_mode = UI_MODE_VOLUME;
+
+// Trigger pad configuration
+#define MAX_TRIGGER_PADS 16
+struct TriggerPad {
+    InputAction action = ACTION_NONE;
+    int parameter = 0;
+    int midi_note = -1;  // MIDI note number that triggers this pad (-1 = not mapped)
+    int midi_device = -1; // Which MIDI device (-1 = any)
+    float fade = 0.0f;   // Visual feedback fade
+};
+static TriggerPad trigger_pads[MAX_TRIGGER_PADS];
+
 // Shared state
 static RegrooveCommonState *common_state = NULL;
 
@@ -92,6 +110,44 @@ static void my_loop_pattern_callback(int order, int pattern, void *userdata) {
 static void my_loop_song_callback(void *userdata) {
     //printf("[SONG] looped back to start\n");
     playing = false;
+}
+
+// -----------------------------------------------------------------------------
+// Trigger Pad Initialization
+// -----------------------------------------------------------------------------
+
+static void init_trigger_pads_defaults() {
+    // Initialize all pads to no action
+    for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+        trigger_pads[i].action = ACTION_NONE;
+        trigger_pads[i].parameter = 0;
+        trigger_pads[i].midi_note = -1;
+        trigger_pads[i].midi_device = -1;
+        trigger_pads[i].fade = 0.0f;
+    }
+
+    // Set up default bindings for common actions
+    trigger_pads[0].action = ACTION_PLAY_PAUSE;    // P1: Play/Pause
+    trigger_pads[1].action = ACTION_STOP;          // P2: Stop
+    trigger_pads[2].action = ACTION_RETRIGGER;     // P3: Retrigger
+    trigger_pads[3].action = ACTION_PATTERN_MODE_TOGGLE; // P4: Loop toggle
+
+    trigger_pads[4].action = ACTION_PREV_ORDER;    // P5: Previous order
+    trigger_pads[5].action = ACTION_NEXT_ORDER;    // P6: Next order
+    trigger_pads[6].action = ACTION_HALVE_LOOP;    // P7: Halve loop
+    trigger_pads[7].action = ACTION_FULL_LOOP;     // P8: Full loop
+
+    // Pads 9-12: Channel mutes for first 4 channels
+    for (int i = 0; i < 4; i++) {
+        trigger_pads[8 + i].action = ACTION_CHANNEL_MUTE;
+        trigger_pads[8 + i].parameter = i;
+    }
+
+    // Pads 13-16: Reserved for user configuration
+    trigger_pads[12].action = ACTION_MUTE_ALL;     // P13: Mute all
+    trigger_pads[13].action = ACTION_UNMUTE_ALL;   // P14: Unmute all
+    trigger_pads[14].action = ACTION_LOOP_TILL_ROW; // P15: Loop till row
+    // P16 is unassigned (ACTION_NONE)
 }
 
 // -----------------------------------------------------------------------------
@@ -477,17 +533,46 @@ void handle_keyboard(SDL_Event &e, SDL_Window *window) {
     }
 }
 
-void my_midi_mapping(unsigned char status, unsigned char cc, unsigned char value, int device_id, void *userdata) {
+void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned char value, int device_id, void *userdata) {
     (void)userdata;
 
-    // Only handle Control Change messages
-    if ((status & 0xF0) != 0xB0) return;
+    unsigned char msg_type = status & 0xF0;
 
-    // Query input mappings
-    if (common_state && common_state->input_mappings) {
-        InputEvent event;
-        if (input_mappings_get_midi_event(common_state->input_mappings, device_id, cc, value, &event)) {
-            handle_input_event(&event);
+    // Handle Note-On messages for trigger pads
+    if (msg_type == 0x90 && value > 0) { // Note-On with velocity > 0
+        int note = cc_or_note;
+
+        // Check if any trigger pad is mapped to this MIDI note
+        for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+            // Match device (if specified) and note
+            if (trigger_pads[i].midi_note == note &&
+                (trigger_pads[i].midi_device == -1 || trigger_pads[i].midi_device == device_id)) {
+
+                // Trigger visual feedback
+                trigger_pads[i].fade = 1.0f;
+
+                // Execute the configured action
+                if (trigger_pads[i].action != ACTION_NONE) {
+                    InputEvent event;
+                    event.action = trigger_pads[i].action;
+                    event.parameter = trigger_pads[i].parameter;
+                    event.value = value;
+                    handle_input_event(&event);
+                }
+                break; // Only trigger the first matching pad
+            }
+        }
+        return;
+    }
+
+    // Handle Control Change messages for input mappings
+    if (msg_type == 0xB0) {
+        // Query input mappings
+        if (common_state && common_state->input_mappings) {
+            InputEvent event;
+            if (input_mappings_get_midi_event(common_state->input_mappings, device_id, cc_or_note, value, &event)) {
+                handle_input_event(&event);
+            }
         }
     }
 }
@@ -724,11 +809,22 @@ static void ShowMainUI() {
     ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
 
     ImGui::BeginGroup();
-    // Show volume sliders
-    ImGui::Button("VOL", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
+    // VOL button with active state highlighting
+    ImVec4 volCol = (ui_mode == UI_MODE_VOLUME) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, volCol);
+    if (ImGui::Button("VOL", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_VOLUME;
+    }
+    ImGui::PopStyleColor();
     ImGui::SameLine();
-    // Show pads
-    ImGui::Button("PADS", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
+
+    // PADS button with active state highlighting
+    ImVec4 padsCol = (ui_mode == UI_MODE_PADS) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, padsCol);
+    if (ImGui::Button("PADS", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_PADS;
+    }
+    ImGui::PopStyleColor();
     //ImGui::SameLine();
     // Shows effects
     //ImGui::Button("FX", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
@@ -769,65 +865,135 @@ static void ShowMainUI() {
 
     ImVec2 origin = ImGui::GetCursorPos();
 
-    // Channel columns (only draw if module is loaded)
-    // Note: UI currently displays up to 8 channels due to layout constraints
-    int num_channels = (common_state && common_state->player) ? common_state->num_channels : 0;
-    //if (num_channels > 8) num_channels = 8;
+    // Conditional rendering based on UI mode
+    if (ui_mode == UI_MODE_VOLUME) {
+        // VOLUME MODE: Show channel sliders
 
-    for (int i = 0; i < num_channels; ++i) {
-        float colX = origin.x + i * (sliderW + spacing);
-        ImGui::SetCursorPos(ImVec2(colX, origin.y + 8.0f));
-        ImGui::BeginGroup();
-        ImGui::Text("Ch%d", i + 1);
-        ImGui::Dummy(ImVec2(0, 4.0f));
+        // Channel columns (only draw if module is loaded)
+        int num_channels = (common_state && common_state->player) ? common_state->num_channels : 0;
 
-        // SOLO BUTTON
-        ImVec4 soloCol = channels[i].solo ? ImVec4(0.80f,0.12f,0.14f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Button, soloCol);
-        if (ImGui::Button((std::string("S##solo")+std::to_string(i)).c_str(), ImVec2(sliderW, SOLO_SIZE)))
-            dispatch_action(ACT_SOLO_CHANNEL, i);
-        ImGui::PopStyleColor();
+        for (int i = 0; i < num_channels; ++i) {
+            float colX = origin.x + i * (sliderW + spacing);
+            ImGui::SetCursorPos(ImVec2(colX, origin.y + 8.0f));
+            ImGui::BeginGroup();
+            ImGui::Text("Ch%d", i + 1);
+            ImGui::Dummy(ImVec2(0, 4.0f));
 
-        ImGui::Dummy(ImVec2(0, 6.0f));
-        float prev_vol = channels[i].volume;
-        if (ImGui::VSliderFloat((std::string("##vol")+std::to_string(i)).c_str(),
-                                ImVec2(sliderW, sliderH),
-                                &channels[i].volume, 0.0f, 1.0f, "")) {
-            if (prev_vol != channels[i].volume)
-                dispatch_action(ACT_VOLUME_CHANNEL, i, channels[i].volume);
+            // SOLO BUTTON
+            ImVec4 soloCol = channels[i].solo ? ImVec4(0.80f,0.12f,0.14f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, soloCol);
+            if (ImGui::Button((std::string("S##solo")+std::to_string(i)).c_str(), ImVec2(sliderW, SOLO_SIZE)))
+                dispatch_action(ACT_SOLO_CHANNEL, i);
+            ImGui::PopStyleColor();
+
+            ImGui::Dummy(ImVec2(0, 6.0f));
+            float prev_vol = channels[i].volume;
+            if (ImGui::VSliderFloat((std::string("##vol")+std::to_string(i)).c_str(),
+                                    ImVec2(sliderW, sliderH),
+                                    &channels[i].volume, 0.0f, 1.0f, "")) {
+                if (prev_vol != channels[i].volume)
+                    dispatch_action(ACT_VOLUME_CHANNEL, i, channels[i].volume);
+            }
+
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // MUTE BUTTON with color feedback
+            ImVec4 muteCol = channels[i].mute ? ImVec4(0.90f,0.16f,0.18f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, muteCol);
+            if (ImGui::Button((std::string("M##mute")+std::to_string(i)).c_str(), ImVec2(sliderW, MUTE_SIZE)))
+                dispatch_action(ACT_MUTE_CHANNEL, i);
+            ImGui::PopStyleColor();
+
+            ImGui::EndGroup();
         }
 
-        ImGui::Dummy(ImVec2(0, 8.0f));
-
-        // MUTE BUTTON with color feedback
-        ImVec4 muteCol = channels[i].mute ? ImVec4(0.90f,0.16f,0.18f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Button, muteCol);
-        if (ImGui::Button((std::string("M##mute")+std::to_string(i)).c_str(), ImVec2(sliderW, MUTE_SIZE)))
-            dispatch_action(ACT_MUTE_CHANNEL, i);
-        ImGui::PopStyleColor();
-
-        ImGui::EndGroup();
+        // Pitch slider column (positioned after channels)
+        {
+            float colX = origin.x + num_channels * (sliderW + spacing);
+            ImGui::SetCursorPos(ImVec2(colX, origin.y + 8.0f));
+            ImGui::BeginGroup();
+            ImGui::Text("Pitch");
+            ImGui::Dummy(ImVec2(0, 4.0f));
+            ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
+            ImGui::Dummy(ImVec2(0, 6.0f));
+            float prev_pitch = pitch_slider;
+            if (ImGui::VSliderFloat("##pitch", ImVec2(sliderW, sliderH),
+                                    &pitch_slider, -1.0f, 1.0f, "")) {
+                if (prev_pitch != pitch_slider)
+                    dispatch_action(ACT_SET_PITCH, -1, pitch_slider);
+            }
+            ImGui::Dummy(ImVec2(0, 8.0f));
+            if (ImGui::Button("R##pitch_reset", ImVec2(sliderW, MUTE_SIZE)))
+                dispatch_action(ACT_PITCH_RESET);
+            ImGui::EndGroup();
+        }
     }
+    else if (ui_mode == UI_MODE_PADS) {
+        // PADS MODE: Show trigger pad grid
 
-    // Pitch slider column (positioned after channels)
-    {
-        float colX = origin.x + num_channels * (sliderW + spacing);
-        ImGui::SetCursorPos(ImVec2(colX, origin.y + 8.0f));
-        ImGui::BeginGroup();
-        ImGui::Text("Pitch");
-        ImGui::Dummy(ImVec2(0, 4.0f));
-        ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
-        ImGui::Dummy(ImVec2(0, 6.0f));
-        float prev_pitch = pitch_slider;
-        if (ImGui::VSliderFloat("##pitch", ImVec2(sliderW, sliderH),
-                                &pitch_slider, -1.0f, 1.0f, "")) {
-            if (prev_pitch != pitch_slider)
-                dispatch_action(ACT_SET_PITCH, -1, pitch_slider);
+        // Fade trigger pads
+        for (int i = 0; i < MAX_TRIGGER_PADS; i++)
+            trigger_pads[i].fade = fmaxf(trigger_pads[i].fade - 0.02f, 0.0f);
+
+        // Calculate pad layout (4x4 grid)
+        const int PADS_PER_ROW = 4;
+        const int NUM_ROWS = MAX_TRIGGER_PADS / PADS_PER_ROW;
+        float padSpacing = 12.0f;
+        float availWidth = rightW - 2 * padSpacing;
+        float availHeight = contentHeight - 16.0f;
+
+        // Calculate pad size (square buttons)
+        float padW = (availWidth - padSpacing * (PADS_PER_ROW - 1)) / PADS_PER_ROW;
+        float padH = (availHeight - padSpacing * (NUM_ROWS - 1)) / NUM_ROWS;
+        float padSize = fminf(padW, padH);
+        if (padSize > 140.0f) padSize = 140.0f; // Max pad size
+        if (padSize < 60.0f) padSize = 60.0f;   // Min pad size
+
+        // Center the grid
+        float gridW = PADS_PER_ROW * padSize + (PADS_PER_ROW - 1) * padSpacing;
+        float gridH = NUM_ROWS * padSize + (NUM_ROWS - 1) * padSpacing;
+        float startX = origin.x + (rightW - gridW) * 0.5f;
+        float startY = origin.y + (contentHeight - gridH) * 0.5f;
+
+        // Draw trigger pads
+        for (int row = 0; row < NUM_ROWS; row++) {
+            for (int col = 0; col < PADS_PER_ROW; col++) {
+                int idx = row * PADS_PER_ROW + col;
+                float posX = startX + col * (padSize + padSpacing);
+                float posY = startY + row * (padSize + padSpacing);
+
+                ImGui::SetCursorPos(ImVec2(posX, posY));
+
+                // Pad color with fade effect
+                float brightness = trigger_pads[idx].fade;
+                ImVec4 padCol = ImVec4(
+                    0.18f + brightness * 0.50f,
+                    0.27f + brightness * 0.40f,
+                    0.18f + brightness * 0.24f,
+                    1.0f
+                );
+
+                ImGui::PushStyleColor(ImGuiCol_Button, padCol);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.48f, 0.32f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.42f, 0.65f, 0.42f, 1.0f));
+
+                char label[16];
+                snprintf(label, sizeof(label), "P%d", idx + 1);
+                if (ImGui::Button(label, ImVec2(padSize, padSize))) {
+                    trigger_pads[idx].fade = 1.0f;
+                    // Execute the configured action for this pad
+                    if (trigger_pads[idx].action != ACTION_NONE) {
+                        InputEvent event;
+                        event.action = trigger_pads[idx].action;
+                        event.parameter = trigger_pads[idx].parameter;
+                        event.value = 127; // Full value for trigger pads
+                        handle_input_event(&event);
+                    }
+                }
+
+                ImGui::PopStyleColor(3);
+            }
         }
-        ImGui::Dummy(ImVec2(0, 8.0f));
-        if (ImGui::Button("R##pitch_reset", ImVec2(sliderW, MUTE_SIZE)))
-            dispatch_action(ACT_PITCH_RESET);
-        ImGui::EndGroup();
     }
 
     ImGui::EndChild();
@@ -889,6 +1055,9 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Failed to create common state\n");
         return 1;
     }
+
+    // Initialize trigger pads with defaults
+    init_trigger_pads_defaults();
 
     // Load input mappings from config file
     if (regroove_common_load_mappings(common_state, config_file) != 0) {
