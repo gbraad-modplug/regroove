@@ -30,6 +30,7 @@ static InputAction parse_action(const char *str) {
     if (strcmp(str, "channel_mute") == 0) return ACTION_CHANNEL_MUTE;
     if (strcmp(str, "channel_solo") == 0) return ACTION_CHANNEL_SOLO;
     if (strcmp(str, "channel_volume") == 0) return ACTION_CHANNEL_VOLUME;
+    if (strcmp(str, "trigger_pad") == 0) return ACTION_TRIGGER_PAD;
     return ACTION_NONE;
 }
 
@@ -57,6 +58,7 @@ const char* input_action_name(InputAction action) {
         case ACTION_CHANNEL_MUTE: return "channel_mute";
         case ACTION_CHANNEL_SOLO: return "channel_solo";
         case ACTION_CHANNEL_VOLUME: return "channel_volume";
+        case ACTION_TRIGGER_PAD: return "trigger_pad";
         default: return "none";
     }
 }
@@ -188,6 +190,17 @@ void input_mappings_reset_defaults(InputMappings *mappings) {
         {'6', ACTION_CHANNEL_MUTE, 5},
         {'7', ACTION_CHANNEL_MUTE, 6},
         {'8', ACTION_CHANNEL_MUTE, 7},
+        // Numpad keys for trigger pads (GUI only - codes 159-168)
+        {159, ACTION_TRIGGER_PAD, 0},  // KP0 -> Pad 1
+        {160, ACTION_TRIGGER_PAD, 1},  // KP1 -> Pad 2
+        {161, ACTION_TRIGGER_PAD, 2},  // KP2 -> Pad 3
+        {162, ACTION_TRIGGER_PAD, 3},  // KP3 -> Pad 4
+        {163, ACTION_TRIGGER_PAD, 4},  // KP4 -> Pad 5
+        {164, ACTION_TRIGGER_PAD, 5},  // KP5 -> Pad 6
+        {165, ACTION_TRIGGER_PAD, 6},  // KP6 -> Pad 7
+        {166, ACTION_TRIGGER_PAD, 7},  // KP7 -> Pad 8
+        {167, ACTION_TRIGGER_PAD, 8},  // KP8 -> Pad 9
+        {168, ACTION_TRIGGER_PAD, 9},  // KP9 -> Pad 10
     };
 
     int default_keyboard_count = sizeof(default_keyboard) / sizeof(default_keyboard[0]);
@@ -289,6 +302,13 @@ int input_mappings_load(InputMappings *mappings, const char *filepath) {
                     else if (strcmp(key + 4, "comma") == 0) keycode = ',';
                     else if (strcmp(key + 4, "semicolon") == 0) keycode = ';';
                     else if (strcmp(key + 4, "hash") == 0) keycode = '#';
+                    // Numpad keys (using special codes 159-168, GUI only)
+                    else if (strncmp(key + 4, "kp", 2) == 0) {
+                        int kpnum = atoi(key + 6);
+                        if (kpnum >= 0 && kpnum <= 9) {
+                            keycode = (kpnum == 0) ? 159 : (159 + kpnum); // KP0=159, KP1=160, ..., KP9=168
+                        } else continue;
+                    }
                     else continue;
                 } else {
                     // Regular keys: key<char>

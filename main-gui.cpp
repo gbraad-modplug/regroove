@@ -471,6 +471,20 @@ static void handle_input_event(InputEvent *event) {
         case ACTION_CHANNEL_VOLUME:
             dispatch_action(ACT_VOLUME_CHANNEL, event->parameter, event->value / 127.0f);
             break;
+        case ACTION_TRIGGER_PAD:
+            if (event->parameter >= 0 && event->parameter < MAX_TRIGGER_PADS) {
+                // Trigger visual feedback
+                trigger_pads[event->parameter].fade = 1.0f;
+                // Execute the trigger pad's configured action
+                if (trigger_pads[event->parameter].action != ACTION_NONE) {
+                    InputEvent pad_event;
+                    pad_event.action = trigger_pads[event->parameter].action;
+                    pad_event.parameter = trigger_pads[event->parameter].parameter;
+                    pad_event.value = event->value;
+                    handle_input_event(&pad_event);
+                }
+            }
+            break;
         default:
             break;
     }
@@ -501,11 +515,11 @@ void handle_keyboard(SDL_Event &e, SDL_Window *window) {
     } else if (key >= SDLK_0 && key <= SDLK_9) {
         key = '0' + (key - SDLK_0);
     } else if (key >= SDLK_KP_1 && key <= SDLK_KP_9) {
-        // Map numpad 1-9 to character codes
-        key = '1' + (key - SDLK_KP_1);
+        // Map numpad 1-9 to unique codes (160-168)
+        key = 160 + (key - SDLK_KP_1);
     } else if (key == SDLK_KP_0) {
-        // Map numpad 0 separately
-        key = '0';
+        // Map numpad 0 to unique code 159
+        key = 159;
     } else {
         // Map special keys
         switch (key) {
@@ -1042,10 +1056,20 @@ int main(int argc, char* argv[]) {
             midi_port = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-c") && i + 1 < argc)
             config_file = argv[++i];
+        else if (!strcmp(argv[i], "--dump-config")) {
+            if (regroove_common_save_default_config("regroove_default.ini") == 0) {
+                printf("Default configuration saved to regroove_default.ini\n");
+                return 0;
+            } else {
+                fprintf(stderr, "Failed to save default configuration\n");
+                return 1;
+            }
+        }
         else if (!module_path) module_path = argv[i];
     }
     if (!module_path) {
-        fprintf(stderr, "Usage: %s directory|file.mod [-m mididevice] [-c config.ini]\n", argv[0]);
+        fprintf(stderr, "Usage: %s directory|file.mod [-m mididevice] [-c config.ini] [--dump-config]\n", argv[0]);
+        fprintf(stderr, "  --dump-config  Generate default config file and exit\n");
         return 1;
     }
 

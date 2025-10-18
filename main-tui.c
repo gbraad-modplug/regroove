@@ -275,6 +275,18 @@ void handle_input_event(InputEvent *event) {
                 regroove_set_channel_volume(common_state->player, event->parameter, vol);
             }
             break;
+        case ACTION_TRIGGER_PAD:
+            if (event->parameter >= 0 && event->parameter < MAX_TRIGGER_PADS) {
+                // Execute the trigger pad's configured action
+                if (trigger_pads[event->parameter].action != ACTION_NONE) {
+                    InputEvent pad_event;
+                    pad_event.action = trigger_pads[event->parameter].action;
+                    pad_event.parameter = trigger_pads[event->parameter].parameter;
+                    pad_event.value = event->value;
+                    handle_input_event(&pad_event);
+                }
+            }
+            break;
         default:
             break;
     }
@@ -336,10 +348,19 @@ int main(int argc, char *argv[]) {
             midi_port = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "-c") && i + 1 < argc) {
             config_file = argv[++i];
+        } else if (!strcmp(argv[i], "--dump-config")) {
+            if (regroove_common_save_default_config("regroove_default.ini") == 0) {
+                printf("Default configuration saved to regroove_default.ini\n");
+                return 0;
+            } else {
+                fprintf(stderr, "Failed to save default configuration\n");
+                return 1;
+            }
         }
     }
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s file.mod|dir [-m mididevice] [-c config.ini]\n", argv[0]);
+        fprintf(stderr, "Usage: %s file.mod|dir [-m mididevice] [-c config.ini] [--dump-config]\n", argv[0]);
+        fprintf(stderr, "  --dump-config  Generate default config file and exit\n");
         return 1;
     }
 

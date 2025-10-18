@@ -26,6 +26,7 @@ typedef enum {
     ACTION_CHANNEL_MUTE,     // parameter = channel index
     ACTION_CHANNEL_SOLO,     // parameter = channel index
     ACTION_CHANNEL_VOLUME,   // parameter = channel index, uses MIDI value for volume
+    ACTION_TRIGGER_PAD,      // parameter = pad index (0-15)
     ACTION_MAX
 } InputAction;
 

@@ -84,6 +84,9 @@ void regroove_common_pitch_up(RegrooveCommonState *state);
 void regroove_common_pitch_down(RegrooveCommonState *state);
 void regroove_common_set_pitch(RegrooveCommonState *state, double pitch);
 
+// Save default configuration to INI file
+int regroove_common_save_default_config(const char *filepath);
+
 #ifdef __cplusplus
 }
 #endif

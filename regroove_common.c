@@ -372,3 +372,126 @@ void regroove_common_set_pitch(RegrooveCommonState *state, double pitch) {
 
     regroove_set_pitch(state->player, state->pitch);
 }
+
+// Save default configuration to INI file
+int regroove_common_save_default_config(const char *filepath) {
+    if (!filepath) return -1;
+
+    FILE *f = fopen(filepath, "w");
+    if (!f) return -1;
+
+    fprintf(f, "# Regroove Configuration File\n");
+    fprintf(f, "# This file contains input mappings and device configuration\n\n");
+
+    // Device configuration section
+    fprintf(f, "[devices]\n");
+    fprintf(f, "# MIDI device ports (-1 = not configured)\n");
+    fprintf(f, "midi_device_0 = -1\n");
+    fprintf(f, "midi_device_1 = -1\n");
+    fprintf(f, "# Audio device (-1 = default)\n");
+    fprintf(f, "audio_device = -1\n\n");
+
+    // MIDI mappings section
+    fprintf(f, "[midi]\n");
+    fprintf(f, "# Format: cc<number> = action[,parameter[,continuous[,device_id]]]\n");
+    fprintf(f, "# continuous: 1 for continuous controls (faders/knobs), 0 for buttons (default)\n");
+    fprintf(f, "# device_id: -1 for any device (default), 0 for device 0, 1 for device 1\n");
+    fprintf(f, "# Buttons trigger at MIDI value >= 64, continuous controls respond to all values\n\n");
+    fprintf(f, "# Transport controls\n");
+    fprintf(f, "cc41 = play,0,0,-1\n");
+    fprintf(f, "cc42 = stop,0,0,-1\n");
+    fprintf(f, "cc46 = pattern_mode_toggle,0,0,-1\n");
+    fprintf(f, "cc44 = next_order,0,0,-1\n");
+    fprintf(f, "cc43 = prev_order,0,0,-1\n\n");
+    fprintf(f, "# File browser controls\n");
+    fprintf(f, "cc60 = file_load,0,0,-1\n");
+    fprintf(f, "cc61 = file_prev,0,0,-1\n");
+    fprintf(f, "cc62 = file_next,0,0,-1\n\n");
+    fprintf(f, "# Channel solo (CC 32-39)\n");
+    for (int i = 0; i < 8; i++) {
+        fprintf(f, "cc%d = channel_solo,%d,0,-1\n", 32 + i, i);
+    }
+    fprintf(f, "\n# Channel mute (CC 48-55)\n");
+    for (int i = 0; i < 8; i++) {
+        fprintf(f, "cc%d = channel_mute,%d,0,-1\n", 48 + i, i);
+    }
+    fprintf(f, "\n# Channel volume (CC 0-7) - continuous controls\n");
+    for (int i = 0; i < 8; i++) {
+        fprintf(f, "cc%d = channel_volume,%d,1,-1\n", i, i);
+    }
+
+    // Trigger pads section
+    fprintf(f, "\n[trigger_pads]\n");
+    fprintf(f, "# Format: pad<number> = midi_note,action[,parameter[,device_id]]\n");
+    fprintf(f, "# midi_note: MIDI note number (0-127, -1 = no MIDI mapping)\n");
+    fprintf(f, "# device_id: -1 for any device (default), 0 for device 0, 1 for device 1\n");
+    fprintf(f, "# Example trigger pad mappings (configure based on your MIDI controller):\n");
+    fprintf(f, "# pad0 = 36,play_pause,0,-1   # C1 - Play/Pause\n");
+    fprintf(f, "# pad1 = 37,stop,0,-1          # C#1 - Stop\n");
+    fprintf(f, "# pad2 = 38,retrigger,0,-1     # D1 - Retrigger\n");
+    fprintf(f, "# pad3 = 39,pattern_mode_toggle,0,-1  # D#1 - Loop toggle\n");
+    fprintf(f, "# Uncomment and configure pads 0-15 to match your hardware controller\n\n");
+
+    // Keyboard mappings section
+    fprintf(f, "[keyboard]\n");
+    fprintf(f, "# Format: key<char> = action[,parameter]\n");
+    fprintf(f, "# Special keys use key_<name> format (key_space, key_esc, key_enter)\n\n");
+    fprintf(f, "# Transport controls\n");
+    fprintf(f, "key_space = play_pause,0\n");
+    fprintf(f, "keyr = retrigger,0\n");
+    fprintf(f, "keyR = retrigger,0\n");
+    fprintf(f, "keyN = next_order,0\n");
+    fprintf(f, "keyn = next_order,0\n");
+    fprintf(f, "keyP = prev_order,0\n");
+    fprintf(f, "keyp = prev_order,0\n\n");
+    fprintf(f, "# Loop controls\n");
+    fprintf(f, "keyj = loop_till_row,0\n");
+    fprintf(f, "keyJ = loop_till_row,0\n");
+    fprintf(f, "keyh = halve_loop,0\n");
+    fprintf(f, "keyH = halve_loop,0\n");
+    fprintf(f, "keyf = full_loop,0\n");
+    fprintf(f, "keyF = full_loop,0\n");
+    fprintf(f, "keyS = pattern_mode_toggle,0\n");
+    fprintf(f, "keys = pattern_mode_toggle,0\n\n");
+    fprintf(f, "# Channel controls\n");
+    fprintf(f, "keym = mute_all,0\n");
+    fprintf(f, "keyM = mute_all,0\n");
+    fprintf(f, "keyu = unmute_all,0\n");
+    fprintf(f, "keyU = unmute_all,0\n");
+    fprintf(f, "key1 = channel_mute,0\n");
+    fprintf(f, "key2 = channel_mute,1\n");
+    fprintf(f, "key3 = channel_mute,2\n");
+    fprintf(f, "key4 = channel_mute,3\n");
+    fprintf(f, "key5 = channel_mute,4\n");
+    fprintf(f, "key6 = channel_mute,5\n");
+    fprintf(f, "key7 = channel_mute,6\n");
+    fprintf(f, "key8 = channel_mute,7\n\n");
+    fprintf(f, "# Pitch control\n");
+    fprintf(f, "key_plus = pitch_up,0\n");
+    fprintf(f, "key_equals = pitch_up,0\n");
+    fprintf(f, "key_minus = pitch_down,0\n\n");
+    fprintf(f, "# File browser\n");
+    fprintf(f, "key_lbracket = file_prev,0\n");
+    fprintf(f, "key_rbracket = file_next,0\n");
+    fprintf(f, "key_enter = file_load,0\n\n");
+    fprintf(f, "# Application control\n");
+    fprintf(f, "keyq = quit,0\n");
+    fprintf(f, "keyQ = quit,0\n");
+    fprintf(f, "key_esc = quit,0\n\n");
+    fprintf(f, "# Trigger pad keyboard shortcuts\n");
+    fprintf(f, "# Uncomment and configure to trigger pads from keyboard:\n");
+    fprintf(f, "# Format: key<char> = trigger_pad,<pad_number>\n");
+    fprintf(f, "# NOTE: Numpad keys work in GUI only, not in TUI (terminal raw mode limitation)\n");
+    fprintf(f, "# Example using numpad keys (GUI only):\n");
+    for (int i = 0; i < 10; i++) {
+        fprintf(f, "# key_kp%d = trigger_pad,%d   # Numpad %d triggers pad %d\n", i, i, i, i+1);
+    }
+    fprintf(f, "\n# Example using other keys (works in both GUI and TUI):\n");
+    fprintf(f, "# keyz = trigger_pad,0   # Z key triggers pad 1\n");
+    fprintf(f, "# keyx = trigger_pad,1   # X key triggers pad 2\n");
+    fprintf(f, "# keyc = trigger_pad,2   # C key triggers pad 3\n");
+    fprintf(f, "# keyv = trigger_pad,3   # V key triggers pad 4\n");
+
+    fclose(f);
+    return 0;
+}
