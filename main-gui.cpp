@@ -451,6 +451,13 @@ static void handle_input_event(InputEvent *event) {
         case ACTION_PITCH_DOWN:
             dispatch_action(ACT_PITCH_DOWN);
             break;
+        case ACTION_PITCH_SET:
+            // Map MIDI value (0-127) to pitch slider range (-1.0 to 1.0)
+            {
+                float pitch_value = (event->value / 127.0f) * 2.0f - 1.0f; // Maps 0-127 to -1.0 to 1.0
+                dispatch_action(ACT_SET_PITCH, -1, pitch_value);
+            }
+            break;
         case ACTION_QUIT:
             {
                 SDL_Event quit;
@@ -616,8 +623,16 @@ static void learn_midi_mapping(int device_id, int cc_or_note, bool is_note) {
             MidiMapping new_mapping;
             new_mapping.device_id = device_id;
             new_mapping.cc_number = cc_or_note;
-            new_mapping.threshold = 64; // Button-style threshold
-            new_mapping.continuous = 0; // Button mode
+
+            // Set continuous mode for volume and pitch controls
+            if (learn_target_type == LEARN_ACTION &&
+                (learn_target_action == ACTION_CHANNEL_VOLUME || learn_target_action == ACTION_PITCH_SET)) {
+                new_mapping.threshold = 0;
+                new_mapping.continuous = 1; // Continuous fader mode
+            } else {
+                new_mapping.threshold = 64; // Button-style threshold
+                new_mapping.continuous = 0; // Button mode
+            }
 
             if (learn_target_type == LEARN_TRIGGER_PAD) {
                 new_mapping.action = ACTION_TRIGGER_PAD;
@@ -1113,8 +1128,12 @@ static void ShowMainUI() {
             if (ImGui::VSliderFloat((std::string("##vol")+std::to_string(i)).c_str(),
                                     ImVec2(sliderW, sliderH),
                                     &channels[i].volume, 0.0f, 1.0f, "")) {
-                if (prev_vol != channels[i].volume)
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    // User is dragging the slider in learn mode - enter learn mode for this channel volume
+                    start_learn_for_action(ACTION_CHANNEL_VOLUME, i);
+                } else if (prev_vol != channels[i].volume) {
                     dispatch_action(ACT_VOLUME_CHANNEL, i, channels[i].volume);
+                }
             }
 
             ImGui::Dummy(ImVec2(0, 8.0f));
@@ -1143,8 +1162,12 @@ static void ShowMainUI() {
             float prev_pitch = pitch_slider;
             if (ImGui::VSliderFloat("##pitch", ImVec2(sliderW, sliderH),
                                     &pitch_slider, -1.0f, 1.0f, "")) {
-                if (prev_pitch != pitch_slider)
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    // User is dragging the slider in learn mode - enter learn mode for pitch
+                    start_learn_for_action(ACTION_PITCH_SET);
+                } else if (prev_pitch != pitch_slider) {
                     dispatch_action(ACT_SET_PITCH, -1, pitch_slider);
+                }
             }
             ImGui::Dummy(ImVec2(0, 8.0f));
             if (ImGui::Button("R##pitch_reset", ImVec2(sliderW, MUTE_SIZE)))

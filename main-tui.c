@@ -230,6 +230,15 @@ void handle_input_event(InputEvent *event) {
             regroove_common_pitch_down(common_state);
             printf("Pitch factor: %.2f\n", common_state->pitch);
             break;
+        case ACTION_PITCH_SET:
+            // Map MIDI value (0-127) to pitch range (0.25 to 3.0, center at 1.0)
+            // MIDI 0 = 0.25, MIDI 64 = 1.0, MIDI 127 = 3.0
+            if (common_state->player) {
+                double pitch = 0.25 + (event->value / 127.0) * (3.0 - 0.25);
+                regroove_common_set_pitch(common_state, pitch);
+                printf("Pitch factor: %.2f\n", common_state->pitch);
+            }
+            break;
         case ACTION_QUIT:
             running = 0;
             break;

@@ -18,6 +18,7 @@ typedef enum {
     ACTION_UNMUTE_ALL,
     ACTION_PITCH_UP,
     ACTION_PITCH_DOWN,
+    ACTION_PITCH_SET,        // uses MIDI value for pitch (continuous control)
     ACTION_QUIT,
     ACTION_FILE_PREV,
     ACTION_FILE_NEXT,
