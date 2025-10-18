@@ -39,7 +39,8 @@ static float loop_blink = 0.0f;
 // UI mode state
 enum UIMode {
     UI_MODE_VOLUME = 0,
-    UI_MODE_PADS = 1
+    UI_MODE_PADS = 1,
+    UI_MODE_SETTINGS = 2
 };
 static UIMode ui_mode = UI_MODE_VOLUME;
 
@@ -57,6 +58,18 @@ static TriggerPad trigger_pads[MAX_TRIGGER_PADS];
 // Shared state
 static RegrooveCommonState *common_state = NULL;
 static const char *current_config_file = "regroove.ini"; // Track config file for saving
+
+// Audio device state
+static std::vector<std::string> audio_device_names;
+static int selected_audio_device = -1;
+
+void refresh_audio_devices() {
+    audio_device_names.clear();
+    int n = SDL_GetNumAudioDevices(0); // 0 = output devices
+    for (int i = 0; i < n; i++) {
+        audio_device_names.push_back(SDL_GetAudioDeviceName(i, 0));
+    }
+}
 
 // Learn mode state
 static bool learn_mode_active = false;
@@ -530,9 +543,30 @@ static void learn_keyboard_mapping(int key) {
     if (!common_state || !common_state->input_mappings) return;
     if (learn_target_type == LEARN_NONE) return;
 
-    // Add new keyboard mapping to the current mappings
-    if (common_state->input_mappings->keyboard_count < common_state->input_mappings->keyboard_capacity) {
-        // Check if this key is already mapped, remove it
+    // Check if this key is already mapped to the current target
+    bool already_mapped = false;
+    InputAction target_action = (learn_target_type == LEARN_TRIGGER_PAD) ? ACTION_TRIGGER_PAD : learn_target_action;
+    int target_param = (learn_target_type == LEARN_TRIGGER_PAD) ? learn_target_pad_index : learn_target_parameter;
+
+    for (int i = 0; i < common_state->input_mappings->keyboard_count; i++) {
+        KeyboardMapping *k = &common_state->input_mappings->keyboard_mappings[i];
+        if (k->key == key && k->action == target_action && k->parameter == target_param) {
+            // Already mapped to this target - unlearn it
+            for (int j = i; j < common_state->input_mappings->keyboard_count - 1; j++) {
+                common_state->input_mappings->keyboard_mappings[j] =
+                    common_state->input_mappings->keyboard_mappings[j + 1];
+            }
+            common_state->input_mappings->keyboard_count--;
+            printf("Unlearned keyboard mapping: key=%d from %s (param=%d)\n",
+                   key, input_action_name(target_action), target_param);
+            already_mapped = true;
+            save_mappings_to_config();
+            break;
+        }
+    }
+
+    if (!already_mapped && common_state->input_mappings->keyboard_count < common_state->input_mappings->keyboard_capacity) {
+        // Check if this key is mapped to something else, remove that mapping
         for (int i = 0; i < common_state->input_mappings->keyboard_count; i++) {
             if (common_state->input_mappings->keyboard_mappings[i].key == key) {
                 // Remove this mapping by shifting others down
@@ -704,8 +738,33 @@ static void learn_midi_mapping(int device_id, int cc_or_note, bool is_note) {
         }
     } else if (!is_note) {
         // Map MIDI CC to action
-        if (common_state->input_mappings->midi_count < common_state->input_mappings->midi_capacity) {
-            // Check if this CC is already mapped on this device, remove it
+
+        // Check if this CC is already mapped to the current target
+        bool already_mapped = false;
+        InputAction target_action = (learn_target_type == LEARN_TRIGGER_PAD) ? ACTION_TRIGGER_PAD : learn_target_action;
+        int target_param = (learn_target_type == LEARN_TRIGGER_PAD) ? learn_target_pad_index : learn_target_parameter;
+
+        for (int i = 0; i < common_state->input_mappings->midi_count; i++) {
+            MidiMapping *m = &common_state->input_mappings->midi_mappings[i];
+            if (m->cc_number == cc_or_note &&
+                (m->device_id == device_id || m->device_id == -1 || device_id == -1) &&
+                m->action == target_action && m->parameter == target_param) {
+                // Already mapped to this target - unlearn it
+                for (int j = i; j < common_state->input_mappings->midi_count - 1; j++) {
+                    common_state->input_mappings->midi_mappings[j] =
+                        common_state->input_mappings->midi_mappings[j + 1];
+                }
+                common_state->input_mappings->midi_count--;
+                printf("Unlearned MIDI CC mapping: CC %d (device %d) from %s (param=%d)\n",
+                       cc_or_note, device_id, input_action_name(target_action), target_param);
+                already_mapped = true;
+                save_mappings_to_config();
+                break;
+            }
+        }
+
+        if (!already_mapped && common_state->input_mappings->midi_count < common_state->input_mappings->midi_capacity) {
+            // Check if this CC is mapped to something else, remove it
             for (int i = 0; i < common_state->input_mappings->midi_count; i++) {
                 MidiMapping *m = &common_state->input_mappings->midi_mappings[i];
                 if (m->cc_number == cc_or_note &&
@@ -746,10 +805,10 @@ static void learn_midi_mapping(int device_id, int cc_or_note, bool is_note) {
             common_state->input_mappings->midi_mappings[common_state->input_mappings->midi_count++] = new_mapping;
             printf("Learned MIDI CC mapping: CC %d (device %d) -> %s (param=%d)\n",
                    cc_or_note, device_id, input_action_name(new_mapping.action), new_mapping.parameter);
-        }
 
-        // Save to config file
-        save_mappings_to_config();
+            // Save to config file
+            save_mappings_to_config();
+        }
     }
 
     // Exit learn mode
@@ -1152,9 +1211,15 @@ static void ShowMainUI() {
         ui_mode = UI_MODE_PADS;
     }
     ImGui::PopStyleColor();
-    //ImGui::SameLine();
-    // Shows effects
-    //ImGui::Button("FX", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
+    ImGui::SameLine();
+
+    // SETUP button with active state highlighting
+    ImVec4 setupCol = (ui_mode == UI_MODE_SETTINGS) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, setupCol);
+    if (ImGui::Button("SETUP", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_SETTINGS;
+    }
+    ImGui::PopStyleColor();
     ImGui::EndGroup();
 
     ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
@@ -1354,6 +1419,210 @@ static void ShowMainUI() {
                 ImGui::PopStyleColor(3);
             }
         }
+    }
+    else if (ui_mode == UI_MODE_SETTINGS) {
+        // SETTINGS MODE: Show device configuration
+
+        ImGui::SetCursorPos(ImVec2(origin.x + 16.0f, origin.y + 16.0f));
+        ImGui::BeginGroup();
+
+        ImGui::Text("MIDI Device Configuration");
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
+        // Get available MIDI ports
+        int num_midi_ports = midi_list_ports();
+
+        // MIDI Device 0 selection
+        ImGui::Text("MIDI Device 0:");
+        ImGui::SameLine(150.0f);
+        int current_device_0 = common_state ? common_state->device_config.midi_device_0 : -1;
+        char device_0_label[32];
+        if (current_device_0 == -1) {
+            snprintf(device_0_label, sizeof(device_0_label), "None");
+        } else {
+            snprintf(device_0_label, sizeof(device_0_label), "Port %d", current_device_0);
+        }
+
+        if (ImGui::BeginCombo("##midi_device_0", device_0_label)) {
+            if (ImGui::Selectable("None", current_device_0 == -1)) {
+                if (common_state) {
+                    common_state->device_config.midi_device_0 = -1;
+                    // Hot-swap MIDI devices
+                    midi_deinit();
+                    int ports[MIDI_MAX_DEVICES];
+                    ports[0] = common_state->device_config.midi_device_0;
+                    ports[1] = common_state->device_config.midi_device_1;
+                    int num_devices = 0;
+                    if (ports[0] >= 0) num_devices = 1;
+                    if (ports[1] >= 0) num_devices = 2;
+                    if (num_devices > 0) {
+                        midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
+                    }
+                    printf("MIDI Device 0 set to: None\n");
+                }
+            }
+            for (int i = 0; i < num_midi_ports; i++) {
+                char label[32];
+                snprintf(label, sizeof(label), "Port %d", i);
+                if (ImGui::Selectable(label, current_device_0 == i)) {
+                    if (common_state) {
+                        common_state->device_config.midi_device_0 = i;
+                        // Hot-swap MIDI devices
+                        midi_deinit();
+                        int ports[MIDI_MAX_DEVICES];
+                        ports[0] = common_state->device_config.midi_device_0;
+                        ports[1] = common_state->device_config.midi_device_1;
+                        int num_devices = 0;
+                        if (ports[0] >= 0) num_devices = 1;
+                        if (ports[1] >= 0) num_devices = 2;
+                        if (num_devices > 0) {
+                            midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
+                        }
+                        printf("MIDI Device 0 set to: Port %d\n", i);
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        ImGui::Dummy(ImVec2(0, 8.0f));
+
+        // MIDI Device 1 selection
+        ImGui::Text("MIDI Device 1:");
+        ImGui::SameLine(150.0f);
+        int current_device_1 = common_state ? common_state->device_config.midi_device_1 : -1;
+        char device_1_label[32];
+        if (current_device_1 == -1) {
+            snprintf(device_1_label, sizeof(device_1_label), "None");
+        } else {
+            snprintf(device_1_label, sizeof(device_1_label), "Port %d", current_device_1);
+        }
+
+        if (ImGui::BeginCombo("##midi_device_1", device_1_label)) {
+            if (ImGui::Selectable("None", current_device_1 == -1)) {
+                if (common_state) {
+                    common_state->device_config.midi_device_1 = -1;
+                    // Hot-swap MIDI devices
+                    midi_deinit();
+                    int ports[MIDI_MAX_DEVICES];
+                    ports[0] = common_state->device_config.midi_device_0;
+                    ports[1] = common_state->device_config.midi_device_1;
+                    int num_devices = 0;
+                    if (ports[0] >= 0) num_devices = 1;
+                    if (ports[1] >= 0) num_devices = 2;
+                    if (num_devices > 0) {
+                        midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
+                    }
+                    printf("MIDI Device 1 set to: None\n");
+                }
+            }
+            for (int i = 0; i < num_midi_ports; i++) {
+                char label[32];
+                snprintf(label, sizeof(label), "Port %d", i);
+                if (ImGui::Selectable(label, current_device_1 == i)) {
+                    if (common_state) {
+                        common_state->device_config.midi_device_1 = i;
+                        // Hot-swap MIDI devices
+                        midi_deinit();
+                        int ports[MIDI_MAX_DEVICES];
+                        ports[0] = common_state->device_config.midi_device_0;
+                        ports[1] = common_state->device_config.midi_device_1;
+                        int num_devices = 0;
+                        if (ports[0] >= 0) num_devices = 1;
+                        if (ports[1] >= 0) num_devices = 2;
+                        if (num_devices > 0) {
+                            midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
+                        }
+                        printf("MIDI Device 1 set to: Port %d\n", i);
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
+        // Audio Device Configuration
+        ImGui::Text("Audio Device Configuration");
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
+        // Refresh audio device list if empty
+        if (audio_device_names.empty()) {
+            refresh_audio_devices();
+        }
+
+        ImGui::Text("Audio Output:");
+        ImGui::SameLine(150.0f);
+
+        const char* current_audio_label = (selected_audio_device >= 0 && selected_audio_device < (int)audio_device_names.size())
+            ? audio_device_names[selected_audio_device].c_str()
+            : "Default";
+
+        if (ImGui::BeginCombo("##audio_device", current_audio_label)) {
+            // Default device option
+            if (ImGui::Selectable("Default", selected_audio_device == -1)) {
+                selected_audio_device = -1;
+                printf("Audio device set to: Default\n");
+                // Note: Audio device hot-swap would require SDL_CloseAudio() and SDL_OpenAudio()
+                // which is more complex than MIDI hot-swap. For now, just save the preference.
+            }
+
+            // List all available audio devices
+            for (int i = 0; i < (int)audio_device_names.size(); i++) {
+                if (ImGui::Selectable(audio_device_names[i].c_str(), selected_audio_device == i)) {
+                    selected_audio_device = i;
+                    printf("Audio device set to: %s\n", audio_device_names[i].c_str());
+                    // Note: Audio device hot-swap would require SDL_CloseAudio() and SDL_OpenAudio()
+                    // which is more complex than MIDI hot-swap. For now, just save the preference.
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Refresh", ImVec2(80.0f, 0.0f))) {
+            refresh_audio_devices();
+            printf("Refreshed audio device list (%d devices found)\n", (int)audio_device_names.size());
+        }
+
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
+        // Save button to persist settings
+        if (ImGui::Button("Save Settings", ImVec2(180.0f, 40.0f))) {
+            if (common_state && common_state->input_mappings) {
+                // Save input mappings
+                if (input_mappings_save(common_state->input_mappings, current_config_file) == 0) {
+                    // Save device configuration to the same file
+                    FILE *f = fopen(current_config_file, "r+");
+                    if (f) {
+                        // Check if [devices] section already exists
+                        char line[512];
+                        int has_devices_section = 0;
+                        while (fgets(line, sizeof(line), f)) {
+                            if (strstr(line, "[devices]")) {
+                                has_devices_section = 1;
+                                break;
+                            }
+                        }
+
+                        if (!has_devices_section) {
+                            // Append [devices] section
+                            fseek(f, 0, SEEK_END);
+                            fprintf(f, "\n[devices]\n");
+                            fprintf(f, "midi_device_0 = %d\n", common_state->device_config.midi_device_0);
+                            fprintf(f, "midi_device_1 = %d\n", common_state->device_config.midi_device_1);
+                            fprintf(f, "audio_device = %d\n", selected_audio_device);
+                        }
+                        fclose(f);
+                    }
+                    printf("Settings saved to %s\n", current_config_file);
+                } else {
+                    fprintf(stderr, "Failed to save settings to %s\n", current_config_file);
+                }
+            }
+        }
+
+        ImGui::EndGroup();
     }
 
     ImGui::EndChild();
