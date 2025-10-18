@@ -1040,8 +1040,8 @@ static void ShowMainUI() {
         }
 
         std::snprintf(lcd, sizeof(lcd),
-            "SO:%02d PT:%02d Loop:%s\nPitch:%.2f\nFile:%.*s",
-            pattern, order, loop_enabled ? "ON" : "OFF",
+            "SO:%02d PT:%02d MD:%s\nPitch:%.2f\nFile:%.*s",
+            order, pattern, loop_enabled ? "LOOP" : "SONG",
             MapPitchFader(pitch_slider),
             MAX_FILENAME_LEN, file_disp);
 
