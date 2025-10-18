@@ -56,6 +56,19 @@ static TriggerPad trigger_pads[MAX_TRIGGER_PADS];
 
 // Shared state
 static RegrooveCommonState *common_state = NULL;
+static const char *current_config_file = "regroove.ini"; // Track config file for saving
+
+// Learn mode state
+static bool learn_mode_active = false;
+enum LearnTarget {
+    LEARN_NONE = 0,
+    LEARN_ACTION,      // Regular button action (Play, Stop, etc.)
+    LEARN_TRIGGER_PAD  // Trigger pad
+};
+static LearnTarget learn_target_type = LEARN_NONE;
+static InputAction learn_target_action = ACTION_NONE;
+static int learn_target_parameter = 0;
+static int learn_target_pad_index = -1;
 
 // Clamp helper
 template<typename T>
@@ -490,6 +503,144 @@ static void handle_input_event(InputEvent *event) {
     }
 }
 
+// Save current mappings to config file
+static void save_mappings_to_config() {
+    if (!common_state || !common_state->input_mappings) return;
+
+    // Save the current input mappings
+    if (input_mappings_save(common_state->input_mappings, current_config_file) == 0) {
+        printf("Saved mappings to %s\n", current_config_file);
+    } else {
+        fprintf(stderr, "Failed to save mappings to %s\n", current_config_file);
+    }
+}
+
+// Learn keyboard mapping for current target
+static void learn_keyboard_mapping(int key) {
+    if (!common_state || !common_state->input_mappings) return;
+    if (learn_target_type == LEARN_NONE) return;
+
+    // Add new keyboard mapping to the current mappings
+    if (common_state->input_mappings->keyboard_count < common_state->input_mappings->keyboard_capacity) {
+        // Check if this key is already mapped, remove it
+        for (int i = 0; i < common_state->input_mappings->keyboard_count; i++) {
+            if (common_state->input_mappings->keyboard_mappings[i].key == key) {
+                // Remove this mapping by shifting others down
+                for (int j = i; j < common_state->input_mappings->keyboard_count - 1; j++) {
+                    common_state->input_mappings->keyboard_mappings[j] =
+                        common_state->input_mappings->keyboard_mappings[j + 1];
+                }
+                common_state->input_mappings->keyboard_count--;
+                break;
+            }
+        }
+
+        // Add the new mapping
+        KeyboardMapping new_mapping;
+        new_mapping.key = key;
+
+        if (learn_target_type == LEARN_TRIGGER_PAD) {
+            new_mapping.action = ACTION_TRIGGER_PAD;
+            new_mapping.parameter = learn_target_pad_index;
+        } else {
+            new_mapping.action = learn_target_action;
+            new_mapping.parameter = learn_target_parameter;
+        }
+
+        common_state->input_mappings->keyboard_mappings[common_state->input_mappings->keyboard_count++] = new_mapping;
+        printf("Learned keyboard mapping: key=%d -> %s (param=%d)\n",
+               key, input_action_name(new_mapping.action), new_mapping.parameter);
+
+        // Save to config file
+        save_mappings_to_config();
+    }
+
+    // Exit learn mode
+    learn_mode_active = false;
+    learn_target_type = LEARN_NONE;
+}
+
+// Helper functions to start learn mode for different targets
+static void start_learn_for_action(InputAction action, int parameter = 0) {
+    learn_mode_active = true;
+    learn_target_type = LEARN_ACTION;
+    learn_target_action = action;
+    learn_target_parameter = parameter;
+    learn_target_pad_index = -1;
+    printf("Learn mode: Waiting for input for action %s (param=%d)...\n",
+           input_action_name(action), parameter);
+}
+
+static void start_learn_for_pad(int pad_index) {
+    if (pad_index < 0 || pad_index >= MAX_TRIGGER_PADS) return;
+    learn_mode_active = true;
+    learn_target_type = LEARN_TRIGGER_PAD;
+    learn_target_action = ACTION_NONE;
+    learn_target_parameter = 0;
+    learn_target_pad_index = pad_index;
+    printf("Learn mode: Waiting for input for Pad %d...\n", pad_index + 1);
+}
+
+// Learn MIDI mapping for current target
+static void learn_midi_mapping(int device_id, int cc_or_note, bool is_note) {
+    if (!common_state || !common_state->input_mappings) return;
+    if (learn_target_type == LEARN_NONE) return;
+
+    if (is_note && learn_target_type == LEARN_TRIGGER_PAD) {
+        // Map MIDI note to trigger pad
+        if (learn_target_pad_index >= 0 && learn_target_pad_index < MAX_TRIGGER_PADS) {
+            trigger_pads[learn_target_pad_index].midi_note = cc_or_note;
+            trigger_pads[learn_target_pad_index].midi_device = device_id;
+            printf("Learned MIDI note mapping: Note %d (device %d) -> Pad %d\n",
+                   cc_or_note, device_id, learn_target_pad_index + 1);
+        }
+    } else if (!is_note) {
+        // Map MIDI CC to action
+        if (common_state->input_mappings->midi_count < common_state->input_mappings->midi_capacity) {
+            // Check if this CC is already mapped on this device, remove it
+            for (int i = 0; i < common_state->input_mappings->midi_count; i++) {
+                MidiMapping *m = &common_state->input_mappings->midi_mappings[i];
+                if (m->cc_number == cc_or_note &&
+                    (m->device_id == device_id || m->device_id == -1 || device_id == -1)) {
+                    // Remove this mapping
+                    for (int j = i; j < common_state->input_mappings->midi_count - 1; j++) {
+                        common_state->input_mappings->midi_mappings[j] =
+                            common_state->input_mappings->midi_mappings[j + 1];
+                    }
+                    common_state->input_mappings->midi_count--;
+                    break;
+                }
+            }
+
+            // Add the new mapping
+            MidiMapping new_mapping;
+            new_mapping.device_id = device_id;
+            new_mapping.cc_number = cc_or_note;
+            new_mapping.threshold = 64; // Button-style threshold
+            new_mapping.continuous = 0; // Button mode
+
+            if (learn_target_type == LEARN_TRIGGER_PAD) {
+                new_mapping.action = ACTION_TRIGGER_PAD;
+                new_mapping.parameter = learn_target_pad_index;
+            } else {
+                new_mapping.action = learn_target_action;
+                new_mapping.parameter = learn_target_parameter;
+            }
+
+            common_state->input_mappings->midi_mappings[common_state->input_mappings->midi_count++] = new_mapping;
+            printf("Learned MIDI CC mapping: CC %d (device %d) -> %s (param=%d)\n",
+                   cc_or_note, device_id, input_action_name(new_mapping.action), new_mapping.parameter);
+        }
+
+        // Save to config file
+        save_mappings_to_config();
+    }
+
+    // Exit learn mode
+    learn_mode_active = false;
+    learn_target_type = LEARN_NONE;
+}
+
 void handle_keyboard(SDL_Event &e, SDL_Window *window) {
     if (e.type != SDL_KEYDOWN) return;
 
@@ -538,6 +689,12 @@ void handle_keyboard(SDL_Event &e, SDL_Window *window) {
         }
     }
 
+    // If in learn mode, learn the mapping instead of executing
+    if (learn_mode_active) {
+        learn_keyboard_mapping(key);
+        return;
+    }
+
     // Query input mappings
     if (common_state && common_state->input_mappings) {
         InputEvent event;
@@ -551,6 +708,16 @@ void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned ch
     (void)userdata;
 
     unsigned char msg_type = status & 0xF0;
+
+    // If in learn mode, capture the MIDI input
+    if (learn_mode_active) {
+        // Only learn on note-on or CC with value > 0
+        if ((msg_type == 0x90 && value > 0) || (msg_type == 0xB0 && value >= 64)) {
+            bool is_note = (msg_type == 0x90);
+            learn_midi_mapping(device_id, cc_or_note, is_note);
+        }
+        return;
+    }
 
     // Handle Note-On messages for trigger pads
     if (msg_type == 0x90 && value > 0) { // Note-On with velocity > 0
@@ -738,13 +905,17 @@ static void ShowMainUI() {
     // File browser buttons
     ImGui::BeginGroup();
     if (ImGui::Button("<", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        if (common_state && common_state->file_list) {
+        if (learn_mode_active) {
+            start_learn_for_action(ACTION_FILE_PREV);
+        } else if (common_state && common_state->file_list) {
             regroove_filelist_prev(common_state->file_list);
         }
     }
     ImGui::SameLine();
     if (ImGui::Button("o", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        if (common_state && common_state->file_list) {
+        if (learn_mode_active) {
+            start_learn_for_action(ACTION_FILE_LOAD);
+        } else if (common_state && common_state->file_list) {
             char path[COMMON_MAX_PATH * 2];
             regroove_filelist_get_current_path(common_state->file_list, path, sizeof(path));
             load_module(path);
@@ -752,7 +923,9 @@ static void ShowMainUI() {
     }
     ImGui::SameLine();
     if (ImGui::Button(">", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        if (common_state && common_state->file_list) {
+        if (learn_mode_active) {
+            start_learn_for_action(ACTION_FILE_NEXT);
+        } else if (common_state && common_state->file_list) {
             regroove_filelist_next(common_state->file_list);
         }
     }
@@ -765,23 +938,35 @@ static void ShowMainUI() {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.25f, 0.20f, 1.0f)); // red
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.35f, 0.30f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.50f, 0.15f, 0.15f, 1.0f));
-        if (ImGui::Button("[]", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_STOP);
+        if (ImGui::Button("[]", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+            if (learn_mode_active) start_learn_for_action(ACTION_STOP);
+            else dispatch_action(ACT_STOP);
+        }
         ImGui::PopStyleColor(3);
     } else {
-        if (ImGui::Button("[]", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_STOP);
+        if (ImGui::Button("[]", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+            if (learn_mode_active) start_learn_for_action(ACTION_STOP);
+            else dispatch_action(ACT_STOP);
+        }
     }
 
     ImGui::SameLine();
-    
+
     // PLAY BUTTON
     if (playing) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.25f, 1.0f)); // green
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.80f, 0.35f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.50f, 0.20f, 1.0f));
-        if (ImGui::Button("|>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_RETRIGGER);
+        if (ImGui::Button("|>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+            if (learn_mode_active) start_learn_for_action(ACTION_RETRIGGER);
+            else dispatch_action(ACT_RETRIGGER);
+        }
         ImGui::PopStyleColor(3);
     } else {
-        if (ImGui::Button("|>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_PLAY);
+        if (ImGui::Button("|>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+            if (learn_mode_active) start_learn_for_action(ACTION_PLAY);
+            else dispatch_action(ACT_PLAY);
+        }
     }
 
     ImGui::SameLine();
@@ -791,9 +976,15 @@ static void ShowMainUI() {
 
     ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
 
-    if (ImGui::Button("<<", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_PREV_ORDER);
+    if (ImGui::Button("<<", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        if (learn_mode_active) start_learn_for_action(ACTION_PREV_ORDER);
+        else dispatch_action(ACT_PREV_ORDER);
+    }
     ImGui::SameLine();
-    if (ImGui::Button(">>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_NEXT_ORDER);
+    if (ImGui::Button(">>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        if (learn_mode_active) start_learn_for_action(ACTION_NEXT_ORDER);
+        else dispatch_action(ACT_NEXT_ORDER);
+    }
     ImGui::SameLine();
 
     // Fade the blink effect each frame
@@ -812,10 +1003,16 @@ static void ShowMainUI() {
         ImGui::PushStyleColor(ImGuiCol_Button, blinkCol);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, blinkCol);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, blinkCol);
-        if (ImGui::Button("O*", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_TOGGLE_LOOP);
+        if (ImGui::Button("O*", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+            if (learn_mode_active) start_learn_for_action(ACTION_PATTERN_MODE_TOGGLE);
+            else dispatch_action(ACT_TOGGLE_LOOP);
+        }
         ImGui::PopStyleColor(3);
     } else {
-        if (ImGui::Button("O∞", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) dispatch_action(ACT_TOGGLE_LOOP);
+        if (ImGui::Button("O∞", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+            if (learn_mode_active) start_learn_for_action(ACTION_PATTERN_MODE_TOGGLE);
+            else dispatch_action(ACT_TOGGLE_LOOP);
+        }
     }
 
     ImGui::EndGroup();
@@ -846,13 +1043,22 @@ static void ShowMainUI() {
 
     ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
 
-    //ImGui::BeginGroup();
-    // Setup application
-    //ImGui::Button("SETUP", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
-    //ImGui::SameLine();
-    // Input learning mode
-    //ImGui::Button("LEARN", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
-    //ImGui::EndGroup();
+    ImGui::BeginGroup();
+    // Input learning mode button
+    ImVec4 learnCol = learn_mode_active ? ImVec4(0.90f, 0.16f, 0.18f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, learnCol);
+    if (ImGui::Button("LEARN", ImVec2(BUTTON_SIZE * 2 + 8, BUTTON_SIZE))) {
+        learn_mode_active = !learn_mode_active;
+        if (!learn_mode_active) {
+            // Cancel learn mode
+            learn_target_type = LEARN_NONE;
+            learn_target_action = ACTION_NONE;
+            learn_target_parameter = 0;
+            learn_target_pad_index = -1;
+        }
+    }
+    ImGui::PopStyleColor();
+    ImGui::EndGroup();
 
     ImGui::EndChild();
 
@@ -896,8 +1102,10 @@ static void ShowMainUI() {
             // SOLO BUTTON
             ImVec4 soloCol = channels[i].solo ? ImVec4(0.80f,0.12f,0.14f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
             ImGui::PushStyleColor(ImGuiCol_Button, soloCol);
-            if (ImGui::Button((std::string("S##solo")+std::to_string(i)).c_str(), ImVec2(sliderW, SOLO_SIZE)))
-                dispatch_action(ACT_SOLO_CHANNEL, i);
+            if (ImGui::Button((std::string("S##solo")+std::to_string(i)).c_str(), ImVec2(sliderW, SOLO_SIZE))) {
+                if (learn_mode_active) start_learn_for_action(ACTION_CHANNEL_SOLO, i);
+                else dispatch_action(ACT_SOLO_CHANNEL, i);
+            }
             ImGui::PopStyleColor();
 
             ImGui::Dummy(ImVec2(0, 6.0f));
@@ -914,8 +1122,10 @@ static void ShowMainUI() {
             // MUTE BUTTON with color feedback
             ImVec4 muteCol = channels[i].mute ? ImVec4(0.90f,0.16f,0.18f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
             ImGui::PushStyleColor(ImGuiCol_Button, muteCol);
-            if (ImGui::Button((std::string("M##mute")+std::to_string(i)).c_str(), ImVec2(sliderW, MUTE_SIZE)))
-                dispatch_action(ACT_MUTE_CHANNEL, i);
+            if (ImGui::Button((std::string("M##mute")+std::to_string(i)).c_str(), ImVec2(sliderW, MUTE_SIZE))) {
+                if (learn_mode_active) start_learn_for_action(ACTION_CHANNEL_MUTE, i);
+                else dispatch_action(ACT_MUTE_CHANNEL, i);
+            }
             ImGui::PopStyleColor();
 
             ImGui::EndGroup();
@@ -994,14 +1204,18 @@ static void ShowMainUI() {
                 char label[16];
                 snprintf(label, sizeof(label), "P%d", idx + 1);
                 if (ImGui::Button(label, ImVec2(padSize, padSize))) {
-                    trigger_pads[idx].fade = 1.0f;
-                    // Execute the configured action for this pad
-                    if (trigger_pads[idx].action != ACTION_NONE) {
-                        InputEvent event;
-                        event.action = trigger_pads[idx].action;
-                        event.parameter = trigger_pads[idx].parameter;
-                        event.value = 127; // Full value for trigger pads
-                        handle_input_event(&event);
+                    if (learn_mode_active) {
+                        start_learn_for_pad(idx);
+                    } else {
+                        trigger_pads[idx].fade = 1.0f;
+                        // Execute the configured action for this pad
+                        if (trigger_pads[idx].action != ACTION_NONE) {
+                            InputEvent event;
+                            event.action = trigger_pads[idx].action;
+                            event.parameter = trigger_pads[idx].parameter;
+                            event.value = 127; // Full value for trigger pads
+                            handle_input_event(&event);
+                        }
                     }
                 }
 
@@ -1082,6 +1296,9 @@ int main(int argc, char* argv[]) {
 
     // Initialize trigger pads with defaults
     init_trigger_pads_defaults();
+
+    // Track the config file for saving learned mappings
+    current_config_file = config_file;
 
     // Load input mappings from config file
     if (regroove_common_load_mappings(common_state, config_file) != 0) {
