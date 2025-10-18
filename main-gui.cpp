@@ -56,12 +56,20 @@ static std::vector<std::string> audio_device_names;
 static int selected_audio_device = -1;
 static SDL_AudioDeviceID audio_device_id = 0;
 
+// MIDI device cache (refreshed only when settings panel is shown or on refresh button)
+static int cached_midi_port_count = -1;
+static UIMode last_ui_mode = UI_MODE_VOLUME;
+
 void refresh_audio_devices() {
     audio_device_names.clear();
     int n = SDL_GetNumAudioDevices(0); // 0 = output devices
     for (int i = 0; i < n; i++) {
         audio_device_names.push_back(SDL_GetAudioDeviceName(i, 0));
     }
+}
+
+void refresh_midi_devices() {
+    cached_midi_port_count = midi_list_ports();
 }
 
 // Learn mode state
@@ -1237,6 +1245,15 @@ static void ShowMainUI() {
 
     ImVec2 origin = ImGui::GetCursorPos();
 
+    // Detect UI mode change to refresh devices only when needed
+    if (ui_mode == UI_MODE_SETTINGS && last_ui_mode != UI_MODE_SETTINGS) {
+        refresh_midi_devices();
+        if (audio_device_names.empty()) {
+            refresh_audio_devices();
+        }
+    }
+    last_ui_mode = ui_mode;
+
     // Conditional rendering based on UI mode
     if (ui_mode == UI_MODE_VOLUME) {
         // VOLUME MODE: Show channel sliders
@@ -1395,8 +1412,8 @@ static void ShowMainUI() {
         ImGui::Text("MIDI Device Configuration");
         ImGui::Dummy(ImVec2(0, 12.0f));
 
-        // Get available MIDI ports
-        int num_midi_ports = midi_list_ports();
+        // Use cached MIDI port count (refreshed when panel is first shown)
+        int num_midi_ports = cached_midi_port_count >= 0 ? cached_midi_port_count : 0;
 
         // MIDI Device 0 selection
         ImGui::Text("MIDI Device 0:");
@@ -1524,6 +1541,12 @@ static void ShowMainUI() {
                 }
             }
             ImGui::EndCombo();
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Refresh MIDI", ImVec2(100.0f, 0.0f))) {
+            refresh_midi_devices();
+            printf("Refreshed MIDI device list (%d devices found)\n", cached_midi_port_count);
         }
 
         ImGui::Dummy(ImVec2(0, 20.0f));

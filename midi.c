@@ -21,18 +21,8 @@ static void rtmidi_event_callback_1(double dt, const unsigned char *msg, size_t 
 int midi_list_ports(void) {
     if (access("/dev/snd/seq", F_OK) != 0) return 0;
     RtMidiInPtr temp = rtmidi_in_create_default();
-    if (!temp) return 0; // <- If NULL, bail out instantly
-    unsigned int nports = 0;
-    nports = rtmidi_get_port_count(temp);
-    if (nports > 0) {
-        printf("MIDI Input Ports: %u\n", nports);
-        for (unsigned int i = 0; i < nports; ++i) {
-            char name[128];
-            int bufsize = sizeof(name);
-            rtmidi_get_port_name(temp, i, name, &bufsize);
-            printf("  [%u] %s\n", i, name);
-        }
-    }
+    if (!temp) return 0;
+    unsigned int nports = rtmidi_get_port_count(temp);
     rtmidi_in_free(temp);
     return nports;
 }
