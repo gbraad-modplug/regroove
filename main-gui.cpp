@@ -119,6 +119,12 @@ void update_channel_mute_states() {
 // -----------------------------------------------------------------------------
 static void my_row_callback(int ord, int row, void *userdata) {
     //printf("[ROW] Order %d, Row %d\n", ord, row);
+
+    // Update performance timeline
+    if (common_state && common_state->performance) {
+        regroove_performance_tick(common_state->performance);
+    }
+
     if (total_rows <= 0) return;
     int rows_per_step = total_rows / 16;
     if (rows_per_step < 1) rows_per_step = 1;

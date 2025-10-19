@@ -142,6 +142,9 @@ RegrooveCommonState* regroove_common_create(void) {
     state->metadata = regroove_metadata_create();
     state->current_module_path[0] = '\0';
 
+    // Initialize performance
+    state->performance = regroove_performance_create();
+
     return state;
 }
 
@@ -388,6 +391,11 @@ void regroove_common_destroy(RegrooveCommonState *state) {
     // Destroy metadata
     if (state->metadata) {
         regroove_metadata_destroy(state->metadata);
+    }
+
+    // Destroy performance
+    if (state->performance) {
+        regroove_performance_destroy(state->performance);
     }
 
     free(state);

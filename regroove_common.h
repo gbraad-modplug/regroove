@@ -5,6 +5,7 @@
 #include "regroove_engine.h"
 #include "input_mappings.h"
 #include "regroove_metadata.h"
+#include "regroove_performance.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,6 +52,7 @@ typedef struct {
     InputMappings *input_mappings;
     RegrooveFileList *file_list;
     RegrooveMetadata *metadata;
+    RegroovePerformance *performance;
     RegrooveDeviceConfig device_config;
     int paused;
     int num_channels;

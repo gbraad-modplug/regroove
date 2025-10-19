@@ -58,6 +58,11 @@ static void my_order_callback(int order, int pattern, void *userdata) {
 }
 static void my_row_callback(int order, int row, void *userdata) {
     //printf("[ROW] Order %d, Row %d\n", order, row);
+
+    // Update performance timeline
+    if (common_state && common_state->performance) {
+        regroove_performance_tick(common_state->performance);
+    }
 }
 static void my_loop_callback(int order, int pattern, void *userdata) {
     printf("[LOOP] Pattern looped at Order %d (Pattern %d)\n", order, pattern);
