@@ -49,6 +49,7 @@ add_executable(regroove-gui
     regroove_metadata.c
     midi.c
     input_mappings.c
+    lcd.c
     imgui/imgui.cpp
     imgui/imgui_draw.cpp
     imgui/imgui_tables.cpp

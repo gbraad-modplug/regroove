@@ -13,6 +13,7 @@
 extern "C" {
 #include "regroove_common.h"
 #include "midi.h"
+#include "lcd.h"
 }
 
 // -----------------------------------------------------------------------------
@@ -60,6 +61,9 @@ static SDL_AudioDeviceID audio_device_id = 0;
 // MIDI device cache (refreshed only when settings panel is shown or on refresh button)
 static int cached_midi_port_count = -1;
 static UIMode last_ui_mode = UI_MODE_VOLUME;
+
+// LCD display (initialized in main)
+static LCD* lcd_display = NULL;
 
 void refresh_audio_devices() {
     audio_device_names.clear();
@@ -146,9 +150,7 @@ static void my_loop_song_callback(void *userdata) {
 // -----------------------------------------------------------------------------
 
 // LCD Display Configuration (similar to HD44780 initialization)
-// Configured for UI panel width of 190px - 16 chars fits nicely
-static constexpr int LCD_COLS = 16;  // Characters per line
-static constexpr int LCD_ROWS = 4;   // Number of lines
+// Configured for UI panel width of 190px - 20 chars fits nicely
 static constexpr int MAX_LCD_TEXTLENGTH = LCD_COLS;
 
 static int load_module(const char *path) {
@@ -1085,52 +1087,51 @@ static void ShowMainUI() {
     ImGui::BeginChild("left_panel", ImVec2(LEFT_PANEL_WIDTH, channelAreaHeight),
                       true, ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
     {
-        char lcd[128];  // Increased from 64 to accommodate all 4 lines
+        if (lcd_display) {
+            char lcd_text[256];
 
-        // Include truncated file name
-        const char* file_disp = "";
-        if (common_state && common_state->file_list && common_state->file_list->count > 0) {
-            static char truncated[MAX_LCD_TEXTLENGTH + 1];
-            const char* current_file = common_state->file_list->filenames[common_state->file_list->current_index];
-            std::strncpy(truncated, current_file, MAX_LCD_TEXTLENGTH);
-            truncated[MAX_LCD_TEXTLENGTH] = 0;
-            file_disp = truncated;
-        }
-
-        // Get BPM from engine
-        char bpm_str[16] = "---";
-        if (common_state && common_state->player) {
-            double bpm = regroove_get_current_bpm(common_state->player);
-            std::snprintf(bpm_str, sizeof(bpm_str), "%.0f", bpm);
-        }
-
-        // Get pattern description from metadata
-        // Always query the actual current pattern from the engine to avoid stale data
-        const char* pattern_desc = "";
-        if (common_state && common_state->metadata && common_state->player) {
-            int current_pattern = regroove_get_current_pattern(common_state->player);
-            const char* desc = regroove_metadata_get_pattern_desc(common_state->metadata, current_pattern);
-
-            if (desc && desc[0] != '\0') {
-                pattern_desc = desc;
+            // Include truncated file name
+            const char* file_disp = "";
+            if (common_state && common_state->file_list && common_state->file_list->count > 0) {
+                static char truncated[MAX_LCD_TEXTLENGTH + 1];
+                const char* current_file = common_state->file_list->filenames[common_state->file_list->current_index];
+                std::strncpy(truncated, current_file, MAX_LCD_TEXTLENGTH);
+                truncated[MAX_LCD_TEXTLENGTH] = 0;
+                file_disp = truncated;
             }
+
+            // Get BPM from engine
+            char bpm_str[16] = "---";
+            if (common_state && common_state->player) {
+                double bpm = regroove_get_current_bpm(common_state->player);
+                std::snprintf(bpm_str, sizeof(bpm_str), "%.0f", bpm);
+            }
+
+            // Get pattern description from metadata
+            // Always query the actual current pattern from the engine to avoid stale data
+            const char* pattern_desc = "";
+            if (common_state && common_state->metadata && common_state->player) {
+                int current_pattern = regroove_get_current_pattern(common_state->player);
+                const char* desc = regroove_metadata_get_pattern_desc(common_state->metadata, current_pattern);
+
+                if (desc && desc[0] != '\0') {
+                    pattern_desc = desc;
+                }
+            }
+
+            std::snprintf(lcd_text, sizeof(lcd_text),
+                "SO:%02d PT:%02d MD:%s\nPitch:%.2f BPM:%s\n%.*s\n%.*s",
+                order, pattern, loop_enabled ? "LOOP" : "SONG",
+                MapPitchFader(pitch_slider), bpm_str,
+                MAX_LCD_TEXTLENGTH, file_disp,
+                MAX_LCD_TEXTLENGTH, pattern_desc);
+
+            // Write to LCD display
+            lcd_write(lcd_display, lcd_text);
+
+            // Draw LCD
+            DrawLCD(lcd_get_buffer(lcd_display), LEFT_PANEL_WIDTH - 16.0f, LCD_HEIGHT);
         }
-
-        std::snprintf(lcd, sizeof(lcd),
-            "SO:%02d  PT:%02d  MD:%s\nPitch:%.2f  BPM:%s\nFile:%.*s\n%.*s",
-            order, pattern, loop_enabled ? "LOOP" : "SONG",
-            MapPitchFader(pitch_slider), bpm_str,
-            MAX_LCD_TEXTLENGTH, file_disp,
-            MAX_LCD_TEXTLENGTH, pattern_desc);
-
-        // Debug: Show what's actually being displayed
-        static int last_logged_pattern_lcd = -999;
-        if (pattern != last_logged_pattern_lcd) {
-            printf("[LCD TEXT] pattern_desc='%s', lcd buffer:\n%s\n---END LCD---\n", pattern_desc, lcd);
-            last_logged_pattern_lcd = pattern;
-        }
-
-        DrawLCD(lcd, LEFT_PANEL_WIDTH - 16.0f, LCD_HEIGHT);
     }
 
     ImGui::Dummy(ImVec2(0, 8.0f));
@@ -2587,6 +2588,13 @@ int main(int argc, char* argv[]) {
     }
     // Store audio device ID in common state for use by common functions
     common_state->audio_device_id = audio_device_id;
+    // Initialize LCD display
+    lcd_display = lcd_init(LCD_COLS, LCD_ROWS);
+    if (!lcd_display) {
+        fprintf(stderr, "Failed to initialize LCD display\n");
+        return 1;
+    }
+
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ApplyFlatBlackRedSkin();
@@ -2638,6 +2646,11 @@ int main(int argc, char* argv[]) {
     }
 
     regroove_common_destroy(common_state);
+
+    // Cleanup LCD display
+    if (lcd_display) {
+        lcd_destroy(lcd_display);
+    }
 
     ImGui_ImplOpenGL2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
