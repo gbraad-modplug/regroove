@@ -175,6 +175,58 @@ void regroove_performance_clear_events(RegroovePerformance* perf) {
     perf->playback_index = 0;
 }
 
+PerformanceEvent* regroove_performance_get_event_at(RegroovePerformance* perf, int index) {
+    if (!perf || index < 0 || index >= perf->event_count) return NULL;
+    return &perf->events[index];
+}
+
+int regroove_performance_delete_event(RegroovePerformance* perf, int index) {
+    if (!perf || index < 0 || index >= perf->event_count) return -1;
+
+    // Shift all events after this one down
+    for (int i = index; i < perf->event_count - 1; i++) {
+        perf->events[i] = perf->events[i + 1];
+    }
+    perf->event_count--;
+
+    // Reset playback index to be safe
+    if (perf->playback_index > index) {
+        perf->playback_index--;
+    }
+
+    return 0;
+}
+
+int regroove_performance_add_event(RegroovePerformance* perf,
+                                   int performance_row,
+                                   InputAction action,
+                                   int parameter,
+                                   float value) {
+    if (!perf || perf->event_count >= perf->event_capacity) return -1;
+
+    // Add event at the end
+    PerformanceEvent* evt = &perf->events[perf->event_count];
+    evt->performance_row = performance_row;
+    evt->action = action;
+    evt->parameter = parameter;
+    evt->value = value;
+    perf->event_count++;
+
+    // Sort events by performance_row to maintain order
+    // Simple insertion sort since we're adding one at a time
+    for (int i = perf->event_count - 1; i > 0; i--) {
+        if (perf->events[i].performance_row < perf->events[i-1].performance_row) {
+            PerformanceEvent temp = perf->events[i];
+            perf->events[i] = perf->events[i-1];
+            perf->events[i-1] = temp;
+        } else {
+            break;
+        }
+    }
+
+    return 0;
+}
+
 int regroove_performance_save(const RegroovePerformance* perf, const char* filepath) {
     if (!perf || !filepath) return -1;
 

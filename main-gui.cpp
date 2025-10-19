@@ -46,8 +46,9 @@ static float loop_blink = 0.0f;
 enum UIMode {
     UI_MODE_VOLUME = 0,
     UI_MODE_PADS = 1,
-    UI_MODE_SETTINGS = 2,
-    UI_MODE_INFO = 3
+    UI_MODE_PERF = 2,
+    UI_MODE_INFO = 3,
+    UI_MODE_SETTINGS = 4
 };
 static UIMode ui_mode = UI_MODE_VOLUME;
 
@@ -224,6 +225,16 @@ static int load_module(const char *path) {
     if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 1);
     playing = false;
     for (int i = 0; i < 16; i++) step_fade[i] = 0.0f;
+
+    // Auto-switch to PERF mode if performance events were loaded
+    if (common_state && common_state->performance) {
+        int event_count = regroove_performance_get_event_count(common_state->performance);
+        if (event_count > 0) {
+            ui_mode = UI_MODE_PERF;
+            printf("Auto-switched to PERF mode (%d events loaded)\n", event_count);
+        }
+    }
+
     return 0;
 }
 
@@ -1221,9 +1232,14 @@ static void ShowMainUI() {
 
             // Determine playback mode display
             const char* mode_str = "SONG";
-            if (common_state && common_state->performance &&
-                regroove_performance_is_playing(common_state->performance)) {
-                mode_str = "PERF";
+            // Show PERF if either: (1) performance is playing OR (2) events are loaded
+            if (common_state && common_state->performance) {
+                int event_count = regroove_performance_get_event_count(common_state->performance);
+                if (regroove_performance_is_playing(common_state->performance) || event_count > 0) {
+                    mode_str = "PERF";
+                } else if (loop_enabled) {
+                    mode_str = "LOOP";
+                }
             } else if (loop_enabled) {
                 mode_str = "LOOP";
             }
@@ -1399,6 +1415,14 @@ static void ShowMainUI() {
     }
     ImGui::PopStyleColor();
     ImGui::SameLine();
+
+    // PERF button with active state highlighting
+    ImVec4 perfCol = (ui_mode == UI_MODE_PERF) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, perfCol);
+    if (ImGui::Button("PERF", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_PERF;
+    }
+    ImGui::PopStyleColor();
 
     ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -1628,6 +1652,310 @@ static void ShowMainUI() {
                 ImGui::PopStyleColor(3);
             }
         }
+    }
+    else if (ui_mode == UI_MODE_PERF) {
+        // PERF MODE: Show and edit performance events
+
+        ImGui::SetCursorPos(ImVec2(origin.x + 16.0f, origin.y + 16.0f));
+
+        // Make the entire perf area scrollable
+        ImGui::BeginChild("##perf_scroll", ImVec2(rightW - 32.0f, contentHeight - 32.0f), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+        if (!common_state || !common_state->performance) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Performance system not initialized");
+        } else {
+            RegroovePerformance* perf = common_state->performance;
+            int event_count = regroove_performance_get_event_count(perf);
+
+            ImGui::Text("Performance Events (%d total)", event_count);
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Control buttons
+            ImGui::BeginGroup();
+            if (ImGui::Button("Clear All Events", ImVec2(150.0f, 30.0f))) {
+                regroove_performance_clear_events(perf);
+                printf("Cleared all performance events\n");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Save to .rgx", ImVec2(150.0f, 30.0f))) {
+                if (regroove_common_save_rgx(common_state) == 0) {
+                    printf("Performance saved to .rgx file\n");
+                } else {
+                    fprintf(stderr, "Failed to save performance\n");
+                }
+            }
+            ImGui::EndGroup();
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+
+            // Event list
+            ImGui::Text("Event List");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Track which event is being edited (-1 = none)
+            static int edit_event_index = -1;
+
+            if (event_count == 0) {
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No events recorded. Press the 'O' button and play to record.");
+            } else {
+                ImGui::BeginChild("##event_list", ImVec2(rightW - 64.0f, contentHeight - 200.0f), true);
+
+                ImGui::Columns(6, "event_columns");
+                ImGui::SetColumnWidth(0, 80.0f);  // PO:PR
+                ImGui::SetColumnWidth(1, 200.0f); // Action
+                ImGui::SetColumnWidth(2, 100.0f); // Parameter
+                ImGui::SetColumnWidth(3, 100.0f); // Value
+                ImGui::SetColumnWidth(4, 80.0f);  // Edit
+                ImGui::SetColumnWidth(5, 80.0f);  // Delete
+
+                ImGui::Text("Position"); ImGui::NextColumn();
+                ImGui::Text("Action"); ImGui::NextColumn();
+                ImGui::Text("Parameter"); ImGui::NextColumn();
+                ImGui::Text("Value"); ImGui::NextColumn();
+                ImGui::Text("Edit"); ImGui::NextColumn();
+                ImGui::Text("Delete"); ImGui::NextColumn();
+                ImGui::Separator();
+
+                int delete_index = -1;
+                bool save_needed = false;
+
+                for (int i = 0; i < event_count; i++) {
+                    PerformanceEvent* evt = regroove_performance_get_event_at(perf, i);
+                    if (!evt) continue;
+
+                    ImGui::PushID(i);
+                    bool is_editing = (edit_event_index == i);
+
+                    if (is_editing) {
+                        // EDITING MODE - Show editable fields
+
+                        // Position (editable)
+                        int po = evt->performance_row / 64;
+                        int pr = evt->performance_row % 64;
+                        ImGui::SetNextItemWidth(40.0f);
+                        if (ImGui::InputInt("##edit_po", &po, 0, 0)) {
+                            if (po < 0) po = 0;
+                            evt->performance_row = po * 64 + pr;
+                            save_needed = true;
+                        }
+                        ImGui::SameLine();
+                        ImGui::Text(":");
+                        ImGui::SameLine();
+                        ImGui::SetNextItemWidth(40.0f);
+                        if (ImGui::InputInt("##edit_pr", &pr, 0, 0)) {
+                            if (pr < 0) pr = 0;
+                            if (pr >= 64) pr = 63;
+                            evt->performance_row = po * 64 + pr;
+                            save_needed = true;
+                        }
+                        ImGui::NextColumn();
+
+                        // Action (editable dropdown)
+                        ImGui::SetNextItemWidth(180.0f);
+                        if (ImGui::BeginCombo("##edit_action", input_action_name(evt->action))) {
+                            for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
+                                InputAction act = (InputAction)a;
+                                if (ImGui::Selectable(input_action_name(act), evt->action == act)) {
+                                    evt->action = act;
+                                    save_needed = true;
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+                        ImGui::NextColumn();
+
+                        // Parameter (editable if applicable)
+                        if (evt->action == ACTION_CHANNEL_MUTE || evt->action == ACTION_CHANNEL_SOLO ||
+                            evt->action == ACTION_CHANNEL_VOLUME || evt->action == ACTION_TRIGGER_PAD ||
+                            evt->action == ACTION_JUMP_TO_ORDER || evt->action == ACTION_JUMP_TO_PATTERN ||
+                            evt->action == ACTION_QUEUE_ORDER || evt->action == ACTION_QUEUE_PATTERN) {
+                            ImGui::SetNextItemWidth(80.0f);
+                            if (ImGui::InputInt("##edit_param", &evt->parameter, 0, 0)) {
+                                if (evt->parameter < 0) evt->parameter = 0;
+                                save_needed = true;
+                            }
+                        } else {
+                            ImGui::Text("-");
+                        }
+                        ImGui::NextColumn();
+
+                        // Value (editable if applicable)
+                        if (evt->action == ACTION_CHANNEL_VOLUME || evt->action == ACTION_PITCH_SET) {
+                            ImGui::SetNextItemWidth(80.0f);
+                            if (ImGui::InputFloat("##edit_value", &evt->value, 0, 0, "%.0f")) {
+                                if (evt->value < 0.0f) evt->value = 0.0f;
+                                if (evt->value > 127.0f) evt->value = 127.0f;
+                                save_needed = true;
+                            }
+                        } else {
+                            ImGui::Text("-");
+                        }
+                        ImGui::NextColumn();
+
+                        // Save/Cancel buttons
+                        if (ImGui::Button("Save", ImVec2(60.0f, 0.0f))) {
+                            edit_event_index = -1;
+                            save_needed = true;
+                            printf("Saved changes to event at index %d\n", i);
+                        }
+                        ImGui::NextColumn();
+
+                        if (ImGui::Button("Cancel", ImVec2(40.0f, 0.0f))) {
+                            edit_event_index = -1;
+                            // Reload to discard changes (or we could cache original values)
+                        }
+                        ImGui::NextColumn();
+
+                    } else {
+                        // DISPLAY MODE - Show read-only fields
+
+                        // Position (PO:PR format)
+                        int po = evt->performance_row / 64;
+                        int pr = evt->performance_row % 64;
+                        ImGui::Text("%02d:%02d", po, pr);
+                        ImGui::NextColumn();
+
+                        // Action
+                        ImGui::Text("%s", input_action_name(evt->action));
+                        ImGui::NextColumn();
+
+                        // Parameter
+                        if (evt->action == ACTION_CHANNEL_MUTE || evt->action == ACTION_CHANNEL_SOLO ||
+                            evt->action == ACTION_CHANNEL_VOLUME || evt->action == ACTION_TRIGGER_PAD) {
+                            ImGui::Text("%d", evt->parameter);
+                        } else if (evt->action == ACTION_JUMP_TO_ORDER || evt->action == ACTION_QUEUE_ORDER) {
+                            ImGui::Text("Order %d", evt->parameter);
+                        } else if (evt->action == ACTION_JUMP_TO_PATTERN || evt->action == ACTION_QUEUE_PATTERN) {
+                            ImGui::Text("Pattern %d", evt->parameter);
+                        } else {
+                            ImGui::Text("-");
+                        }
+                        ImGui::NextColumn();
+
+                        // Value
+                        if (evt->action == ACTION_CHANNEL_VOLUME) {
+                            ImGui::Text("%.0f", evt->value);
+                        } else {
+                            ImGui::Text("-");
+                        }
+                        ImGui::NextColumn();
+
+                        // Edit button
+                        if (ImGui::Button("Edit", ImVec2(60.0f, 0.0f))) {
+                            edit_event_index = i;
+                        }
+                        ImGui::NextColumn();
+
+                        // Delete button
+                        if (ImGui::Button("X", ImVec2(40.0f, 0.0f))) {
+                            delete_index = i;
+                            edit_event_index = -1; // Cancel any editing
+                        }
+                        ImGui::NextColumn();
+                    }
+
+                    ImGui::PopID();
+                }
+
+                // Handle deletion
+                if (delete_index >= 0) {
+                    if (regroove_performance_delete_event(perf, delete_index) == 0) {
+                        printf("Deleted event at index %d\n", delete_index);
+                        save_needed = true;
+                    }
+                }
+
+                // Auto-save if any changes were made
+                if (save_needed) {
+                    regroove_common_save_rgx(common_state);
+                }
+
+                ImGui::Columns(1);
+                ImGui::EndChild();
+            }
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+
+            // Add new event UI
+            ImGui::Text("Add New Event");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            static int new_perf_po = 0;
+            static int new_perf_pr = 0;
+            static InputAction new_perf_action = ACTION_PLAY;
+            static int new_perf_parameter = 0;
+            static float new_perf_value = 127.0f;
+
+            ImGui::Text("Position:");
+            ImGui::SameLine(120.0f);
+            ImGui::SetNextItemWidth(80.0f);
+            ImGui::InputInt("##new_po", &new_perf_po);
+            if (new_perf_po < 0) new_perf_po = 0;
+            ImGui::SameLine();
+            ImGui::Text(":");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80.0f);
+            ImGui::InputInt("##new_pr", &new_perf_pr);
+            if (new_perf_pr < 0) new_perf_pr = 0;
+            if (new_perf_pr >= 64) new_perf_pr = 63;
+
+            ImGui::Text("Action:");
+            ImGui::SameLine(120.0f);
+            ImGui::SetNextItemWidth(250.0f);
+            if (ImGui::BeginCombo("##new_perf_action", input_action_name(new_perf_action))) {
+                for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
+                    InputAction act = (InputAction)a;
+                    if (ImGui::Selectable(input_action_name(act), new_perf_action == act)) {
+                        new_perf_action = act;
+                        new_perf_parameter = 0;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            // Parameter input (conditional based on action)
+            if (new_perf_action == ACTION_CHANNEL_MUTE || new_perf_action == ACTION_CHANNEL_SOLO ||
+                new_perf_action == ACTION_CHANNEL_VOLUME || new_perf_action == ACTION_TRIGGER_PAD ||
+                new_perf_action == ACTION_JUMP_TO_ORDER || new_perf_action == ACTION_JUMP_TO_PATTERN ||
+                new_perf_action == ACTION_QUEUE_ORDER || new_perf_action == ACTION_QUEUE_PATTERN) {
+                ImGui::Text("Parameter:");
+                ImGui::SameLine(120.0f);
+                ImGui::SetNextItemWidth(100.0f);
+                ImGui::InputInt("##new_perf_param", &new_perf_parameter);
+                if (new_perf_parameter < 0) new_perf_parameter = 0;
+            }
+
+            // Value input (for volume/pitch actions)
+            if (new_perf_action == ACTION_CHANNEL_VOLUME || new_perf_action == ACTION_PITCH_SET) {
+                ImGui::Text("Value:");
+                ImGui::SameLine(120.0f);
+                ImGui::SetNextItemWidth(100.0f);
+                ImGui::InputFloat("##new_perf_value", &new_perf_value);
+                if (new_perf_value < 0.0f) new_perf_value = 0.0f;
+                if (new_perf_value > 127.0f) new_perf_value = 127.0f;
+            }
+
+            if (ImGui::Button("Add Event", ImVec2(150.0f, 30.0f))) {
+                int performance_row = new_perf_po * 64 + new_perf_pr;
+                if (regroove_performance_add_event(perf, performance_row, new_perf_action,
+                                                   new_perf_parameter, new_perf_value) == 0) {
+                    printf("Added event: %s at %02d:%02d\n",
+                           input_action_name(new_perf_action), new_perf_po, new_perf_pr);
+                    // Auto-save after adding
+                    regroove_common_save_rgx(common_state);
+                } else {
+                    fprintf(stderr, "Failed to add event (buffer full?)\n");
+                }
+            }
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+            ImGui::TextWrapped("Events are automatically saved to the .rgx file when modified.");
+        }
+
+        ImGui::EndChild(); // End perf_scroll child window
     }
     else if (ui_mode == UI_MODE_INFO) {
         // INFO MODE: Show song/module information

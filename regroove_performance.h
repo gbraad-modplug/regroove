@@ -69,6 +69,22 @@ int regroove_performance_get_event_count(const RegroovePerformance* perf);
 // Clear all recorded events
 void regroove_performance_clear_events(RegroovePerformance* perf);
 
+// Get direct access to event at index (for editing)
+// Returns NULL if index is out of bounds
+PerformanceEvent* regroove_performance_get_event_at(RegroovePerformance* perf, int index);
+
+// Delete event at index
+// Returns 0 on success, -1 on error
+int regroove_performance_delete_event(RegroovePerformance* perf, int index);
+
+// Add a new event manually (for UI editing)
+// Returns 0 on success, -1 if buffer full
+int regroove_performance_add_event(RegroovePerformance* perf,
+                                   int performance_row,
+                                   InputAction action,
+                                   int parameter,
+                                   float value);
+
 // Save performance to file
 int regroove_performance_save(const RegroovePerformance* perf, const char* filepath);
 
