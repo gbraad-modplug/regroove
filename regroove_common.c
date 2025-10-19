@@ -323,6 +323,12 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
         regroove_metadata_destroy(state->metadata);
         state->metadata = regroove_metadata_create();
 
+        // ALWAYS clear old performance events when loading a new module
+        if (state->performance) {
+            regroove_performance_clear_events(state->performance);
+            regroove_performance_reset(state->performance);
+        }
+
         // Determine which .rgx file to use
         char rgx_path[COMMON_MAX_PATH];
         if (is_rgx_file(path)) {
@@ -339,7 +345,6 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
 
             // Load performance events from the same .rgx file
             if (state->performance) {
-                regroove_performance_clear_events(state->performance);
                 if (regroove_performance_load(state->performance, rgx_path) == 0) {
                     int event_count = regroove_performance_get_event_count(state->performance);
                     if (event_count > 0) {

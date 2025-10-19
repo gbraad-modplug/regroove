@@ -226,13 +226,17 @@ static int load_module(const char *path) {
     playing = false;
     for (int i = 0; i < 16; i++) step_fade[i] = 0.0f;
 
-    // Auto-switch to PERF mode if performance events were loaded
+    // Auto-switch to PERF mode if performance events were loaded, otherwise VOL mode
     if (common_state && common_state->performance) {
         int event_count = regroove_performance_get_event_count(common_state->performance);
         if (event_count > 0) {
             ui_mode = UI_MODE_PERF;
             printf("Auto-switched to PERF mode (%d events loaded)\n", event_count);
+        } else {
+            ui_mode = UI_MODE_VOLUME;  // Reset to default mode when no performance
         }
+    } else {
+        ui_mode = UI_MODE_VOLUME;  // Reset to default mode
     }
 
     return 0;
@@ -332,9 +336,10 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
             if (mod) {
                 if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 1);
                 playing = false;
-                // Notify performance system that playback stopped
+                // Notify performance system that playback stopped AND reset to beginning
                 if (common_state && common_state->performance) {
                     regroove_performance_set_playback(common_state->performance, 0);
+                    regroove_performance_reset(common_state->performance);
                 }
             }
             break;
@@ -1414,15 +1419,6 @@ static void ShowMainUI() {
         ui_mode = UI_MODE_PADS;
     }
     ImGui::PopStyleColor();
-    ImGui::SameLine();
-
-    // PERF button with active state highlighting
-    ImVec4 perfCol = (ui_mode == UI_MODE_PERF) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, perfCol);
-    if (ImGui::Button("PERF", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        ui_mode = UI_MODE_PERF;
-    }
-    ImGui::PopStyleColor();
 
     ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -1431,6 +1427,15 @@ static void ShowMainUI() {
     ImGui::PushStyleColor(ImGuiCol_Button, infoCol);
     if (ImGui::Button("INFO", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
         ui_mode = UI_MODE_INFO;
+    }
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+
+    // PERF button with active state highlighting
+    ImVec4 perfCol = (ui_mode == UI_MODE_PERF) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, perfCol);
+    if (ImGui::Button("PERF", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_PERF;
     }
     ImGui::PopStyleColor();
     ImGui::EndGroup();
@@ -2041,9 +2046,38 @@ static void ShowMainUI() {
             ImGui::SameLine(150.0f);
             ImGui::Text("%d", current_row);
 
+            // Determine play mode display
+            const char* play_mode_str = "Song Mode";
+            bool has_performance = false;
+            if (common_state && common_state->performance) {
+                int event_count = regroove_performance_get_event_count(common_state->performance);
+                if (event_count > 0 || regroove_performance_is_playing(common_state->performance)) {
+                    play_mode_str = "Performance Mode";
+                    has_performance = true;
+                } else if (loop_enabled) {
+                    play_mode_str = "Pattern Loop";
+                }
+            } else if (loop_enabled) {
+                play_mode_str = "Pattern Loop";
+            }
+
             ImGui::Text("Play Mode:");
             ImGui::SameLine(150.0f);
-            ImGui::Text("%s", loop_enabled ? "Pattern Loop" : "Song Mode");
+            ImGui::Text("%s", play_mode_str);
+
+            // Show performance position if in performance mode
+            if (has_performance && common_state && common_state->performance) {
+                int perf_order, perf_row;
+                regroove_performance_get_position(common_state->performance, &perf_order, &perf_row);
+
+                ImGui::Text("Performance Order:");
+                ImGui::SameLine(150.0f);
+                ImGui::Text("%d", perf_order);
+
+                ImGui::Text("Performance Row:");
+                ImGui::SameLine(150.0f);
+                ImGui::Text("%d", perf_row);
+            }
 
             double pitch = regroove_get_pitch(mod);
             ImGui::Text("Pitch:");
