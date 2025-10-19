@@ -65,6 +65,7 @@ int regroove_is_channel_muted(const Regroove *g, int ch);
 int regroove_get_pattern_mode(const Regroove *g);
 int regroove_get_custom_loop_rows(const Regroove *g);
 int regroove_get_full_pattern_rows(const Regroove *g);
+double regroove_get_current_bpm(const Regroove *g);
 
 #ifdef __cplusplus
 }

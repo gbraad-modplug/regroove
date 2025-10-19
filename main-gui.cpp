@@ -145,7 +145,7 @@ static void my_loop_song_callback(void *userdata) {
 // Module Loading
 // -----------------------------------------------------------------------------
 
-static constexpr int MAX_FILENAME_LEN = 16;
+static constexpr int MAX_LCD_TEXTLENGTH = 16;
 
 static int load_module(const char *path) {
     struct RegrooveCallbacks cbs = {
@@ -1086,18 +1086,37 @@ static void ShowMainUI() {
         // Include truncated file name
         const char* file_disp = "";
         if (common_state && common_state->file_list && common_state->file_list->count > 0) {
-            static char truncated[MAX_FILENAME_LEN + 1];
+            static char truncated[MAX_LCD_TEXTLENGTH + 1];
             const char* current_file = common_state->file_list->filenames[common_state->file_list->current_index];
-            std::strncpy(truncated, current_file, MAX_FILENAME_LEN);
-            truncated[MAX_FILENAME_LEN] = 0;
+            std::strncpy(truncated, current_file, MAX_LCD_TEXTLENGTH);
+            truncated[MAX_LCD_TEXTLENGTH] = 0;
             file_disp = truncated;
         }
 
+        // Get BPM from engine
+        char bpm_str[16] = "---";
+        if (common_state && common_state->player) {
+            double bpm = regroove_get_current_bpm(common_state->player);
+            std::snprintf(bpm_str, sizeof(bpm_str), "%.0f", bpm);
+        }
+
+        // Get pattern description from metadata
+        // Always query the actual current pattern from the engine to avoid stale data
+        const char* pattern_desc = "";
+        if (common_state && common_state->metadata && common_state->player) {
+            int current_pattern = regroove_get_current_pattern(common_state->player);
+            const char* desc = regroove_metadata_get_pattern_desc(common_state->metadata, current_pattern);
+            if (desc && desc[0] != '\0') {
+                pattern_desc = desc;
+            }
+        }
+
         std::snprintf(lcd, sizeof(lcd),
-            "SO:%02d PT:%02d MD:%s\nPitch:%.2f\nFile:%.*s",
+            "SO:%02d  PT:%02d  MD:%s\nPitch:%.2f  BPM:%s\nFile:%.*s\n%.*s",
             order, pattern, loop_enabled ? "LOOP" : "SONG",
-            MapPitchFader(pitch_slider),
-            MAX_FILENAME_LEN, file_disp);
+            MapPitchFader(pitch_slider), bpm_str,
+            MAX_LCD_TEXTLENGTH, file_disp,
+            MAX_LCD_TEXTLENGTH, pattern_desc);
 
         DrawLCD(lcd, LEFT_PANEL_WIDTH - 16.0f, LCD_HEIGHT);
     }

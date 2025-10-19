@@ -581,3 +581,7 @@ int regroove_is_channel_muted(const Regroove* g, int ch) {
 int regroove_get_pattern_mode(const Regroove* g) { return g->pattern_mode; }
 int regroove_get_custom_loop_rows(const Regroove* g) { return g->custom_loop_rows; }
 int regroove_get_full_pattern_rows(const Regroove* g) { return g->full_loop_rows; }
+double regroove_get_current_bpm(const Regroove* g) {
+    if (!g || !g->mod) return 0.0;
+    return openmpt_module_get_current_estimated_bpm(g->mod);
+}
