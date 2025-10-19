@@ -17,6 +17,11 @@ extern "C" {
 }
 
 // -----------------------------------------------------------------------------
+// Forward Declarations
+// -----------------------------------------------------------------------------
+static void handle_input_event(InputEvent *event);
+
+// -----------------------------------------------------------------------------
 // State & Helper Types
 // -----------------------------------------------------------------------------
 static const char* appname = "MP-1210: Direct Interaction Groove Interface";
@@ -122,6 +127,26 @@ static void my_row_callback(int ord, int row, void *userdata) {
 
     // Update performance timeline
     if (common_state && common_state->performance) {
+        // Check for events to playback at current performance row BEFORE incrementing
+        if (regroove_performance_is_playing(common_state->performance)) {
+            PerformanceEvent events[16];  // Max events per row
+            int event_count = regroove_performance_get_events(common_state->performance, events, 16);
+
+            // Trigger all events at this performance row
+            for (int i = 0; i < event_count; i++) {
+                printf("Playback: Triggering %s (param=%d, value=%.0f) at PR:%d\n",
+                       input_action_name(events[i].action), events[i].parameter,
+                       events[i].value, regroove_performance_get_row(common_state->performance));
+
+                InputEvent evt;
+                evt.action = events[i].action;
+                evt.parameter = events[i].parameter;
+                evt.value = (int)events[i].value;
+                handle_input_event(&evt);
+            }
+        }
+
+        // Now increment the performance row for the next callback
         regroove_performance_tick(common_state->performance);
     }
 
@@ -231,7 +256,54 @@ enum GuiAction {
     ACT_QUEUE_PATTERN
 };
 
+// Helper to record GuiAction as InputAction for performance recording
+static void record_gui_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
+    if (!common_state || !common_state->performance ||
+        !regroove_performance_is_recording(common_state->performance)) {
+        return;
+    }
+
+    // Map GuiAction to InputAction for recording
+    InputAction input_action = ACTION_NONE;
+    int parameter = arg1;
+    float value = arg2 * 127.0f; // Convert 0-1 range to MIDI 0-127
+
+    switch (act) {
+        case ACT_PLAY: input_action = ACTION_PLAY; break;
+        case ACT_STOP: input_action = ACTION_STOP; break;
+        case ACT_TOGGLE_LOOP: input_action = ACTION_PATTERN_MODE_TOGGLE; break;
+        case ACT_NEXT_ORDER: input_action = ACTION_NEXT_ORDER; break;
+        case ACT_PREV_ORDER: input_action = ACTION_PREV_ORDER; break;
+        case ACT_RETRIGGER: input_action = ACTION_RETRIGGER; break;
+        case ACT_LOOP_TILL_ROW: input_action = ACTION_LOOP_TILL_ROW; break;
+        case ACT_HALVE_LOOP: input_action = ACTION_HALVE_LOOP; break;
+        case ACT_FULL_LOOP: input_action = ACTION_FULL_LOOP; break;
+        case ACT_MUTE_CHANNEL: input_action = ACTION_CHANNEL_MUTE; break;
+        case ACT_SOLO_CHANNEL: input_action = ACTION_CHANNEL_SOLO; break;
+        case ACT_VOLUME_CHANNEL: input_action = ACTION_CHANNEL_VOLUME; break;
+        case ACT_MUTE_ALL: input_action = ACTION_MUTE_ALL; break;
+        case ACT_UNMUTE_ALL: input_action = ACTION_UNMUTE_ALL; break;
+        case ACT_PITCH_UP: input_action = ACTION_PITCH_UP; break;
+        case ACT_PITCH_DOWN: input_action = ACTION_PITCH_DOWN; break;
+        case ACT_PITCH_RESET: input_action = ACTION_PITCH_RESET; break;
+        case ACT_JUMP_TO_ORDER: input_action = ACTION_JUMP_TO_ORDER; break;
+        case ACT_JUMP_TO_PATTERN: input_action = ACTION_JUMP_TO_PATTERN; break;
+        case ACT_QUEUE_ORDER: input_action = ACTION_QUEUE_ORDER; break;
+        case ACT_QUEUE_PATTERN: input_action = ACTION_QUEUE_PATTERN; break;
+        default: return; // Don't record unsupported actions
+    }
+
+    if (input_action != ACTION_NONE) {
+        regroove_performance_record_event(common_state->performance,
+                                          input_action,
+                                          parameter,
+                                          value);
+    }
+}
+
 void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
+    // Record action if recording is active
+    record_gui_action(act, arg1, arg2);
     Regroove *mod = common_state ? common_state->player : NULL;
 
     switch (act) {
@@ -239,12 +311,20 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
             if (mod) {
                 if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 0);
                 playing = true;
+                // Notify performance system that playback started
+                if (common_state && common_state->performance) {
+                    regroove_performance_set_playback(common_state->performance, 1);
+                }
             }
             break;
         case ACT_STOP:
             if (mod) {
                 if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 1);
                 playing = false;
+                // Notify performance system that playback stopped
+                if (common_state && common_state->performance) {
+                    regroove_performance_set_playback(common_state->performance, 0);
+                }
             }
             break;
         case ACT_TOGGLE_LOOP:
@@ -421,6 +501,20 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
 // -----------------------------------------------------------------------------
 static void handle_input_event(InputEvent *event) {
     if (!event || event->action == ACTION_NONE) return;
+
+    // Record event if recording is active
+    if (common_state && common_state->performance) {
+        int is_recording = regroove_performance_is_recording(common_state->performance);
+        printf("handle_input_event: action=%s, is_recording=%d\n",
+               input_action_name(event->action), is_recording);
+
+        if (is_recording) {
+            regroove_performance_record_event(common_state->performance,
+                                              event->action,
+                                              event->parameter,
+                                              event->value);
+        }
+    }
 
     switch (event->action) {
         case ACTION_PLAY_PAUSE:
@@ -1125,9 +1219,18 @@ static void ShowMainUI() {
                 }
             }
 
+            // Determine playback mode display
+            const char* mode_str = "SONG";
+            if (common_state && common_state->performance &&
+                regroove_performance_is_playing(common_state->performance)) {
+                mode_str = "PERF";
+            } else if (loop_enabled) {
+                mode_str = "LOOP";
+            }
+
             std::snprintf(lcd_text, sizeof(lcd_text),
                 "SO:%02d PT:%02d MD:%s\nPitch:%.2f BPM:%s\n%.*s\n%.*s",
-                order, pattern, loop_enabled ? "LOOP" : "SONG",
+                order, pattern, mode_str,
                 MapPitchFader(pitch_slider), bpm_str,
                 MAX_LCD_TEXTLENGTH, file_disp,
                 MAX_LCD_TEXTLENGTH, pattern_desc);
@@ -1211,8 +1314,27 @@ static void ShowMainUI() {
 
     ImGui::SameLine();
 
-    // Performance recording
-    //ImGui::Button("O", ImVec2(BUTTON_SIZE, BUTTON_SIZE));
+    // Performance recording button
+    static bool recording = false;
+    ImVec4 recCol = recording ? ImVec4(0.90f, 0.16f, 0.18f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, recCol);
+    if (ImGui::Button("O", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        if (common_state && common_state->performance) {
+            recording = !recording;
+            regroove_performance_set_recording(common_state->performance, recording);
+            if (recording) {
+                printf("Performance recording started\n");
+            } else {
+                printf("Performance recording stopped (%d events recorded)\n",
+                       regroove_performance_get_event_count(common_state->performance));
+                // Save to .rgx file when recording stops
+                if (regroove_performance_get_event_count(common_state->performance) > 0) {
+                    regroove_common_save_rgx(common_state);
+                }
+            }
+        }
+    }
+    ImGui::PopStyleColor();
 
     ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
 

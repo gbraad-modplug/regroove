@@ -154,7 +154,11 @@ int regroove_metadata_save(const RegrooveMetadata *meta, const char *rgx_path) {
                 fprintf(f, "pattern_%d=\"%s\"\n", pm->pattern_index, pm->description);
             }
         }
+        fprintf(f, "\n");
     }
+
+    // Note: [performance] section is appended by regroove_performance_save()
+    // if there are performance events to save
 
     fclose(f);
     return 0;

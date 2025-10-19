@@ -336,6 +336,17 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
         if (regroove_metadata_load(state->metadata, rgx_path) == 0) {
             // Successfully loaded .rgx metadata
             printf("Loaded metadata from %s\n", rgx_path);
+
+            // Load performance events from the same .rgx file
+            if (state->performance) {
+                regroove_performance_clear_events(state->performance);
+                if (regroove_performance_load(state->performance, rgx_path) == 0) {
+                    int event_count = regroove_performance_get_event_count(state->performance);
+                    if (event_count > 0) {
+                        printf("Loaded %d performance events from %s\n", event_count, rgx_path);
+                    }
+                }
+            }
         } else {
             // No .rgx file exists yet - will be created when user adds descriptions
             // Store the module filename in metadata for when we save
@@ -618,5 +629,32 @@ int regroove_common_save_default_config(const char *filepath) {
     fprintf(f, "# keyv = trigger_pad,3   # V key triggers pad 4\n");
 
     fclose(f);
+    return 0;
+}
+
+// Save metadata and performance to .rgx file
+int regroove_common_save_rgx(RegrooveCommonState *state) {
+    if (!state || !state->metadata) return -1;
+    if (state->current_module_path[0] == '\0') return -1;
+
+    // Get .rgx path from module path
+    char rgx_path[COMMON_MAX_PATH];
+    regroove_metadata_get_rgx_path(state->current_module_path, rgx_path, sizeof(rgx_path));
+
+    // Save metadata first (creates/overwrites the file)
+    if (regroove_metadata_save(state->metadata, rgx_path) != 0) {
+        fprintf(stderr, "Failed to save metadata to %s\n", rgx_path);
+        return -1;
+    }
+
+    // Append performance data if there are events
+    if (state->performance && regroove_performance_get_event_count(state->performance) > 0) {
+        if (regroove_performance_save(state->performance, rgx_path) != 0) {
+            fprintf(stderr, "Failed to save performance to %s\n", rgx_path);
+            return -1;
+        }
+    }
+
+    printf("Saved .rgx file: %s\n", rgx_path);
     return 0;
 }

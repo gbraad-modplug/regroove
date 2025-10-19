@@ -6,8 +6,8 @@
 
 #define INITIAL_CAPACITY 128
 
-// Helper: Parse action name to enum
-static InputAction parse_action(const char *str) {
+// Helper: Parse action name to enum (exposed for performance loading)
+InputAction parse_action(const char *str) {
     if (!str) return ACTION_NONE;
     if (strcmp(str, "play_pause") == 0) return ACTION_PLAY_PAUSE;
     if (strcmp(str, "play") == 0) return ACTION_PLAY;

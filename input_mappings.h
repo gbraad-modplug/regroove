@@ -102,4 +102,7 @@ int input_mappings_get_keyboard_event(InputMappings *mappings, int key, InputEve
 // Get action name (for debugging/display)
 const char* input_action_name(InputAction action);
 
+// Parse action name to enum (for loading from files)
+InputAction parse_action(const char *str);
+
 #endif // INPUT_MAPPINGS_H
