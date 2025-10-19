@@ -329,31 +329,29 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
             regroove_performance_reset(state->performance);
         }
 
-        // Determine which .rgx file to use
-        char rgx_path[COMMON_MAX_PATH];
+        // Only load .rgx file if user explicitly loaded one
+        // Loading a .mod file does NOT automatically load the .rgx (allows starting fresh performances)
         if (is_rgx_file(path)) {
-            // User loaded an .rgx file directly - use it
+            // User loaded an .rgx file directly - load it
+            char rgx_path[COMMON_MAX_PATH];
             snprintf(rgx_path, sizeof(rgx_path), "%s", path);
-        } else {
-            // User loaded a module file - look for corresponding .rgx
-            regroove_metadata_get_rgx_path(module_to_load, rgx_path, sizeof(rgx_path));
-        }
 
-        if (regroove_metadata_load(state->metadata, rgx_path) == 0) {
-            // Successfully loaded .rgx metadata
-            printf("Loaded metadata from %s\n", rgx_path);
+            if (regroove_metadata_load(state->metadata, rgx_path) == 0) {
+                // Successfully loaded .rgx metadata
+                printf("Loaded metadata from %s\n", rgx_path);
 
-            // Load performance events from the same .rgx file
-            if (state->performance) {
-                if (regroove_performance_load(state->performance, rgx_path) == 0) {
-                    int event_count = regroove_performance_get_event_count(state->performance);
-                    if (event_count > 0) {
-                        printf("Loaded %d performance events from %s\n", event_count, rgx_path);
+                // Load performance events from the same .rgx file
+                if (state->performance) {
+                    if (regroove_performance_load(state->performance, rgx_path) == 0) {
+                        int event_count = regroove_performance_get_event_count(state->performance);
+                        if (event_count > 0) {
+                            printf("Loaded %d performance events from %s\n", event_count, rgx_path);
+                        }
                     }
                 }
             }
         } else {
-            // No .rgx file exists yet - will be created when user adds descriptions
+            // User loaded a module file directly - start with empty metadata
             // Store the module filename in metadata for when we save
             const char *filename = strrchr(module_to_load, '/');
             if (!filename) filename = strrchr(module_to_load, '\\');
@@ -361,6 +359,7 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
             else filename++; // Skip the separator
 
             snprintf(state->metadata->module_file, RGX_MAX_FILEPATH, "%s", filename);
+            printf("Loaded module %s (no .rgx loaded, starting fresh)\n", filename);
         }
     }
 
