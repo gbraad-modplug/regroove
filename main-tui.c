@@ -61,6 +61,34 @@ static void my_row_callback(int order, int row, void *userdata) {
 
     // Update performance timeline
     if (common_state && common_state->performance) {
+        // Check for events to playback at current performance row BEFORE incrementing
+        if (regroove_performance_is_playing(common_state->performance)) {
+            PerformanceEvent events[16];  // Max events per row
+            int event_count = regroove_performance_get_events(common_state->performance, events, 16);
+
+            // Trigger all events at this performance row
+            for (int i = 0; i < event_count; i++) {
+                printf("Playback: Triggering %s (param=%d, value=%.0f) at PR:%d\n",
+                       input_action_name(events[i].action), events[i].parameter,
+                       events[i].value, regroove_performance_get_row(common_state->performance));
+
+                InputEvent evt;
+                evt.action = events[i].action;
+                evt.parameter = events[i].parameter;
+                evt.value = (int)events[i].value;
+
+                // Trigger playback event (from_playback=1)
+                if (common_state->performance) {
+                    regroove_performance_handle_action(common_state->performance,
+                                                        evt.action,
+                                                        evt.parameter,
+                                                        evt.value,
+                                                        1);  // from_playback=1
+                }
+            }
+        }
+
+        // Now increment the performance row for the next callback
         regroove_performance_tick(common_state->performance);
     }
 }
@@ -72,6 +100,9 @@ static void my_loop_callback(int order, int pattern, void *userdata) {
 static void my_song_callback(void *userdata) {
     printf("[SONG] looped back to start\n");
 }
+
+// --- Forward declarations ---
+static void handle_input_event(InputEvent *event);
 
 // --- SDL audio callback ---
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
@@ -98,11 +129,11 @@ static int load_module(const char *path, struct RegrooveCallbacks *cbs) {
 }
 
 
-// --- Unified Input Event Handler ---
-void handle_input_event(InputEvent *event) {
-    if (!event || event->action == ACTION_NONE) return;
+// --- Performance Action Executor (Callback for performance engine) ---
+static void execute_action(InputAction action, int parameter, float value, void* userdata) {
+    (void)userdata;  // Not needed
 
-    switch (event->action) {
+    switch (action) {
         case ACTION_PLAY_PAUSE:
             regroove_common_play_pause(common_state, common_state->paused);
             printf("Playback %s\n", common_state->paused ? "paused" : "resumed");
@@ -199,7 +230,7 @@ void handle_input_event(InputEvent *event) {
             // Map MIDI value (0-127) to pitch range (0.25 to 3.0, center at 1.0)
             // MIDI 0 = 0.25, MIDI 64 = 1.0, MIDI 127 = 3.0
             if (common_state->player) {
-                double pitch = 0.25 + (event->value / 127.0) * (3.0 - 0.25);
+                double pitch = 0.25 + (value / 127.0) * (3.0 - 0.25);
                 regroove_common_set_pitch(common_state, pitch);
                 printf("Pitch factor: %.2f\n", common_state->pitch);
             }
@@ -229,80 +260,95 @@ void handle_input_event(InputEvent *event) {
             }
             break;
         case ACTION_CHANNEL_MUTE:
-            if (event->parameter < common_state->num_channels) {
-                regroove_common_channel_mute(common_state, event->parameter);
+            if (parameter < common_state->num_channels) {
+                regroove_common_channel_mute(common_state, parameter);
                 if (common_state->player) {
-                    int muted = regroove_is_channel_muted(common_state->player, event->parameter);
-                    printf("Channel %d %s\n", event->parameter + 1, muted ? "muted" : "unmuted");
+                    int muted = regroove_is_channel_muted(common_state->player, parameter);
+                    printf("Channel %d %s\n", parameter + 1, muted ? "muted" : "unmuted");
                 }
             }
             break;
         case ACTION_CHANNEL_SOLO:
-            if (common_state->player && event->parameter < common_state->num_channels) {
-                regroove_toggle_channel_solo(common_state->player, event->parameter);
-                printf("Channel %d solo toggled\n", event->parameter + 1);
+            if (common_state->player && parameter < common_state->num_channels) {
+                regroove_toggle_channel_solo(common_state->player, parameter);
+                printf("Channel %d solo toggled\n", parameter + 1);
             }
             break;
         case ACTION_CHANNEL_VOLUME:
-            if (common_state->player && event->parameter < common_state->num_channels) {
-                double vol = event->value / 127.0;
-                regroove_set_channel_volume(common_state->player, event->parameter, vol);
+            if (common_state->player && parameter < common_state->num_channels) {
+                double vol = value / 127.0;
+                regroove_set_channel_volume(common_state->player, parameter, vol);
             }
             break;
         case ACTION_TRIGGER_PAD:
             if (common_state && common_state->input_mappings &&
-                event->parameter >= 0 && event->parameter < MAX_TRIGGER_PADS) {
-                TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[event->parameter];
+                parameter >= 0 && parameter < MAX_TRIGGER_PADS) {
+                TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[parameter];
                 // Execute the trigger pad's configured action
                 if (pad->action != ACTION_NONE) {
                     InputEvent pad_event;
                     pad_event.action = pad->action;
                     pad_event.parameter = pad->parameter;
-                    pad_event.value = event->value;
+                    pad_event.value = (int)value;
                     handle_input_event(&pad_event);
                 }
             }
             break;
         case ACTION_JUMP_TO_ORDER:
-            if (common_state->player && event->parameter >= 0) {
+            if (common_state->player && parameter >= 0) {
                 int num_orders = regroove_get_num_orders(common_state->player);
-                if (event->parameter < num_orders) {
-                    regroove_jump_to_order(common_state->player, event->parameter);
-                    int pat = regroove_get_order_pattern(common_state->player, event->parameter);
-                    printf("Hot cue jump to Order %d (Pattern %d)\n", event->parameter, pat);
+                if (parameter < num_orders) {
+                    regroove_jump_to_order(common_state->player, parameter);
+                    int pat = regroove_get_order_pattern(common_state->player, parameter);
+                    printf("Hot cue jump to Order %d (Pattern %d)\n", parameter, pat);
                 }
             }
             break;
         case ACTION_JUMP_TO_PATTERN:
-            if (common_state->player && event->parameter >= 0) {
+            if (common_state->player && parameter >= 0) {
                 int num_patterns = regroove_get_num_patterns(common_state->player);
-                if (event->parameter < num_patterns) {
-                    regroove_jump_to_pattern(common_state->player, event->parameter);
-                    printf("Jump to Pattern %d\n", event->parameter);
+                if (parameter < num_patterns) {
+                    regroove_jump_to_pattern(common_state->player, parameter);
+                    printf("Jump to Pattern %d\n", parameter);
                 }
             }
             break;
         case ACTION_QUEUE_ORDER:
-            if (common_state->player && event->parameter >= 0) {
+            if (common_state->player && parameter >= 0) {
                 int num_orders = regroove_get_num_orders(common_state->player);
-                if (event->parameter < num_orders) {
-                    regroove_queue_order(common_state->player, event->parameter);
-                    int pat = regroove_get_order_pattern(common_state->player, event->parameter);
-                    printf("Queued jump to Order %d (Pattern %d) at pattern end\n", event->parameter, pat);
+                if (parameter < num_orders) {
+                    regroove_queue_order(common_state->player, parameter);
+                    int pat = regroove_get_order_pattern(common_state->player, parameter);
+                    printf("Queued jump to Order %d (Pattern %d) at pattern end\n", parameter, pat);
                 }
             }
             break;
         case ACTION_QUEUE_PATTERN:
-            if (common_state->player && event->parameter >= 0) {
+            if (common_state->player && parameter >= 0) {
                 int num_patterns = regroove_get_num_patterns(common_state->player);
-                if (event->parameter < num_patterns) {
-                    regroove_queue_pattern(common_state->player, event->parameter);
-                    printf("Queued jump to Pattern %d at pattern end\n", event->parameter);
+                if (parameter < num_patterns) {
+                    regroove_queue_pattern(common_state->player, parameter);
+                    printf("Queued jump to Pattern %d at pattern end\n", parameter);
                 }
             }
             break;
         default:
             break;
+    }
+}
+
+// --- Unified Input Event Handler (Simplified - routes to performance engine) ---
+static void handle_input_event(InputEvent *event) {
+    if (!event || event->action == ACTION_NONE) return;
+
+    // Route everything through the performance engine
+    // It will handle recording and execute via the callback we set up
+    if (common_state && common_state->performance) {
+        regroove_performance_handle_action(common_state->performance,
+                                            event->action,
+                                            event->parameter,
+                                            event->value,
+                                            0);  // from_playback=0 (user input)
     }
 }
 
@@ -386,6 +432,11 @@ int main(int argc, char *argv[]) {
     if (!common_state) {
         fprintf(stderr, "Failed to create common state\n");
         return 1;
+    }
+
+    // Set up performance action callback (routes actions through the performance engine)
+    if (common_state->performance) {
+        regroove_performance_set_action_callback(common_state->performance, execute_action, NULL);
     }
 
     char *initial_path = argv[1];

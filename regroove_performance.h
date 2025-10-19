@@ -91,6 +91,30 @@ int regroove_performance_save(const RegroovePerformance* perf, const char* filep
 // Load performance from file
 int regroove_performance_load(RegroovePerformance* perf, const char* filepath);
 
+// --- Unified Action Handler (for clean GUI/TUI integration) ---
+
+// Callback function type for executing actions on the engine
+// This decouples performance from GUI/TUI - they provide a callback to execute actions
+typedef void (*PerformanceActionCallback)(InputAction action, int parameter, float value, void* userdata);
+
+// Set the callback that will be used to execute actions
+void regroove_performance_set_action_callback(RegroovePerformance* perf,
+                                               PerformanceActionCallback callback,
+                                               void* userdata);
+
+// Main unified entry point for all actions
+// - Records the action if recording is active
+// - Executes the action via callback (unless from_playback is true and we're in playback-only mode)
+// - Returns 0 on success, -1 on error
+//
+// Parameters:
+//   from_playback: Set to 1 if this action is being triggered BY playback (prevents re-recording)
+int regroove_performance_handle_action(RegroovePerformance* perf,
+                                        InputAction action,
+                                        int parameter,
+                                        float value,
+                                        int from_playback);
+
 #ifdef __cplusplus
 }
 #endif

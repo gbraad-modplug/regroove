@@ -517,27 +517,14 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
 }
 
 // -----------------------------------------------------------------------------
-// Input Mapping - Convert InputAction to GuiAction
+// Performance Action Executor (Callback for performance engine)
 // -----------------------------------------------------------------------------
-static void handle_input_event(InputEvent *event, bool from_playback) {
-    if (!event || event->action == ACTION_NONE) return;
+// This function is called by the performance engine to execute actions
+// It maps InputAction -> GuiAction -> dispatch_action(should_record=false)
+static void execute_action(InputAction action, int parameter, float value, void* userdata) {
+    (void)userdata;  // Not needed
 
-    // Record event if recording is active (but NOT if this event came from playback!)
-    if (!from_playback && common_state && common_state->performance) {
-        int is_recording = regroove_performance_is_recording(common_state->performance);
-        if (is_recording) {
-            printf("Recording: %s (param=%d, value=%d) at PR:%d\n",
-                   input_action_name(event->action), event->parameter,
-                   event->value, regroove_performance_get_row(common_state->performance));
-
-            regroove_performance_record_event(common_state->performance,
-                                              event->action,
-                                              event->parameter,
-                                              event->value);
-        }
-    }
-
-    switch (event->action) {
+    switch (action) {
         case ACTION_PLAY_PAUSE:
             dispatch_action(playing ? ACT_STOP : ACT_PLAY, -1, 0.0f, false);
             break;
@@ -583,7 +570,7 @@ static void handle_input_event(InputEvent *event, bool from_playback) {
         case ACTION_PITCH_SET:
             // Map MIDI value (0-127) to pitch slider range (-1.0 to 1.0)
             {
-                float pitch_value = (event->value / 127.0f) * 2.0f - 1.0f; // Maps 0-127 to -1.0 to 1.0
+                float pitch_value = (value / 127.0f) * 2.0f - 1.0f; // Maps 0-127 to -1.0 to 1.0
                 dispatch_action(ACT_SET_PITCH, -1, pitch_value, false);
             }
             break;
@@ -615,44 +602,61 @@ static void handle_input_event(InputEvent *event, bool from_playback) {
             }
             break;
         case ACTION_CHANNEL_MUTE:
-            dispatch_action(ACT_MUTE_CHANNEL, event->parameter, 0.0f, false);
+            dispatch_action(ACT_MUTE_CHANNEL, parameter, 0.0f, false);
             break;
         case ACTION_CHANNEL_SOLO:
-            dispatch_action(ACT_SOLO_CHANNEL, event->parameter, 0.0f, false);
+            dispatch_action(ACT_SOLO_CHANNEL, parameter, 0.0f, false);
             break;
         case ACTION_CHANNEL_VOLUME:
-            dispatch_action(ACT_VOLUME_CHANNEL, event->parameter, event->value / 127.0f, false);
+            dispatch_action(ACT_VOLUME_CHANNEL, parameter, value / 127.0f, false);
             break;
         case ACTION_TRIGGER_PAD:
             if (common_state && common_state->input_mappings &&
-                event->parameter >= 0 && event->parameter < MAX_TRIGGER_PADS) {
-                TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[event->parameter];
+                parameter >= 0 && parameter < MAX_TRIGGER_PADS) {
+                TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[parameter];
                 // Trigger visual feedback
-                trigger_pad_fade[event->parameter] = 1.0f;
+                trigger_pad_fade[parameter] = 1.0f;
                 // Execute the trigger pad's configured action
                 if (pad->action != ACTION_NONE) {
                     InputEvent pad_event;
                     pad_event.action = pad->action;
                     pad_event.parameter = pad->parameter;
-                    pad_event.value = event->value;
-                    handle_input_event(&pad_event);
+                    pad_event.value = (int)value;
+                    handle_input_event(&pad_event, false);  // from_playback=false
                 }
             }
             break;
         case ACTION_JUMP_TO_ORDER:
-            dispatch_action(ACT_JUMP_TO_ORDER, event->parameter, 0.0f, false);
+            dispatch_action(ACT_JUMP_TO_ORDER, parameter, 0.0f, false);
             break;
         case ACTION_JUMP_TO_PATTERN:
-            dispatch_action(ACT_JUMP_TO_PATTERN, event->parameter, 0.0f, false);
+            dispatch_action(ACT_JUMP_TO_PATTERN, parameter, 0.0f, false);
             break;
         case ACTION_QUEUE_ORDER:
-            dispatch_action(ACT_QUEUE_ORDER, event->parameter, 0.0f, false);
+            dispatch_action(ACT_QUEUE_ORDER, parameter, 0.0f, false);
             break;
         case ACTION_QUEUE_PATTERN:
-            dispatch_action(ACT_QUEUE_PATTERN, event->parameter, 0.0f, false);
+            dispatch_action(ACT_QUEUE_PATTERN, parameter, 0.0f, false);
             break;
         default:
             break;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Input Event Handler (Simplified - just routes to performance engine)
+// -----------------------------------------------------------------------------
+static void handle_input_event(InputEvent *event, bool from_playback) {
+    if (!event || event->action == ACTION_NONE) return;
+
+    // Route everything through the performance engine
+    // It will handle recording and execute via the callback we set up
+    if (common_state && common_state->performance) {
+        regroove_performance_handle_action(common_state->performance,
+                                            event->action,
+                                            event->parameter,
+                                            event->value,
+                                            from_playback ? 1 : 0);
     }
 }
 
@@ -3187,6 +3191,11 @@ int main(int argc, char* argv[]) {
     if (!common_state) {
         fprintf(stderr, "Failed to create common state\n");
         return 1;
+    }
+
+    // Set up performance action callback (routes actions through the performance engine)
+    if (common_state->performance) {
+        regroove_performance_set_action_callback(common_state->performance, execute_action, NULL);
     }
 
     // Track the config file for saving learned mappings

@@ -14,6 +14,10 @@ struct RegroovePerformance {
     int event_capacity;           // Capacity of events array
 
     int playback_index;           // Current index in events array during playback
+
+    // Action execution callback (set by GUI/TUI)
+    PerformanceActionCallback action_callback;
+    void* action_callback_userdata;
 };
 
 RegroovePerformance* regroove_performance_create(void) {
@@ -290,6 +294,39 @@ int regroove_performance_save(const RegroovePerformance* perf, const char* filep
     }
 
     fclose(f);
+    return 0;
+}
+
+// --- Unified Action Handler Implementation ---
+
+void regroove_performance_set_action_callback(RegroovePerformance* perf,
+                                               PerformanceActionCallback callback,
+                                               void* userdata) {
+    if (!perf) return;
+    perf->action_callback = callback;
+    perf->action_callback_userdata = userdata;
+}
+
+int regroove_performance_handle_action(RegroovePerformance* perf,
+                                        InputAction action,
+                                        int parameter,
+                                        float value,
+                                        int from_playback) {
+    if (!perf) return -1;
+
+    // Step 1: Record the action if recording is active (but NOT if it came from playback)
+    if (!from_playback && perf->recording) {
+        if (regroove_performance_record_event(perf, action, parameter, value) != 0) {
+            fprintf(stderr, "Warning: Failed to record event (buffer full?)\n");
+        }
+    }
+
+    // Step 2: Execute the action via callback (always execute, unless we want playback-only mode)
+    // For now, we always execute actions - even during playback (so user can still control things)
+    if (perf->action_callback) {
+        perf->action_callback(action, parameter, value, perf->action_callback_userdata);
+    }
+
     return 0;
 }
 
