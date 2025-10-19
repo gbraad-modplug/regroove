@@ -326,14 +326,12 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                     if (event_count > 0) {
                         // Reset song position to order 0 when starting performance playback
                         regroove_jump_to_order(mod, 0);
+                        // Enable performance playback only if there are events
+                        regroove_performance_set_playback(common_state->performance, 1);
                     }
                 }
                 if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 0);
                 playing = true;
-                // Notify performance system that playback started
-                if (common_state && common_state->performance) {
-                    regroove_performance_set_playback(common_state->performance, 1);
-                }
             }
             break;
         case ACT_STOP:
@@ -1246,10 +1244,10 @@ static void ShowMainUI() {
 
             // Determine playback mode display
             const char* mode_str = "SONG";
-            // Show PERF if either: (1) performance is playing OR (2) events are loaded
+            // Show PERF whenever performance events are loaded (regardless of playback state)
             if (common_state && common_state->performance) {
                 int event_count = regroove_performance_get_event_count(common_state->performance);
-                if (regroove_performance_is_playing(common_state->performance) || event_count > 0) {
+                if (event_count > 0) {
                     mode_str = "PERF";
                 } else if (loop_enabled) {
                     mode_str = "LOOP";
