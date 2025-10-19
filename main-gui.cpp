@@ -761,15 +761,30 @@ static void unlearn_current_target() {
     int removed_count = 0;
 
     if (learn_target_type == LEARN_TRIGGER_PAD) {
-        // Remove MIDI note mapping from trigger pad
-        if (common_state && common_state->input_mappings &&
-            learn_target_pad_index >= 0 && learn_target_pad_index < MAX_TRIGGER_PADS) {
-            TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[learn_target_pad_index];
-            if (pad->midi_note != -1) {
-                pad->midi_note = -1;
-                pad->midi_device = -1;
-                printf("Unlearned MIDI note mapping for Pad %d\n", learn_target_pad_index + 1);
-                removed_count++;
+        // Remove MIDI note mapping from trigger pad (application or song pad)
+        if (learn_target_pad_index >= 0 && learn_target_pad_index < MAX_TRIGGER_PADS) {
+            // Application pad
+            if (common_state && common_state->input_mappings) {
+                TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[learn_target_pad_index];
+                if (pad->midi_note != -1) {
+                    pad->midi_note = -1;
+                    pad->midi_device = -1;
+                    printf("Unlearned MIDI note mapping for Application Pad A%d\n", learn_target_pad_index + 1);
+                    removed_count++;
+                }
+            }
+        } else if (learn_target_pad_index >= MAX_TRIGGER_PADS &&
+                   learn_target_pad_index < MAX_TRIGGER_PADS + MAX_SONG_TRIGGER_PADS) {
+            // Song pad
+            int song_pad_idx = learn_target_pad_index - MAX_TRIGGER_PADS;
+            if (common_state && common_state->metadata) {
+                TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[song_pad_idx];
+                if (pad->midi_note != -1) {
+                    pad->midi_note = -1;
+                    pad->midi_device = -1;
+                    printf("Unlearned MIDI note mapping for Song Pad S%d\n", song_pad_idx + 1);
+                    removed_count++;
+                }
             }
         }
 
@@ -871,7 +886,19 @@ static void start_learn_for_pad(int pad_index) {
     learn_target_action = ACTION_NONE;
     learn_target_parameter = 0;
     learn_target_pad_index = pad_index;
-    printf("Learn mode: Waiting for input for Pad %d... (Click LEARN again to unlearn)\n", pad_index + 1);
+    printf("Learn mode: Waiting for input for Application Pad A%d... (Click LEARN again to unlearn)\n", pad_index + 1);
+}
+
+// Start learn mode for song trigger pad
+static void start_learn_for_song_pad(int pad_index) {
+    if (pad_index < 0 || pad_index >= MAX_SONG_TRIGGER_PADS) return;
+    learn_mode_active = true;
+    learn_target_type = LEARN_TRIGGER_PAD;
+    learn_target_action = ACTION_NONE;
+    learn_target_parameter = 0;
+    // Use offset to distinguish song pads from application pads
+    learn_target_pad_index = MAX_TRIGGER_PADS + pad_index;
+    printf("Learn mode: Waiting for input for Song Pad S%d... (Click LEARN again to unlearn)\n", pad_index + 1);
 }
 
 // Learn MIDI mapping for current target
@@ -880,14 +907,27 @@ static void learn_midi_mapping(int device_id, int cc_or_note, bool is_note) {
     if (learn_target_type == LEARN_NONE) return;
 
     if (is_note && learn_target_type == LEARN_TRIGGER_PAD) {
-        // Map MIDI note to trigger pad
-        if (common_state && common_state->input_mappings &&
-            learn_target_pad_index >= 0 && learn_target_pad_index < MAX_TRIGGER_PADS) {
-            TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[learn_target_pad_index];
-            pad->midi_note = cc_or_note;
-            pad->midi_device = device_id;
-            printf("Learned MIDI note mapping: Note %d (device %d) -> Pad %d\n",
-                   cc_or_note, device_id, learn_target_pad_index + 1);
+        // Map MIDI note to trigger pad (application or song pad)
+        if (learn_target_pad_index >= 0 && learn_target_pad_index < MAX_TRIGGER_PADS) {
+            // Application pad (A1-A16)
+            if (common_state && common_state->input_mappings) {
+                TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[learn_target_pad_index];
+                pad->midi_note = cc_or_note;
+                pad->midi_device = device_id;
+                printf("Learned MIDI note mapping: Note %d (device %d) -> Application Pad A%d\n",
+                       cc_or_note, device_id, learn_target_pad_index + 1);
+            }
+        } else if (learn_target_pad_index >= MAX_TRIGGER_PADS &&
+                   learn_target_pad_index < MAX_TRIGGER_PADS + MAX_SONG_TRIGGER_PADS) {
+            // Song pad (S1-S16)
+            int song_pad_idx = learn_target_pad_index - MAX_TRIGGER_PADS;
+            if (common_state && common_state->metadata) {
+                TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[song_pad_idx];
+                pad->midi_note = cc_or_note;
+                pad->midi_device = device_id;
+                printf("Learned MIDI note mapping: Note %d (device %d) -> Song Pad S%d\n",
+                       cc_or_note, device_id, song_pad_idx + 1);
+            }
         }
     } else if (!is_note) {
         // Map MIDI CC to action
@@ -1050,8 +1090,9 @@ void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned ch
     // Handle Note-On messages for trigger pads
     if (msg_type == 0x90 && value > 0) { // Note-On with velocity > 0
         int note = cc_or_note;
+        bool triggered = false;
 
-        // Check if any trigger pad is mapped to this MIDI note
+        // Check application trigger pads (A1-A16)
         if (common_state && common_state->input_mappings) {
             for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
                 TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[i];
@@ -1068,7 +1109,33 @@ void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned ch
                         event.action = pad->action;
                         event.parameter = pad->parameter;
                         event.value = value;
-                        handle_input_event(&event);
+                        handle_input_event(&event, false);
+                    }
+                    triggered = true;
+                    break; // Only trigger the first matching pad
+                }
+            }
+        }
+
+        // If not triggered by application pad, check song trigger pads (S1-S16)
+        if (!triggered && common_state && common_state->metadata) {
+            for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
+                TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[i];
+                // Match device (if specified) and note
+                if (pad->midi_note == note &&
+                    (pad->midi_device == -1 || pad->midi_device == device_id)) {
+
+                    // Trigger visual feedback (offset for song pads)
+                    int global_idx = MAX_TRIGGER_PADS + i;
+                    trigger_pad_fade[global_idx] = 1.0f;
+
+                    // Execute the configured action
+                    if (pad->action != ACTION_NONE) {
+                        InputEvent event;
+                        event.action = pad->action;
+                        event.parameter = pad->parameter;
+                        event.value = value;
+                        handle_input_event(&event, false);
                     }
                     break; // Only trigger the first matching pad
                 }
@@ -1732,7 +1799,7 @@ static void ShowMainUI() {
                 snprintf(label, sizeof(label), "S%d", idx + 1);
                 if (ImGui::Button(label, ImVec2(padSize, padSize))) {
                     if (learn_mode_active) {
-                        start_learn_for_pad(global_idx);
+                        start_learn_for_song_pad(idx);  // Use idx (0-15), not global_idx
                     } else if (common_state && common_state->metadata) {
                         trigger_pad_fade[global_idx] = 1.0f;
                         // Execute the configured action for this song pad
