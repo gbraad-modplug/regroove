@@ -13,6 +13,7 @@
 extern "C" {
 #include "regroove_common.h"
 #include "midi.h"
+#include "midi_output.h"
 #include "lcd.h"
 }
 
@@ -71,6 +72,10 @@ static UIMode last_ui_mode = UI_MODE_VOLUME;
 
 // LCD display (initialized in main)
 static LCD* lcd_display = NULL;
+
+// MIDI output state
+static int midi_output_device = -1;  // -1 = disabled
+static bool midi_output_enabled = false;
 
 void refresh_audio_devices() {
     audio_device_names.clear();
@@ -177,6 +182,34 @@ static void my_loop_song_callback(void *userdata) {
     playing = false;
 }
 
+static void my_note_callback(int channel, int note, int instrument, int volume,
+                             int effect_cmd, int effect_param, void *userdata) {
+    if (!midi_output_enabled) return;
+
+    // Check for note-off effect commands (0FFF or EC0)
+    if (effect_cmd == 0x0F && effect_param == 0xFF) {
+        // 0FFF = Note OFF in OctaMED
+        midi_output_stop_channel(channel);
+        return;
+    }
+    if (effect_cmd == 0x0E && effect_param == 0xC0) {
+        // EC0 = Note cut
+        midi_output_stop_channel(channel);
+        return;
+    }
+
+    // Handle note events
+    if (note == -2) {
+        // Explicit note-off (=== or OFF in pattern)
+        midi_output_stop_channel(channel);
+    } else if (note >= 0) {
+        // New note triggered
+        // Use default volume if not specified
+        int vel = (volume >= 0) ? volume : 64;
+        midi_output_handle_note(channel, note, instrument, vel);
+    }
+}
+
 
 // -----------------------------------------------------------------------------
 // Module Loading
@@ -192,6 +225,7 @@ static int load_module(const char *path) {
         .on_row_change = my_row_callback,
         .on_loop_pattern = my_loop_pattern_callback,
         .on_loop_song = my_loop_song_callback,
+        .on_note = my_note_callback,
         .userdata = NULL
     };
 
@@ -2716,9 +2750,77 @@ static void ShowMainUI() {
         }
 
         ImGui::SameLine();
-        if (ImGui::Button("Refresh MIDI", ImVec2(100.0f, 0.0f))) {
+        if (ImGui::Button("Refresh##midi", ImVec2(80.0f, 0.0f))) {
             refresh_midi_devices();
             printf("Refreshed MIDI device list (%d devices found)\n", cached_midi_port_count);
+        }
+
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
+        // MIDI Output Device Configuration
+        ImGui::Text("MIDI Output Configuration (Experimental)");
+        ImGui::Dummy(ImVec2(0, 12.0f));
+        ImGui::TextWrapped("Send MIDI notes to external synths based on tracker playback. Effect commands 0FFF and EC0 trigger note-off.");
+        ImGui::Dummy(ImVec2(0, 8.0f));
+
+        ImGui::Text("MIDI Output:");
+        ImGui::SameLine(150.0f);
+
+        const char* midi_out_label = (midi_output_device == -1) ? "Disabled" : "Port";
+        if (midi_output_device >= 0) {
+            char port_name[128];
+            if (midi_get_port_name(midi_output_device, port_name, sizeof(port_name)) == 0) {
+                midi_out_label = port_name;
+            }
+        }
+
+        if (ImGui::BeginCombo("##midi_output", midi_out_label)) {
+            // Disabled option
+            if (ImGui::Selectable("Disabled", midi_output_device == -1)) {
+                if (midi_output_enabled) {
+                    midi_output_deinit();
+                    midi_output_enabled = false;
+                }
+                midi_output_device = -1;
+                if (common_state) {
+                    common_state->device_config.midi_output_device = -1;
+                    regroove_common_save_device_config(common_state, current_config_file);
+                }
+                printf("MIDI output disabled\n");
+            }
+
+            // List MIDI output ports
+            for (int i = 0; i < num_midi_ports; i++) {
+                char label[128];
+                char port_name[128];
+                if (midi_get_port_name(i, port_name, sizeof(port_name)) == 0) {
+                    snprintf(label, sizeof(label), "%s", port_name);
+                } else {
+                    snprintf(label, sizeof(label), "Port %d", i);
+                }
+
+                if (ImGui::Selectable(label, midi_output_device == i)) {
+                    // Reinitialize MIDI output with new device
+                    if (midi_output_enabled) {
+                        midi_output_deinit();
+                    }
+
+                    if (midi_output_init(i) == 0) {
+                        midi_output_device = i;
+                        midi_output_enabled = true;
+                        if (common_state) {
+                            common_state->device_config.midi_output_device = i;
+                            regroove_common_save_device_config(common_state, current_config_file);
+                        }
+                        printf("MIDI output enabled on port %d\n", i);
+                    } else {
+                        midi_output_device = -1;
+                        midi_output_enabled = false;
+                        fprintf(stderr, "Failed to initialize MIDI output on port %d\n", i);
+                    }
+                }
+            }
+            ImGui::EndCombo();
         }
 
         ImGui::Dummy(ImVec2(0, 20.0f));
@@ -2769,7 +2871,7 @@ static void ShowMainUI() {
         }
 
         ImGui::SameLine();
-        if (ImGui::Button("Refresh", ImVec2(80.0f, 0.0f))) {
+        if (ImGui::Button("Refresh##audio", ImVec2(80.0f, 0.0f))) {
             refresh_audio_devices();
             printf("Refreshed audio device list (%d devices found)\n", (int)audio_device_names.size());
         }
@@ -3405,6 +3507,18 @@ int main(int argc, char* argv[]) {
 
     // Apply loaded audio device setting to UI variable
     selected_audio_device = common_state->device_config.audio_device;
+
+    // Initialize MIDI output if configured
+    if (common_state->device_config.midi_output_device >= 0) {
+        if (midi_output_init(common_state->device_config.midi_output_device) == 0) {
+            midi_output_device = common_state->device_config.midi_output_device;
+            midi_output_enabled = true;
+            printf("MIDI output enabled on device %d\n", midi_output_device);
+        } else {
+            fprintf(stderr, "Failed to initialize MIDI output on device %d\n",
+                    common_state->device_config.midi_output_device);
+        }
+    }
 
     // Load file list from directory
     std::string dir_path;

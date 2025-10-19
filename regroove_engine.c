@@ -74,6 +74,7 @@ struct Regroove {
     RegrooveRowCallback          on_row_change;
     RegrooveLoopPatternCallback  on_loop_pattern;
     RegrooveLoopSongCallback     on_loop_song;
+    RegrooveNoteCallback         on_note;
     void *callback_userdata;
 
     // --- For feedback ---
@@ -327,6 +328,7 @@ Regroove *regroove_create(const char *filename, double samplerate) {
     g->on_row_change = NULL;
     g->on_loop_pattern = NULL;
     g->on_loop_song = NULL;
+    g->on_note = NULL;
     g->callback_userdata = NULL;
 
     g->last_msg_order = -1;
@@ -352,6 +354,7 @@ void regroove_set_callbacks(Regroove *g, struct RegrooveCallbacks *cb) {
     g->on_row_change = cb->on_row_change;
     g->on_loop_pattern = cb->on_loop_pattern;
     g->on_loop_song = cb->on_loop_song;
+    g->on_note = cb->on_note;
     g->callback_userdata = cb->userdata;
 }
 
@@ -455,6 +458,81 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
     if (g->on_row_change && g->last_msg_row != final_row) {
         g->on_row_change(final_order, final_row, g->callback_userdata);
         g->last_msg_row = final_row;
+    }
+
+    // --- Call note callback for MIDI output (if registered) ---
+    if (g->on_note && g->last_msg_row != final_row) {
+        // Process all channels for note events at the current row
+        for (int ch = 0; ch < g->num_channels; ch++) {
+            // Get pattern cell data for this channel
+            const char *note_str = openmpt_module_format_pattern_row_channel(
+                g->mod, final_pattern, final_row, ch, 0, 1);
+
+            if (note_str && strlen(note_str) > 0) {
+                // Parse note, instrument, volume, and effect from formatted string
+                // Format is typically: "C-5 01 .. ..."
+                int note = -1;
+                int instrument = -1;
+                int volume = -1;
+                int effect_cmd = 0;
+                int effect_param = 0;
+
+                // Parse note (first 3 chars)
+                if (strlen(note_str) >= 3) {
+                    if (note_str[0] >= 'A' && note_str[0] <= 'G') {
+                        // Calculate MIDI note number from tracker note
+                        // C-4 should be MIDI note 48 (tracker's middle C)
+                        int octave = note_str[2] - '0';
+                        int base_note = 0;
+                        switch (note_str[0]) {
+                            case 'C': base_note = 0; break;
+                            case 'D': base_note = 2; break;
+                            case 'E': base_note = 4; break;
+                            case 'F': base_note = 5; break;
+                            case 'G': base_note = 7; break;
+                            case 'A': base_note = 9; break;
+                            case 'B': base_note = 11; break;
+                        }
+                        if (note_str[1] == '#' || note_str[1] == '-') {
+                            if (note_str[1] == '#') base_note++;
+                        }
+                        note = octave * 12 + base_note;
+                    } else if (strncmp(note_str, "===", 3) == 0 ||
+                               strncmp(note_str, "OFF", 3) == 0) {
+                        // Note-off or key-off indicator
+                        note = -2; // Special value for note-off
+                    }
+                }
+
+                // Parse instrument (chars 4-5, hex)
+                if (strlen(note_str) >= 6 && note_str[4] != '.' && note_str[5] != '.') {
+                    char inst_str[3] = {note_str[4], note_str[5], 0};
+                    instrument = (int)strtol(inst_str, NULL, 16);
+                }
+
+                // Parse volume (chars 7-8)
+                if (strlen(note_str) >= 9 && note_str[7] != '.' && note_str[8] != '.') {
+                    char vol_str[3] = {note_str[7], note_str[8], 0};
+                    volume = (int)strtol(vol_str, NULL, 16);
+                }
+
+                // Parse effect command and parameter (chars 10-12)
+                if (strlen(note_str) >= 13) {
+                    if (note_str[10] != '.' && note_str[11] != '.' && note_str[12] != '.') {
+                        char cmd_str[2] = {note_str[10], 0};
+                        char param_str[3] = {note_str[11], note_str[12], 0};
+                        effect_cmd = (int)strtol(cmd_str, NULL, 16);
+                        effect_param = (int)strtol(param_str, NULL, 16);
+                    }
+                }
+
+                // Only call callback if there's a note or an effect command
+                if (note >= -2 || effect_cmd != 0) {
+                    g->on_note(ch, note, instrument, volume, effect_cmd, effect_param,
+                              g->callback_userdata);
+                }
+            }
+        }
     }
 
     // --- Detect song loop event ---

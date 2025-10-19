@@ -14,12 +14,22 @@ typedef void (*RegrooveOrderCallback)(int order, int pattern, void *userdata);
 typedef void (*RegrooveRowCallback)(int order, int row, void *userdata);
 typedef void (*RegrooveLoopPatternCallback)(int order, int pattern, void *userdata);
 typedef void (*RegrooveLoopSongCallback)(void *userdata);
+// MIDI output callback for note events
+// channel: tracker channel (0-63)
+// note: tracker note number (0-119, where 48=C-4)
+// instrument: instrument number (0-255)
+// volume: note volume (0-64, tracker range)
+// effect_cmd: effect command (0-255, e.g. 0x0F for 0Fxx)
+// effect_param: effect parameter (0-255, e.g. 0xFF for 0FFF)
+typedef void (*RegrooveNoteCallback)(int channel, int note, int instrument, int volume,
+                                     int effect_cmd, int effect_param, void *userdata);
 
 struct RegrooveCallbacks {
     RegrooveOrderCallback       on_order_change;
     RegrooveRowCallback         on_row_change;
     RegrooveLoopPatternCallback on_loop_pattern;
     RegrooveLoopSongCallback    on_loop_song;
+    RegrooveNoteCallback        on_note;
     void *userdata;
 };
 

@@ -8,6 +8,7 @@
 #include <SDL.h>
 #include "regroove_common.h"
 #include "midi.h"
+#include "midi_output.h"
 
 static volatile int running = 1;
 static struct termios orig_termios;
@@ -15,6 +16,10 @@ static struct termios orig_termios;
 // --- Shared state ---
 static RegrooveCommonState *common_state = NULL;
 static SDL_AudioDeviceID audio_device_id = 0;
+
+// MIDI output state
+static int midi_output_device = -1;  // -1 = disabled
+static int midi_output_enabled = 0;
 
 
 static void handle_sigint(int sig) { (void)sig; running = 0; }
@@ -99,6 +104,35 @@ static void my_loop_callback(int order, int pattern, void *userdata) {
 
 static void my_song_callback(void *userdata) {
     printf("[SONG] looped back to start\n");
+}
+
+static void my_note_callback(int channel, int note, int instrument, int volume,
+                             int effect_cmd, int effect_param, void *userdata) {
+    (void)userdata;
+    if (!midi_output_enabled) return;
+
+    // Check for note-off effect commands (0FFF or EC0)
+    if (effect_cmd == 0x0F && effect_param == 0xFF) {
+        // 0FFF = Note OFF in OctaMED
+        midi_output_stop_channel(channel);
+        return;
+    }
+    if (effect_cmd == 0x0E && effect_param == 0xC0) {
+        // EC0 = Note cut
+        midi_output_stop_channel(channel);
+        return;
+    }
+
+    // Handle note events
+    if (note == -2) {
+        // Explicit note-off (=== or OFF in pattern)
+        midi_output_stop_channel(channel);
+    } else if (note >= 0) {
+        // New note triggered
+        // Use default volume if not specified
+        int vel = (volume >= 0) ? volume : 64;
+        midi_output_handle_note(channel, note, instrument, vel);
+    }
 }
 
 // --- Forward declarations ---
@@ -483,6 +517,7 @@ int main(int argc, char *argv[]) {
         .on_row_change = my_row_callback,
         .on_loop_pattern = my_loop_callback,
         .on_loop_song = my_song_callback,
+        .on_note = my_note_callback,
         .userdata = NULL
     };
     global_cbs = cbs;
@@ -549,6 +584,18 @@ int main(int argc, char *argv[]) {
         }
     } else {
         printf("No MIDI available. Running with keyboard control only.\n");
+    }
+
+    // Initialize MIDI output if configured
+    if (common_state->device_config.midi_output_device >= 0) {
+        if (midi_output_init(common_state->device_config.midi_output_device) == 0) {
+            midi_output_device = common_state->device_config.midi_output_device;
+            midi_output_enabled = 1;
+            printf("MIDI output enabled on device %d\n", midi_output_device);
+        } else {
+            fprintf(stderr, "Failed to initialize MIDI output on device %d\n",
+                    common_state->device_config.midi_output_device);
+        }
     }
 
     if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 1);

@@ -134,9 +134,10 @@ RegrooveCommonState* regroove_common_create(void) {
     state->pitch = 1.0;
 
     // Initialize device config to defaults
-    state->device_config.midi_device_0 = -1;  // Not configured
-    state->device_config.midi_device_1 = -1;  // Not configured
-    state->device_config.audio_device = -1;   // Default device
+    state->device_config.midi_device_0 = -1;      // Not configured
+    state->device_config.midi_device_1 = -1;      // Not configured
+    state->device_config.audio_device = -1;       // Default device
+    state->device_config.midi_output_device = -1; // Disabled
 
     // Initialize metadata
     state->metadata = regroove_metadata_create();
@@ -207,6 +208,8 @@ int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_pa
                     state->device_config.midi_device_1 = atoi(value);
                 } else if (strcmp(key, "audio_device") == 0) {
                     state->device_config.audio_device = atoi(value);
+                } else if (strcmp(key, "midi_output_device") == 0) {
+                    state->device_config.midi_output_device = atoi(value);
                 }
             }
         }
@@ -543,6 +546,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_device_0 = %d\n", state->device_config.midi_device_0);
         fprintf(f, "midi_device_1 = %d\n", state->device_config.midi_device_1);
         fprintf(f, "audio_device = %d\n", state->device_config.audio_device);
+        fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
         fprintf(f, "\n");
 
         fclose(f);
@@ -558,6 +562,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_device_0 = %d\n", state->device_config.midi_device_0);
         fprintf(f, "midi_device_1 = %d\n", state->device_config.midi_device_1);
         fprintf(f, "audio_device = %d\n", state->device_config.audio_device);
+        fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
 
         fclose(f);
         return 0;
@@ -589,6 +594,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
                 fprintf(f_write, "midi_device_0 = %d\n", state->device_config.midi_device_0);
                 fprintf(f_write, "midi_device_1 = %d\n", state->device_config.midi_device_1);
                 fprintf(f_write, "audio_device = %d\n", state->device_config.audio_device);
+                fprintf(f_write, "midi_output_device = %d\n", state->device_config.midi_output_device);
                 devices_written = 1;
             }
             in_devices_section = (strstr(line, "[devices]") != NULL);
@@ -604,6 +610,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
                 fprintf(f_write, "midi_device_0 = %d\n", state->device_config.midi_device_0);
                 fprintf(f_write, "midi_device_1 = %d\n", state->device_config.midi_device_1);
                 fprintf(f_write, "audio_device = %d\n", state->device_config.audio_device);
+                fprintf(f_write, "midi_output_device = %d\n", state->device_config.midi_output_device);
                 devices_written = 1;
                 // Skip the old line (don't write it)
             }

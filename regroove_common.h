@@ -41,9 +41,10 @@ void regroove_filelist_destroy(RegrooveFileList *list);
 
 // Device configuration
 typedef struct {
-    int midi_device_0;  // MIDI device 0 port (-1 = not configured)
-    int midi_device_1;  // MIDI device 1 port (-1 = not configured)
-    int audio_device;   // Audio device index (-1 = default)
+    int midi_device_0;      // MIDI device 0 port (-1 = not configured)
+    int midi_device_1;      // MIDI device 1 port (-1 = not configured)
+    int audio_device;       // Audio device index (-1 = default)
+    int midi_output_device; // MIDI output device port (-1 = disabled)
 } RegrooveDeviceConfig;
 
 // Common playback state
