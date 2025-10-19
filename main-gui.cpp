@@ -145,7 +145,11 @@ static void my_loop_song_callback(void *userdata) {
 // Module Loading
 // -----------------------------------------------------------------------------
 
-static constexpr int MAX_LCD_TEXTLENGTH = 16;
+// LCD Display Configuration (similar to HD44780 initialization)
+// Configured for UI panel width of 190px - 16 chars fits nicely
+static constexpr int LCD_COLS = 16;  // Characters per line
+static constexpr int LCD_ROWS = 4;   // Number of lines
+static constexpr int MAX_LCD_TEXTLENGTH = LCD_COLS;
 
 static int load_module(const char *path) {
     struct RegrooveCallbacks cbs = {
@@ -1081,7 +1085,7 @@ static void ShowMainUI() {
     ImGui::BeginChild("left_panel", ImVec2(LEFT_PANEL_WIDTH, channelAreaHeight),
                       true, ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
     {
-        char lcd[64];
+        char lcd[128];  // Increased from 64 to accommodate all 4 lines
 
         // Include truncated file name
         const char* file_disp = "";
@@ -1106,6 +1110,7 @@ static void ShowMainUI() {
         if (common_state && common_state->metadata && common_state->player) {
             int current_pattern = regroove_get_current_pattern(common_state->player);
             const char* desc = regroove_metadata_get_pattern_desc(common_state->metadata, current_pattern);
+
             if (desc && desc[0] != '\0') {
                 pattern_desc = desc;
             }
@@ -1117,6 +1122,13 @@ static void ShowMainUI() {
             MapPitchFader(pitch_slider), bpm_str,
             MAX_LCD_TEXTLENGTH, file_disp,
             MAX_LCD_TEXTLENGTH, pattern_desc);
+
+        // Debug: Show what's actually being displayed
+        static int last_logged_pattern_lcd = -999;
+        if (pattern != last_logged_pattern_lcd) {
+            printf("[LCD TEXT] pattern_desc='%s', lcd buffer:\n%s\n---END LCD---\n", pattern_desc, lcd);
+            last_logged_pattern_lcd = pattern;
+        }
 
         DrawLCD(lcd, LEFT_PANEL_WIDTH - 16.0f, LCD_HEIGHT);
     }
@@ -1501,17 +1513,37 @@ static void ShowMainUI() {
         if (!mod) {
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No module loaded");
         } else {
-            // Song/Module Information Section
+            // File Browser Section
+            ImGui::Text("File Browser");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Selected file (from browser, not necessarily loaded)
+            if (common_state->file_list && common_state->file_list->count > 0) {
+                const char* current_file = common_state->file_list->filenames[common_state->file_list->current_index];
+                ImGui::Text("Selected File:");
+                ImGui::SameLine(150.0f);
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", current_file);
+            }
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+
+            // Loaded Module Information Section
             ImGui::Text("Module Information");
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 8.0f));
 
-            // Current file name
-            if (common_state->file_list && common_state->file_list->count > 0) {
-                const char* current_file = common_state->file_list->filenames[common_state->file_list->current_index];
-                ImGui::Text("File:");
+            // Actually loaded module file
+            if (common_state->current_module_path[0] != '\0') {
+                // Extract just the filename from the path
+                const char* loaded_file = strrchr(common_state->current_module_path, '/');
+                if (!loaded_file) loaded_file = strrchr(common_state->current_module_path, '\\');
+                if (!loaded_file) loaded_file = common_state->current_module_path;
+                else loaded_file++; // Skip the separator
+
+                ImGui::Text("Loaded Module:");
                 ImGui::SameLine(150.0f);
-                ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "%s", current_file);
+                ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "%s", loaded_file);
             }
 
             // Number of channels
@@ -1665,6 +1697,17 @@ static void ShowMainUI() {
 
             ImGui::BeginChild("##pattern_desc_list", ImVec2(rightW - 64.0f, 300.0f), true);
 
+            // Track the currently loaded module to clear buffers when module changes
+            static char pattern_desc_buffers[RGX_MAX_PATTERNS][RGX_MAX_PATTERN_DESC] = {0};
+            static char last_loaded_module[COMMON_MAX_PATH] = {0};
+
+            // Clear buffers if module changed
+            if (common_state && strcmp(last_loaded_module, common_state->current_module_path) != 0) {
+                memset(pattern_desc_buffers, 0, sizeof(pattern_desc_buffers));
+                strncpy(last_loaded_module, common_state->current_module_path, COMMON_MAX_PATH - 1);
+                last_loaded_module[COMMON_MAX_PATH - 1] = '\0';
+            }
+
             for (int p = 0; p < num_patterns; p++) {
                 ImGui::PushID(p);
 
@@ -1673,22 +1716,24 @@ static void ShowMainUI() {
 
                 // Get current description from metadata
                 const char* current_desc = regroove_metadata_get_pattern_desc(common_state->metadata, p);
-                static char pattern_desc_buffers[RGX_MAX_PATTERNS][RGX_MAX_PATTERN_DESC];
 
-                // Initialize buffer with current description
-                if (current_desc && current_desc[0] != '\0') {
-                    strncpy(pattern_desc_buffers[p], current_desc, RGX_MAX_PATTERN_DESC - 1);
-                    pattern_desc_buffers[p][RGX_MAX_PATTERN_DESC - 1] = '\0';
-                } else if (pattern_desc_buffers[p][0] == '\0') {
-                    // Initialize empty buffer
-                    pattern_desc_buffers[p][0] = '\0';
+                // Initialize buffer with current description if empty
+                if (pattern_desc_buffers[p][0] == '\0') {
+                    if (current_desc && current_desc[0] != '\0') {
+                        strncpy(pattern_desc_buffers[p], current_desc, RGX_MAX_PATTERN_DESC - 1);
+                        pattern_desc_buffers[p][RGX_MAX_PATTERN_DESC - 1] = '\0';
+                    }
                 }
 
                 ImGui::SetNextItemWidth(400.0f);
                 if (ImGui::InputText("##desc", pattern_desc_buffers[p], RGX_MAX_PATTERN_DESC)) {
-                    // Description was edited - save to metadata
+                    // Description was edited - update metadata in memory only
+                    // File save happens when user leaves the field or on explicit save
                     regroove_metadata_set_pattern_desc(common_state->metadata, p, pattern_desc_buffers[p]);
-                    // Auto-save .rgx file
+                }
+
+                // Save to file when user finishes editing (loses focus)
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
                     save_rgx_metadata();
                 }
 
