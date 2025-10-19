@@ -19,7 +19,7 @@ extern "C" {
 // -----------------------------------------------------------------------------
 // Forward Declarations
 // -----------------------------------------------------------------------------
-static void handle_input_event(InputEvent *event);
+static void handle_input_event(InputEvent *event, bool from_playback = false);
 
 // -----------------------------------------------------------------------------
 // State & Helper Types
@@ -144,7 +144,7 @@ static void my_row_callback(int ord, int row, void *userdata) {
                 evt.action = events[i].action;
                 evt.parameter = events[i].parameter;
                 evt.value = (int)events[i].value;
-                handle_input_event(&evt);
+                handle_input_event(&evt, true);  // from_playback=true
             }
         }
 
@@ -272,17 +272,12 @@ enum GuiAction {
     ACT_QUEUE_PATTERN
 };
 
-// Helper to record GuiAction as InputAction for performance recording
-static void record_gui_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
-    if (!common_state || !common_state->performance ||
-        !regroove_performance_is_recording(common_state->performance)) {
-        return;
-    }
-
-    // Map GuiAction to InputAction for recording
+void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
+    // Convert GuiAction to InputAction and call handle_input_event for recording
+    // This ensures UI actions are recorded just like MIDI/keyboard actions
     InputAction input_action = ACTION_NONE;
     int parameter = arg1;
-    float value = arg2 * 127.0f; // Convert 0-1 range to MIDI 0-127
+    int value = (int)(arg2 * 127.0f); // Convert 0-1 range to MIDI 0-127
 
     switch (act) {
         case ACT_PLAY: input_action = ACTION_PLAY; break;
@@ -306,20 +301,19 @@ static void record_gui_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
         case ACT_JUMP_TO_PATTERN: input_action = ACTION_JUMP_TO_PATTERN; break;
         case ACT_QUEUE_ORDER: input_action = ACTION_QUEUE_ORDER; break;
         case ACT_QUEUE_PATTERN: input_action = ACTION_QUEUE_PATTERN; break;
-        default: return; // Don't record unsupported actions
+        default: break; // Actions that don't have InputAction equivalents
     }
 
-    if (input_action != ACTION_NONE) {
-        regroove_performance_record_event(common_state->performance,
-                                          input_action,
-                                          parameter,
-                                          value);
+    // Record the action if recording is active and it has an InputAction equivalent
+    if (input_action != ACTION_NONE && common_state && common_state->performance) {
+        if (regroove_performance_is_recording(common_state->performance)) {
+            regroove_performance_record_event(common_state->performance,
+                                              input_action,
+                                              parameter,
+                                              value);
+        }
     }
-}
 
-void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
-    // Record action if recording is active
-    record_gui_action(act, arg1, arg2);
     Regroove *mod = common_state ? common_state->player : NULL;
 
     switch (act) {
@@ -516,16 +510,17 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
 // -----------------------------------------------------------------------------
 // Input Mapping - Convert InputAction to GuiAction
 // -----------------------------------------------------------------------------
-static void handle_input_event(InputEvent *event) {
+static void handle_input_event(InputEvent *event, bool from_playback) {
     if (!event || event->action == ACTION_NONE) return;
 
-    // Record event if recording is active
-    if (common_state && common_state->performance) {
+    // Record event if recording is active (but NOT if this event came from playback!)
+    if (!from_playback && common_state && common_state->performance) {
         int is_recording = regroove_performance_is_recording(common_state->performance);
-        printf("handle_input_event: action=%s, is_recording=%d\n",
-               input_action_name(event->action), is_recording);
-
         if (is_recording) {
+            printf("Recording: %s (param=%d, value=%d) at PR:%d\n",
+                   input_action_name(event->action), event->parameter,
+                   event->value, regroove_performance_get_row(common_state->performance));
+
             regroove_performance_record_event(common_state->performance,
                                               event->action,
                                               event->parameter,
@@ -1345,7 +1340,9 @@ static void ShowMainUI() {
             recording = !recording;
             regroove_performance_set_recording(common_state->performance, recording);
             if (recording) {
-                printf("Performance recording started\n");
+                // When starting recording, stop playback to avoid re-recording played events
+                regroove_performance_set_playback(common_state->performance, 0);
+                printf("Performance recording started (playback stopped)\n");
             } else {
                 printf("Performance recording stopped (%d events recorded)\n",
                        regroove_performance_get_event_count(common_state->performance));
