@@ -90,6 +90,9 @@ void regroove_common_pitch_up(RegrooveCommonState *state);
 void regroove_common_pitch_down(RegrooveCommonState *state);
 void regroove_common_set_pitch(RegrooveCommonState *state, double pitch);
 
+// Save device configuration to existing INI file
+int regroove_common_save_device_config(RegrooveCommonState *state, const char *filepath);
+
 // Save default configuration to INI file
 int regroove_common_save_default_config(const char *filepath);
 

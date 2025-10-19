@@ -513,6 +513,117 @@ void regroove_common_set_pitch(RegrooveCommonState *state, double pitch) {
     regroove_set_pitch(state->player, state->pitch);
 }
 
+// Save device configuration to existing INI file
+// Simple approach: append [devices] section if missing, or rewrite entire file if it exists
+int regroove_common_save_device_config(RegrooveCommonState *state, const char *filepath) {
+    if (!state || !filepath) return -1;
+
+    // Check if file exists and if [devices] section exists
+    FILE *f_check = fopen(filepath, "r");
+    int has_devices_section = 0;
+
+    if (f_check) {
+        char line[512];
+        while (fgets(line, sizeof(line), f_check)) {
+            if (strstr(line, "[devices]")) {
+                has_devices_section = 1;
+                break;
+            }
+        }
+        fclose(f_check);
+    }
+
+    if (!f_check) {
+        // File doesn't exist, create it with device config only
+        FILE *f = fopen(filepath, "w");
+        if (!f) return -1;
+
+        fprintf(f, "# Regroove Configuration File\n\n");
+        fprintf(f, "[devices]\n");
+        fprintf(f, "midi_device_0 = %d\n", state->device_config.midi_device_0);
+        fprintf(f, "midi_device_1 = %d\n", state->device_config.midi_device_1);
+        fprintf(f, "audio_device = %d\n", state->device_config.audio_device);
+        fprintf(f, "\n");
+
+        fclose(f);
+        return 0;
+    }
+
+    if (!has_devices_section) {
+        // File exists but no [devices] section - append it
+        FILE *f = fopen(filepath, "a");
+        if (!f) return -1;
+
+        fprintf(f, "\n[devices]\n");
+        fprintf(f, "midi_device_0 = %d\n", state->device_config.midi_device_0);
+        fprintf(f, "midi_device_1 = %d\n", state->device_config.midi_device_1);
+        fprintf(f, "audio_device = %d\n", state->device_config.audio_device);
+
+        fclose(f);
+        return 0;
+    }
+
+    // File exists and has [devices] section - need to update it
+    // Read entire file, update [devices] section, rewrite
+    FILE *f_read = fopen(filepath, "r");
+    if (!f_read) return -1;
+
+    // Use a temp file for safety
+    char temp_path[COMMON_MAX_PATH + 4];
+    snprintf(temp_path, sizeof(temp_path), "%s.tmp", filepath);
+    FILE *f_write = fopen(temp_path, "w");
+    if (!f_write) {
+        fclose(f_read);
+        return -1;
+    }
+
+    char line[512];
+    int in_devices_section = 0;
+    int devices_written = 0;
+
+    while (fgets(line, sizeof(line), f_read)) {
+        // Check for section headers
+        if (line[0] == '[') {
+            // Exiting devices section? Write the new values if not done yet
+            if (in_devices_section && !devices_written) {
+                fprintf(f_write, "midi_device_0 = %d\n", state->device_config.midi_device_0);
+                fprintf(f_write, "midi_device_1 = %d\n", state->device_config.midi_device_1);
+                fprintf(f_write, "audio_device = %d\n", state->device_config.audio_device);
+                devices_written = 1;
+            }
+            in_devices_section = (strstr(line, "[devices]") != NULL);
+            fprintf(f_write, "%s", line);
+        } else if (in_devices_section) {
+            // In devices section
+            char *trimmed = trim_whitespace(line);
+            if (trimmed[0] == '\0' || trimmed[0] == '#' || trimmed[0] == ';') {
+                // Comment or empty line - preserve it
+                fprintf(f_write, "%s", line);
+            } else if (!devices_written) {
+                // First non-comment line in devices section - write our values and skip old ones
+                fprintf(f_write, "midi_device_0 = %d\n", state->device_config.midi_device_0);
+                fprintf(f_write, "midi_device_1 = %d\n", state->device_config.midi_device_1);
+                fprintf(f_write, "audio_device = %d\n", state->device_config.audio_device);
+                devices_written = 1;
+                // Skip the old line (don't write it)
+            }
+            // Skip subsequent device lines (they're old values)
+        } else {
+            // Not in devices section - preserve line
+            fprintf(f_write, "%s", line);
+        }
+    }
+
+    fclose(f_read);
+    fclose(f_write);
+
+    // Replace original with temp file
+    remove(filepath);
+    rename(temp_path, filepath);
+
+    return 0;
+}
+
 // Save default configuration to INI file
 int regroove_common_save_default_config(const char *filepath) {
     if (!filepath) return -1;

@@ -662,9 +662,14 @@ static void handle_input_event(InputEvent *event, bool from_playback) {
 static void save_mappings_to_config() {
     if (!common_state || !common_state->input_mappings) return;
 
-    // Save the current input mappings
+    // Save the current input mappings (includes trigger pads)
     if (input_mappings_save(common_state->input_mappings, current_config_file) == 0) {
-        printf("Saved mappings to %s\n", current_config_file);
+        // Also save device configuration
+        if (regroove_common_save_device_config(common_state, current_config_file) == 0) {
+            printf("Saved mappings and devices to %s\n", current_config_file);
+        } else {
+            fprintf(stderr, "Failed to save device config to %s\n", current_config_file);
+        }
     } else {
         fprintf(stderr, "Failed to save mappings to %s\n", current_config_file);
     }
@@ -759,6 +764,7 @@ static void unlearn_current_target() {
     if (learn_target_type == LEARN_NONE) return;
 
     int removed_count = 0;
+    bool song_pad_changed = false;
 
     if (learn_target_type == LEARN_TRIGGER_PAD) {
         // Remove MIDI note mapping from trigger pad (application or song pad)
@@ -783,7 +789,7 @@ static void unlearn_current_target() {
                     pad->midi_note = -1;
                     pad->midi_device = -1;
                     printf("Unlearned MIDI note mapping for Song Pad S%d\n", song_pad_idx + 1);
-                    removed_count++;
+                    song_pad_changed = true;
                 }
             }
         }
@@ -856,9 +862,13 @@ static void unlearn_current_target() {
     }
 
     if (removed_count > 0) {
-        // Save the updated mappings to config
+        // Save the updated application pad mappings to config
         save_mappings_to_config();
         printf("Removed %d mapping(s)\n", removed_count);
+    } else if (song_pad_changed) {
+        // Save song pad changes to .rgx file
+        regroove_common_save_rgx(common_state);
+        printf("Removed song pad mapping\n");
     } else {
         printf("No mappings to remove\n");
     }
@@ -916,6 +926,8 @@ static void learn_midi_mapping(int device_id, int cc_or_note, bool is_note) {
                 pad->midi_device = device_id;
                 printf("Learned MIDI note mapping: Note %d (device %d) -> Application Pad A%d\n",
                        cc_or_note, device_id, learn_target_pad_index + 1);
+                // Save to config file
+                save_mappings_to_config();
             }
         } else if (learn_target_pad_index >= MAX_TRIGGER_PADS &&
                    learn_target_pad_index < MAX_TRIGGER_PADS + MAX_SONG_TRIGGER_PADS) {
@@ -927,6 +939,8 @@ static void learn_midi_mapping(int device_id, int cc_or_note, bool is_note) {
                 pad->midi_device = device_id;
                 printf("Learned MIDI note mapping: Note %d (device %d) -> Song Pad S%d\n",
                        cc_or_note, device_id, song_pad_idx + 1);
+                // Save to .rgx file
+                regroove_common_save_rgx(common_state);
             }
         }
     } else if (!is_note) {
@@ -1096,6 +1110,9 @@ void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned ch
         if (common_state && common_state->input_mappings) {
             for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
                 TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[i];
+                // Skip if disabled
+                if (pad->midi_device == -2) continue;
+
                 // Match device (if specified) and note
                 if (pad->midi_note == note &&
                     (pad->midi_device == -1 || pad->midi_device == device_id)) {
@@ -1121,6 +1138,9 @@ void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned ch
         if (!triggered && common_state && common_state->metadata) {
             for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
                 TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[i];
+                // Skip if disabled
+                if (pad->midi_device == -2) continue;
+
                 // Match device (if specified) and note
                 if (pad->midi_note == note &&
                     (pad->midi_device == -1 || pad->midi_device == device_id)) {
@@ -1310,17 +1330,21 @@ static void ShowMainUI() {
             }
 
             // Determine playback mode display
-            const char* mode_str = "SONG";
-            // Show PERF whenever performance events are loaded (regardless of playback state)
-            if (common_state && common_state->performance) {
-                int event_count = regroove_performance_get_event_count(common_state->performance);
-                if (event_count > 0) {
-                    mode_str = "PERF";
+            const char* mode_str = "----";
+            // Only show mode if a module is loaded
+            if (common_state && common_state->player) {
+                mode_str = "SONG";
+                // Show PERF whenever performance events are loaded (regardless of playback state)
+                if (common_state->performance) {
+                    int event_count = regroove_performance_get_event_count(common_state->performance);
+                    if (event_count > 0) {
+                        mode_str = "PERF";
+                    } else if (loop_enabled) {
+                        mode_str = "LOOP";
+                    }
                 } else if (loop_enabled) {
                     mode_str = "LOOP";
                 }
-            } else if (loop_enabled) {
-                mode_str = "LOOP";
             }
 
             std::snprintf(lcd_text, sizeof(lcd_text),
@@ -2131,16 +2155,20 @@ static void ShowMainUI() {
             // Song pads configuration table
             ImGui::BeginChild("##song_pads_table", ImVec2(rightW - 64.0f, 400.0f), true);
 
-            ImGui::Columns(4, "song_pad_columns");
-            ImGui::SetColumnWidth(0, 60.0f);   // Pad
-            ImGui::SetColumnWidth(1, 200.0f);  // Action
-            ImGui::SetColumnWidth(2, 120.0f);  // Parameter
-            ImGui::SetColumnWidth(3, 120.0f);  // MIDI Note
+            ImGui::Columns(6, "song_pad_columns");
+            ImGui::SetColumnWidth(0, 50.0f);   // Pad
+            ImGui::SetColumnWidth(1, 160.0f);  // Action
+            ImGui::SetColumnWidth(2, 150.0f);  // Parameter
+            ImGui::SetColumnWidth(3, 90.0f);   // MIDI Note
+            ImGui::SetColumnWidth(4, 100.0f);  // Device
+            ImGui::SetColumnWidth(5, 80.0f);   // Actions
 
             ImGui::Text("Pad"); ImGui::NextColumn();
             ImGui::Text("Action"); ImGui::NextColumn();
             ImGui::Text("Parameter"); ImGui::NextColumn();
             ImGui::Text("MIDI Note"); ImGui::NextColumn();
+            ImGui::Text("Device"); ImGui::NextColumn();
+            ImGui::Text("Actions"); ImGui::NextColumn();
             ImGui::Separator();
 
             bool song_pads_changed = false;
@@ -2198,7 +2226,50 @@ static void ShowMainUI() {
                 if (pad->midi_note >= 0) {
                     ImGui::Text("Note %d", pad->midi_note);
                 } else {
-                    ImGui::TextDisabled("Not mapped");
+                    ImGui::TextDisabled("Not set");
+                }
+                ImGui::NextColumn();
+
+                // Device selection
+                if (pad->midi_note >= 0) {
+                    const char* device_label = pad->midi_device == -1 ? "Any" :
+                                               pad->midi_device == -2 ? "Disabled" :
+                                               (pad->midi_device == 0 ? "Dev 0" : "Dev 1");
+                    ImGui::SetNextItemWidth(90.0f);
+                    if (ImGui::BeginCombo("##device", device_label)) {
+                        if (ImGui::Selectable("Any", pad->midi_device == -1)) {
+                            pad->midi_device = -1;
+                            song_pads_changed = true;
+                        }
+                        if (ImGui::Selectable("Dev 0", pad->midi_device == 0)) {
+                            pad->midi_device = 0;
+                            song_pads_changed = true;
+                        }
+                        if (ImGui::Selectable("Dev 1", pad->midi_device == 1)) {
+                            pad->midi_device = 1;
+                            song_pads_changed = true;
+                        }
+                        if (ImGui::Selectable("Disabled", pad->midi_device == -2)) {
+                            pad->midi_device = -2;
+                            song_pads_changed = true;
+                        }
+                        ImGui::EndCombo();
+                    }
+                } else {
+                    ImGui::TextDisabled("-");
+                }
+                ImGui::NextColumn();
+
+                // Unmap button
+                if (pad->midi_note >= 0) {
+                    if (ImGui::Button("Unmap", ImVec2(70.0f, 0.0f))) {
+                        pad->midi_note = -1;
+                        pad->midi_device = -1;
+                        song_pads_changed = true;
+                        printf("Unmapped Song Pad S%d\n", i + 1);
+                    }
+                } else {
+                    ImGui::TextDisabled("-");
                 }
                 ImGui::NextColumn();
 
@@ -2544,6 +2615,7 @@ static void ShowMainUI() {
                         midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
                     }
                     printf("MIDI Device 0 set to: None\n");
+                    regroove_common_save_device_config(common_state, current_config_file);
                 }
             }
             for (int i = 0; i < num_midi_ports; i++) {
@@ -2569,6 +2641,7 @@ static void ShowMainUI() {
                             midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
                         }
                         printf("MIDI Device 0 set to: Port %d\n", i);
+                        regroove_common_save_device_config(common_state, current_config_file);
                     }
                 }
             }
@@ -2609,6 +2682,7 @@ static void ShowMainUI() {
                         midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
                     }
                     printf("MIDI Device 1 set to: None\n");
+                    regroove_common_save_device_config(common_state, current_config_file);
                 }
             }
             for (int i = 0; i < num_midi_ports; i++) {
@@ -2634,6 +2708,7 @@ static void ShowMainUI() {
                             midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
                         }
                         printf("MIDI Device 1 set to: Port %d\n", i);
+                        regroove_common_save_device_config(common_state, current_config_file);
                     }
                 }
             }
@@ -2668,6 +2743,10 @@ static void ShowMainUI() {
             // Default device option
             if (ImGui::Selectable("Default", selected_audio_device == -1)) {
                 selected_audio_device = -1;
+                if (common_state) {
+                    common_state->device_config.audio_device = -1;
+                    regroove_common_save_device_config(common_state, current_config_file);
+                }
                 printf("Audio device set to: Default\n");
                 // Note: Audio device hot-swap would require SDL_CloseAudio() and SDL_OpenAudio()
                 // which is more complex than MIDI hot-swap. For now, just save the preference.
@@ -2677,6 +2756,10 @@ static void ShowMainUI() {
             for (int i = 0; i < (int)audio_device_names.size(); i++) {
                 if (ImGui::Selectable(audio_device_names[i].c_str(), selected_audio_device == i)) {
                     selected_audio_device = i;
+                    if (common_state) {
+                        common_state->device_config.audio_device = i;
+                        regroove_common_save_device_config(common_state, current_config_file);
+                    }
                     printf("Audio device set to: %s\n", audio_device_names[i].c_str());
                     // Note: Audio device hot-swap would require SDL_CloseAudio() and SDL_OpenAudio()
                     // which is more complex than MIDI hot-swap. For now, just save the preference.
@@ -2704,16 +2787,20 @@ static void ShowMainUI() {
         ImGui::BeginChild("##app_pads_table", ImVec2(rightW - 64.0f, 400.0f), true);
 
         if (common_state && common_state->input_mappings) {
-            ImGui::Columns(4, "app_pad_columns");
-            ImGui::SetColumnWidth(0, 60.0f);   // Pad
-            ImGui::SetColumnWidth(1, 200.0f);  // Action
+            ImGui::Columns(6, "app_pad_columns");
+            ImGui::SetColumnWidth(0, 50.0f);   // Pad
+            ImGui::SetColumnWidth(1, 160.0f);  // Action
             ImGui::SetColumnWidth(2, 150.0f);  // Parameter
-            ImGui::SetColumnWidth(3, 120.0f);  // MIDI Note
+            ImGui::SetColumnWidth(3, 90.0f);   // MIDI Note
+            ImGui::SetColumnWidth(4, 100.0f);  // Device
+            ImGui::SetColumnWidth(5, 80.0f);   // Actions
 
             ImGui::Text("Pad"); ImGui::NextColumn();
             ImGui::Text("Action"); ImGui::NextColumn();
             ImGui::Text("Parameter"); ImGui::NextColumn();
             ImGui::Text("MIDI Note"); ImGui::NextColumn();
+            ImGui::Text("Device"); ImGui::NextColumn();
+            ImGui::Text("Actions"); ImGui::NextColumn();
             ImGui::Separator();
 
             for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
@@ -2764,7 +2851,50 @@ static void ShowMainUI() {
                 if (pad->midi_note >= 0) {
                     ImGui::Text("Note %d", pad->midi_note);
                 } else {
-                    ImGui::TextDisabled("Not mapped");
+                    ImGui::TextDisabled("Not set");
+                }
+                ImGui::NextColumn();
+
+                // Device selection
+                if (pad->midi_note >= 0) {
+                    const char* device_label = pad->midi_device == -1 ? "Any" :
+                                               pad->midi_device == -2 ? "Disabled" :
+                                               (pad->midi_device == 0 ? "Dev 0" : "Dev 1");
+                    ImGui::SetNextItemWidth(90.0f);
+                    if (ImGui::BeginCombo("##device", device_label)) {
+                        if (ImGui::Selectable("Any", pad->midi_device == -1)) {
+                            pad->midi_device = -1;
+                            save_mappings_to_config();
+                        }
+                        if (ImGui::Selectable("Dev 0", pad->midi_device == 0)) {
+                            pad->midi_device = 0;
+                            save_mappings_to_config();
+                        }
+                        if (ImGui::Selectable("Dev 1", pad->midi_device == 1)) {
+                            pad->midi_device = 1;
+                            save_mappings_to_config();
+                        }
+                        if (ImGui::Selectable("Disabled", pad->midi_device == -2)) {
+                            pad->midi_device = -2;
+                            save_mappings_to_config();
+                        }
+                        ImGui::EndCombo();
+                    }
+                } else {
+                    ImGui::TextDisabled("-");
+                }
+                ImGui::NextColumn();
+
+                // Unmap button
+                if (pad->midi_note >= 0) {
+                    if (ImGui::Button("Unmap", ImVec2(70.0f, 0.0f))) {
+                        pad->midi_note = -1;
+                        pad->midi_device = -1;
+                        save_mappings_to_config();
+                        printf("Unmapped Application Pad A%d\n", i + 1);
+                    }
+                } else {
+                    ImGui::TextDisabled("-");
                 }
                 ImGui::NextColumn();
 
