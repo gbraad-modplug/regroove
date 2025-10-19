@@ -18,6 +18,14 @@ RegrooveMetadata* regroove_metadata_create(void) {
         return NULL;
     }
 
+    // Initialize song-specific trigger pads (S1-S16) to unmapped
+    for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
+        meta->song_trigger_pads[i].action = ACTION_NONE;
+        meta->song_trigger_pads[i].parameter = 0;
+        meta->song_trigger_pads[i].midi_note = -1;  // Not mapped
+        meta->song_trigger_pads[i].midi_device = -1; // Any device
+    }
+
     return meta;
 }
 
@@ -124,6 +132,22 @@ int regroove_metadata_load(RegrooveMetadata *meta, const char *rgx_path) {
                 int pattern_index = atoi(key + 8);
                 regroove_metadata_set_pattern_desc(meta, pattern_index, value);
             }
+        } else if (strcmp(section, "SongTriggerPads") == 0) {
+            // Song pad configuration: pad_S1_action, pad_S1_parameter, etc.
+            if (strncmp(key, "pad_S", 5) == 0) {
+                int pad_index = atoi(key + 5) - 1;  // S1 = index 0
+                if (pad_index >= 0 && pad_index < MAX_SONG_TRIGGER_PADS) {
+                    if (strstr(key, "_action")) {
+                        meta->song_trigger_pads[pad_index].action = parse_action(value);
+                    } else if (strstr(key, "_parameter")) {
+                        meta->song_trigger_pads[pad_index].parameter = atoi(value);
+                    } else if (strstr(key, "_midi_note")) {
+                        meta->song_trigger_pads[pad_index].midi_note = atoi(value);
+                    } else if (strstr(key, "_midi_device")) {
+                        meta->song_trigger_pads[pad_index].midi_device = atoi(value);
+                    }
+                }
+            }
         }
     }
 
@@ -152,6 +176,32 @@ int regroove_metadata_save(const RegrooveMetadata *meta, const char *rgx_path) {
             const RegroovePatternMeta *pm = &meta->pattern_meta[i];
             if (pm->description[0] != '\0') {
                 fprintf(f, "pattern_%d=\"%s\"\n", pm->pattern_index, pm->description);
+            }
+        }
+        fprintf(f, "\n");
+    }
+
+    // Write Song Trigger Pads section (S1-S16) if any are configured
+    int has_song_pads = 0;
+    for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
+        if (meta->song_trigger_pads[i].action != ACTION_NONE ||
+            meta->song_trigger_pads[i].midi_note != -1) {
+            has_song_pads = 1;
+            break;
+        }
+    }
+
+    if (has_song_pads) {
+        fprintf(f, "[SongTriggerPads]\n");
+        for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
+            const TriggerPadConfig *pad = &meta->song_trigger_pads[i];
+            if (pad->action != ACTION_NONE || pad->midi_note != -1) {
+                fprintf(f, "pad_S%d_action=%s\n", i + 1, input_action_name(pad->action));
+                fprintf(f, "pad_S%d_parameter=%d\n", i + 1, pad->parameter);
+                if (pad->midi_note >= 0) {
+                    fprintf(f, "pad_S%d_midi_note=%d\n", i + 1, pad->midi_note);
+                    fprintf(f, "pad_S%d_midi_device=%d\n", i + 1, pad->midi_device);
+                }
             }
         }
         fprintf(f, "\n");

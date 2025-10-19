@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 #include <stddef.h>
+#include "input_mappings.h"
 
 #define RGX_MAX_PATTERN_DESC 128
 #define RGX_MAX_PATTERNS 256
@@ -26,6 +27,9 @@ typedef struct {
     RegroovePatternMeta *pattern_meta;
     int pattern_meta_count;
     int pattern_meta_capacity;
+
+    // Song-specific trigger pads (S1-S16)
+    TriggerPadConfig song_trigger_pads[MAX_SONG_TRIGGER_PADS];
 } RegrooveMetadata;
 
 // Create new metadata structure

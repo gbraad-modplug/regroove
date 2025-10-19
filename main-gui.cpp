@@ -46,14 +46,15 @@ static float loop_blink = 0.0f;
 enum UIMode {
     UI_MODE_VOLUME = 0,
     UI_MODE_PADS = 1,
-    UI_MODE_PERF = 2,
-    UI_MODE_INFO = 3,
-    UI_MODE_SETTINGS = 4
+    UI_MODE_SONG = 2,
+    UI_MODE_PERF = 3,
+    UI_MODE_INFO = 4,
+    UI_MODE_SETTINGS = 5
 };
 static UIMode ui_mode = UI_MODE_VOLUME;
 
-// Visual feedback for trigger pads (fade effect)
-static float trigger_pad_fade[MAX_TRIGGER_PADS] = {0.0f};
+// Visual feedback for trigger pads (fade effect) - supports both A and S pads
+static float trigger_pad_fade[MAX_TOTAL_TRIGGER_PADS] = {0.0f};
 
 // Shared state
 static RegrooveCommonState *common_state = NULL;
@@ -1419,6 +1420,15 @@ static void ShowMainUI() {
         ui_mode = UI_MODE_PADS;
     }
     ImGui::PopStyleColor();
+    ImGui::SameLine();
+
+    // SONG button with active state highlighting
+    ImVec4 songCol = (ui_mode == UI_MODE_SONG) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, songCol);
+    if (ImGui::Button("SONG", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_SONG;
+    }
+    ImGui::PopStyleColor();
 
     ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -1587,7 +1597,7 @@ static void ShowMainUI() {
         }
     }
     else if (ui_mode == UI_MODE_PADS) {
-        // PADS MODE: Show trigger pad grid
+        // PADS MODE: Show application trigger pads (A1-A16)
 
         // Fade trigger pads
         for (int i = 0; i < MAX_TRIGGER_PADS; i++)
@@ -1636,7 +1646,7 @@ static void ShowMainUI() {
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.42f, 0.65f, 0.42f, 1.0f));
 
                 char label[16];
-                snprintf(label, sizeof(label), "P%d", idx + 1);
+                snprintf(label, sizeof(label), "A%d", idx + 1);
                 if (ImGui::Button(label, ImVec2(padSize, padSize))) {
                     if (learn_mode_active) {
                         start_learn_for_pad(idx);
@@ -1644,6 +1654,81 @@ static void ShowMainUI() {
                         trigger_pad_fade[idx] = 1.0f;
                         // Execute the configured action for this pad
                         TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[idx];
+                        if (pad->action != ACTION_NONE) {
+                            InputEvent event;
+                            event.action = pad->action;
+                            event.parameter = pad->parameter;
+                            event.value = 127; // Full value for trigger pads
+                            handle_input_event(&event);
+                        }
+                    }
+                }
+
+                ImGui::PopStyleColor(3);
+            }
+        }
+    }
+    else if (ui_mode == UI_MODE_SONG) {
+        // SONG MODE: Show song-specific trigger pads (S1-S16)
+
+        // Fade trigger pads
+        for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
+            int global_idx = MAX_TRIGGER_PADS + i;
+            trigger_pad_fade[global_idx] = fmaxf(trigger_pad_fade[global_idx] - 0.02f, 0.0f);
+        }
+
+        // Calculate pad layout (4x4 grid)
+        const int PADS_PER_ROW = 4;
+        const int NUM_ROWS = MAX_SONG_TRIGGER_PADS / PADS_PER_ROW;
+        float padSpacing = 12.0f;
+        float availWidth = rightW - 2 * padSpacing;
+        float availHeight = contentHeight - 16.0f;
+
+        // Calculate pad size (square buttons)
+        float padW = (availWidth - padSpacing * (PADS_PER_ROW - 1)) / PADS_PER_ROW;
+        float padH = (availHeight - padSpacing * (NUM_ROWS - 1)) / NUM_ROWS;
+        float padSize = fminf(padW, padH);
+        if (padSize > 140.0f) padSize = 140.0f; // Max pad size
+        if (padSize < 60.0f) padSize = 60.0f;   // Min pad size
+
+        // Center the grid
+        float gridW = PADS_PER_ROW * padSize + (PADS_PER_ROW - 1) * padSpacing;
+        float gridH = NUM_ROWS * padSize + (NUM_ROWS - 1) * padSpacing;
+        float startX = origin.x + (rightW - gridW) * 0.5f;
+        float startY = origin.y + (contentHeight - gridH) * 0.5f;
+
+        // Draw song trigger pads
+        for (int row = 0; row < NUM_ROWS; row++) {
+            for (int col = 0; col < PADS_PER_ROW; col++) {
+                int idx = row * PADS_PER_ROW + col;
+                int global_idx = MAX_TRIGGER_PADS + idx;  // Offset for S pads
+                float posX = startX + col * (padSize + padSpacing);
+                float posY = startY + row * (padSize + padSpacing);
+
+                ImGui::SetCursorPos(ImVec2(posX, posY));
+
+                // Different color for song pads (bluish tint)
+                float brightness = trigger_pad_fade[global_idx];
+                ImVec4 padCol = ImVec4(
+                    0.18f + brightness * 0.30f,
+                    0.27f + brightness * 0.40f,
+                    0.28f + brightness * 0.50f,  // More blue
+                    1.0f
+                );
+
+                ImGui::PushStyleColor(ImGuiCol_Button, padCol);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.38f, 0.52f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.38f, 0.52f, 0.72f, 1.0f));
+
+                char label[16];
+                snprintf(label, sizeof(label), "S%d", idx + 1);
+                if (ImGui::Button(label, ImVec2(padSize, padSize))) {
+                    if (learn_mode_active) {
+                        start_learn_for_pad(global_idx);
+                    } else if (common_state && common_state->metadata) {
+                        trigger_pad_fade[global_idx] = 1.0f;
+                        // Execute the configured action for this song pad
+                        TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[idx];
                         if (pad->action != ACTION_NONE) {
                             InputEvent event;
                             event.action = pad->action;
@@ -1958,6 +2043,103 @@ static void ShowMainUI() {
 
             ImGui::Dummy(ImVec2(0, 12.0f));
             ImGui::TextWrapped("Events are automatically saved to the .rgx file when modified.");
+
+            // Song Trigger Pads Configuration
+            ImGui::Dummy(ImVec2(0, 20.0f));
+            ImGui::Text("Song Trigger Pads Configuration (S1-S16)");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            ImGui::TextWrapped("Configure song-specific trigger pads that are saved with this module. Use LEARN mode on the SONG panel to assign MIDI notes.");
+            ImGui::Dummy(ImVec2(0, 12.0f));
+
+            // Song pads configuration table
+            ImGui::BeginChild("##song_pads_table", ImVec2(rightW - 64.0f, 400.0f), true);
+
+            ImGui::Columns(4, "song_pad_columns");
+            ImGui::SetColumnWidth(0, 60.0f);   // Pad
+            ImGui::SetColumnWidth(1, 200.0f);  // Action
+            ImGui::SetColumnWidth(2, 120.0f);  // Parameter
+            ImGui::SetColumnWidth(3, 120.0f);  // MIDI Note
+
+            ImGui::Text("Pad"); ImGui::NextColumn();
+            ImGui::Text("Action"); ImGui::NextColumn();
+            ImGui::Text("Parameter"); ImGui::NextColumn();
+            ImGui::Text("MIDI Note"); ImGui::NextColumn();
+            ImGui::Separator();
+
+            bool song_pads_changed = false;
+            for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
+                TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[i];
+                ImGui::PushID(i);
+
+                // Pad number
+                ImGui::Text("S%d", i + 1);
+                ImGui::NextColumn();
+
+                // Action dropdown
+                ImGui::SetNextItemWidth(180.0f);
+                if (ImGui::BeginCombo("##action", input_action_name(pad->action))) {
+                    for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
+                        InputAction act = (InputAction)a;
+                        if (ImGui::Selectable(input_action_name(act), pad->action == act)) {
+                            pad->action = act;
+                            song_pads_changed = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::NextColumn();
+
+                // Parameter with +/- buttons (conditional based on action)
+                if (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_CHANNEL_SOLO ||
+                    pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_TRIGGER_PAD ||
+                    pad->action == ACTION_JUMP_TO_ORDER || pad->action == ACTION_JUMP_TO_PATTERN ||
+                    pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN) {
+
+                    if (ImGui::Button("-", ImVec2(30.0f, 0.0f))) {
+                        if (pad->parameter > 0) {
+                            pad->parameter--;
+                            song_pads_changed = true;
+                        }
+                    }
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(60.0f);
+                    if (ImGui::InputInt("##param", &pad->parameter, 0, 0)) {
+                        if (pad->parameter < 0) pad->parameter = 0;
+                        song_pads_changed = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("+", ImVec2(30.0f, 0.0f))) {
+                        pad->parameter++;
+                        song_pads_changed = true;
+                    }
+                } else {
+                    ImGui::Text("-");
+                }
+                ImGui::NextColumn();
+
+                // MIDI Note display (read-only, set via LEARN mode)
+                if (pad->midi_note >= 0) {
+                    ImGui::Text("Note %d", pad->midi_note);
+                } else {
+                    ImGui::TextDisabled("Not mapped");
+                }
+                ImGui::NextColumn();
+
+                ImGui::PopID();
+            }
+
+            // Auto-save if any changes were made
+            if (song_pads_changed) {
+                regroove_common_save_rgx(common_state);
+            }
+
+            ImGui::Columns(1);
+            ImGui::EndChild();
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+            ImGui::TextWrapped("To assign MIDI notes to song pads, use LEARN mode: click the LEARN button, then click a pad on the SONG panel, then press a MIDI note on your controller.");
         }
 
         ImGui::EndChild(); // End perf_scroll child window
@@ -2436,99 +2618,91 @@ static void ShowMainUI() {
 
         ImGui::Dummy(ImVec2(0, 20.0f));
 
-        // Trigger Pad Configuration
-        ImGui::Text("Trigger Pad Configuration");
+        // Trigger Pad Configuration (Application Pads A1-A16)
+        ImGui::Text("Trigger Pad Configuration (A1-A16)");
         ImGui::Dummy(ImVec2(0, 12.0f));
 
-        // Display trigger pads in a scrollable region
-        ImGui::BeginChild("##pad_config_scroll", ImVec2(rightW - 32.0f, 200.0f), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+        ImGui::TextWrapped("Configure application-wide trigger pads. Use LEARN mode on the PADS panel to assign MIDI notes.");
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
+        // Application pads configuration table
+        ImGui::BeginChild("##app_pads_table", ImVec2(rightW - 64.0f, 400.0f), true);
 
         if (common_state && common_state->input_mappings) {
+            ImGui::Columns(4, "app_pad_columns");
+            ImGui::SetColumnWidth(0, 60.0f);   // Pad
+            ImGui::SetColumnWidth(1, 200.0f);  // Action
+            ImGui::SetColumnWidth(2, 150.0f);  // Parameter
+            ImGui::SetColumnWidth(3, 120.0f);  // MIDI Note
+
+            ImGui::Text("Pad"); ImGui::NextColumn();
+            ImGui::Text("Action"); ImGui::NextColumn();
+            ImGui::Text("Parameter"); ImGui::NextColumn();
+            ImGui::Text("MIDI Note"); ImGui::NextColumn();
+            ImGui::Separator();
+
             for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
-                ImGui::PushID(i);
                 TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[i];
+                ImGui::PushID(i);
 
                 // Pad number
-                ImGui::Text("Pad %d:", i + 1);
-                ImGui::SameLine(80.0f);
+                ImGui::Text("A%d", i + 1);
+                ImGui::NextColumn();
 
                 // Action dropdown
-                const char* current_action = input_action_name(pad->action);
-                if (ImGui::BeginCombo("##action", current_action, ImGuiComboFlags_WidthFitPreview)) {
-                    // List all available actions
+                ImGui::SetNextItemWidth(180.0f);
+                if (ImGui::BeginCombo("##action", input_action_name(pad->action))) {
                     for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
                         InputAction act = (InputAction)a;
-                        const char* action_name = input_action_name(act);
-                        bool is_selected = (pad->action == act);
-
-                        if (ImGui::Selectable(action_name, is_selected)) {
+                        if (ImGui::Selectable(input_action_name(act), pad->action == act)) {
                             pad->action = act;
-                            // Reset parameter to 0 when changing action
                             pad->parameter = 0;
-                        }
-
-                        if (is_selected) {
-                            ImGui::SetItemDefaultFocus();
                         }
                     }
                     ImGui::EndCombo();
                 }
+                ImGui::NextColumn();
 
-                // Show parameter input for actions that need it
-                if (pad->action == ACTION_CHANNEL_MUTE ||
-                    pad->action == ACTION_CHANNEL_SOLO ||
-                    pad->action == ACTION_CHANNEL_VOLUME) {
-                    ImGui::SameLine();
-                    ImGui::Text("Ch:");
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(60.0f);
-                    ImGui::InputInt("##param", &pad->parameter);
-                    // Clamp to valid channel range
-                    if (pad->parameter < 0) pad->parameter = 0;
-                    if (pad->parameter >= MAX_CHANNELS) pad->parameter = MAX_CHANNELS - 1;
-                } else if (pad->action == ACTION_JUMP_TO_ORDER) {
-                    ImGui::SameLine();
-                    ImGui::Text("Order:");
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(60.0f);
-                    ImGui::InputInt("##param", &pad->parameter);
-                    // Clamp to valid order range (will be validated at runtime)
-                    if (pad->parameter < 0) pad->parameter = 0;
-                } else if (pad->action == ACTION_JUMP_TO_PATTERN || pad->action == ACTION_QUEUE_PATTERN) {
-                    ImGui::SameLine();
-                    ImGui::Text("Pattern:");
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(60.0f);
-                    ImGui::InputInt("##param", &pad->parameter);
-                    // Clamp to valid pattern range (will be validated at runtime)
-                    if (pad->parameter < 0) pad->parameter = 0;
-                } else if (pad->action == ACTION_QUEUE_ORDER) {
-                    ImGui::SameLine();
-                    ImGui::Text("Order:");
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(60.0f);
-                    ImGui::InputInt("##param", &pad->parameter);
-                    // Clamp to valid order range (will be validated at runtime)
-                    if (pad->parameter < 0) pad->parameter = 0;
-                }
+                // Parameter with +/- buttons (conditional based on action)
+                if (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_CHANNEL_SOLO ||
+                    pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_TRIGGER_PAD ||
+                    pad->action == ACTION_JUMP_TO_ORDER || pad->action == ACTION_JUMP_TO_PATTERN ||
+                    pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN) {
 
-                // Show MIDI note mapping info
-                ImGui::SameLine();
-                if (pad->midi_note >= 0) {
-                    ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Note:%d Dev:%d",
-                                       pad->midi_note, pad->midi_device);
+                    if (ImGui::Button("-", ImVec2(30.0f, 0.0f))) {
+                        if (pad->parameter > 0) pad->parameter--;
+                    }
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(60.0f);
+                    ImGui::InputInt("##param", &pad->parameter, 0, 0);
+                    if (pad->parameter < 0) pad->parameter = 0;
+                    ImGui::SameLine();
+                    if (ImGui::Button("+", ImVec2(30.0f, 0.0f))) {
+                        pad->parameter++;
+                    }
                 } else {
-                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No MIDI mapping");
+                    ImGui::Text("-");
                 }
+                ImGui::NextColumn();
+
+                // MIDI Note display (read-only, set via LEARN mode)
+                if (pad->midi_note >= 0) {
+                    ImGui::Text("Note %d", pad->midi_note);
+                } else {
+                    ImGui::TextDisabled("Not mapped");
+                }
+                ImGui::NextColumn();
 
                 ImGui::PopID();
             }
+
+            ImGui::Columns(1);
         }
 
         ImGui::EndChild();
 
         ImGui::Dummy(ImVec2(0, 12.0f));
-        ImGui::TextWrapped("Use LEARN mode in PADS view to assign MIDI notes and keyboard shortcuts to trigger pads.");
+        ImGui::TextWrapped("To assign MIDI notes to application pads, use LEARN mode: click the LEARN button, then click a pad on the PADS panel, then press a MIDI note on your controller.");
 
         ImGui::Dummy(ImVec2(0, 20.0f));
         ImGui::Separator();

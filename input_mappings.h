@@ -61,7 +61,10 @@ typedef struct {
 } KeyboardMapping;
 
 // Trigger pad configuration
-#define MAX_TRIGGER_PADS 16
+#define MAX_TRIGGER_PADS 16           // Application pads (A1-A16)
+#define MAX_SONG_TRIGGER_PADS 16      // Song-specific pads (S1-S16)
+#define MAX_TOTAL_TRIGGER_PADS (MAX_TRIGGER_PADS + MAX_SONG_TRIGGER_PADS)
+
 typedef struct {
     InputAction action;      // Action to trigger
     int parameter;           // Action parameter (channel index, etc.)
@@ -69,7 +72,7 @@ typedef struct {
     int midi_device;         // Which MIDI device (-1 = any)
 } TriggerPadConfig;
 
-// Input mappings configuration
+// Input mappings configuration (application-wide from regroove.ini)
 typedef struct {
     MidiMapping *midi_mappings;
     int midi_count;
@@ -77,7 +80,7 @@ typedef struct {
     KeyboardMapping *keyboard_mappings;
     int keyboard_count;
     int keyboard_capacity;
-    TriggerPadConfig trigger_pads[MAX_TRIGGER_PADS];
+    TriggerPadConfig trigger_pads[MAX_TRIGGER_PADS];  // A1-A16 only
 } InputMappings;
 
 // Initialize input mappings system
