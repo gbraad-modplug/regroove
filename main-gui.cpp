@@ -319,6 +319,14 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
     switch (act) {
         case ACT_PLAY:
             if (mod) {
+                // In performance mode, always start from the beginning
+                if (common_state && common_state->performance) {
+                    int event_count = regroove_performance_get_event_count(common_state->performance);
+                    if (event_count > 0) {
+                        // Reset song position to order 0 when starting performance playback
+                        regroove_jump_to_order(mod, 0);
+                    }
+                }
                 if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 0);
                 playing = true;
                 // Notify performance system that playback started
