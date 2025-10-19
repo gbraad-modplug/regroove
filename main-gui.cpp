@@ -272,45 +272,46 @@ enum GuiAction {
     ACT_QUEUE_PATTERN
 };
 
-void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
-    // Convert GuiAction to InputAction and call handle_input_event for recording
-    // This ensures UI actions are recorded just like MIDI/keyboard actions
-    InputAction input_action = ACTION_NONE;
-    int parameter = arg1;
-    int value = (int)(arg2 * 127.0f); // Convert 0-1 range to MIDI 0-127
-
-    switch (act) {
-        case ACT_PLAY: input_action = ACTION_PLAY; break;
-        case ACT_STOP: input_action = ACTION_STOP; break;
-        case ACT_TOGGLE_LOOP: input_action = ACTION_PATTERN_MODE_TOGGLE; break;
-        case ACT_NEXT_ORDER: input_action = ACTION_NEXT_ORDER; break;
-        case ACT_PREV_ORDER: input_action = ACTION_PREV_ORDER; break;
-        case ACT_RETRIGGER: input_action = ACTION_RETRIGGER; break;
-        case ACT_LOOP_TILL_ROW: input_action = ACTION_LOOP_TILL_ROW; break;
-        case ACT_HALVE_LOOP: input_action = ACTION_HALVE_LOOP; break;
-        case ACT_FULL_LOOP: input_action = ACTION_FULL_LOOP; break;
-        case ACT_MUTE_CHANNEL: input_action = ACTION_CHANNEL_MUTE; break;
-        case ACT_SOLO_CHANNEL: input_action = ACTION_CHANNEL_SOLO; break;
-        case ACT_VOLUME_CHANNEL: input_action = ACTION_CHANNEL_VOLUME; break;
-        case ACT_MUTE_ALL: input_action = ACTION_MUTE_ALL; break;
-        case ACT_UNMUTE_ALL: input_action = ACTION_UNMUTE_ALL; break;
-        case ACT_PITCH_UP: input_action = ACTION_PITCH_UP; break;
-        case ACT_PITCH_DOWN: input_action = ACTION_PITCH_DOWN; break;
-        case ACT_PITCH_RESET: input_action = ACTION_PITCH_RESET; break;
-        case ACT_JUMP_TO_ORDER: input_action = ACTION_JUMP_TO_ORDER; break;
-        case ACT_JUMP_TO_PATTERN: input_action = ACTION_JUMP_TO_PATTERN; break;
-        case ACT_QUEUE_ORDER: input_action = ACTION_QUEUE_ORDER; break;
-        case ACT_QUEUE_PATTERN: input_action = ACTION_QUEUE_PATTERN; break;
-        default: break; // Actions that don't have InputAction equivalents
-    }
-
-    // Record the action if recording is active and it has an InputAction equivalent
-    if (input_action != ACTION_NONE && common_state && common_state->performance) {
+void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool should_record = true) {
+    // Record the action if requested (UI buttons pass true, handle_input_event passes false to avoid double-recording)
+    if (should_record && common_state && common_state->performance) {
         if (regroove_performance_is_recording(common_state->performance)) {
-            regroove_performance_record_event(common_state->performance,
-                                              input_action,
-                                              parameter,
-                                              value);
+            // Convert GuiAction to InputAction for recording
+            InputAction input_action = ACTION_NONE;
+            int parameter = arg1;
+            int value = (int)(arg2 * 127.0f);
+
+            switch (act) {
+                case ACT_PLAY: input_action = ACTION_PLAY; break;
+                case ACT_STOP: input_action = ACTION_STOP; break;
+                case ACT_TOGGLE_LOOP: input_action = ACTION_PATTERN_MODE_TOGGLE; break;
+                case ACT_NEXT_ORDER: input_action = ACTION_NEXT_ORDER; break;
+                case ACT_PREV_ORDER: input_action = ACTION_PREV_ORDER; break;
+                case ACT_RETRIGGER: input_action = ACTION_RETRIGGER; break;
+                case ACT_LOOP_TILL_ROW: input_action = ACTION_LOOP_TILL_ROW; break;
+                case ACT_HALVE_LOOP: input_action = ACTION_HALVE_LOOP; break;
+                case ACT_FULL_LOOP: input_action = ACTION_FULL_LOOP; break;
+                case ACT_MUTE_CHANNEL: input_action = ACTION_CHANNEL_MUTE; break;
+                case ACT_SOLO_CHANNEL: input_action = ACTION_CHANNEL_SOLO; break;
+                case ACT_VOLUME_CHANNEL: input_action = ACTION_CHANNEL_VOLUME; break;
+                case ACT_MUTE_ALL: input_action = ACTION_MUTE_ALL; break;
+                case ACT_UNMUTE_ALL: input_action = ACTION_UNMUTE_ALL; break;
+                case ACT_PITCH_UP: input_action = ACTION_PITCH_UP; break;
+                case ACT_PITCH_DOWN: input_action = ACTION_PITCH_DOWN; break;
+                case ACT_PITCH_RESET: input_action = ACTION_PITCH_RESET; break;
+                case ACT_JUMP_TO_ORDER: input_action = ACTION_JUMP_TO_ORDER; break;
+                case ACT_JUMP_TO_PATTERN: input_action = ACTION_JUMP_TO_PATTERN; break;
+                case ACT_QUEUE_ORDER: input_action = ACTION_QUEUE_ORDER; break;
+                case ACT_QUEUE_PATTERN: input_action = ACTION_QUEUE_PATTERN; break;
+                default: break;
+            }
+
+            if (input_action != ACTION_NONE) {
+                regroove_performance_record_event(common_state->performance,
+                                                  input_action,
+                                                  parameter,
+                                                  value);
+            }
         }
     }
 
@@ -376,7 +377,7 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
         }
         case ACT_PITCH_RESET:
             pitch_slider = 0.0f;
-            dispatch_action(ACT_SET_PITCH, -1, 0.0f);
+            dispatch_action(ACT_SET_PITCH, -1, 0.0f, false);  // Don't record SET_PITCH, only PITCH_RESET
             break;
         case ACT_PITCH_UP:
             if (mod) {
@@ -538,56 +539,56 @@ static void handle_input_event(InputEvent *event, bool from_playback) {
 
     switch (event->action) {
         case ACTION_PLAY_PAUSE:
-            dispatch_action(playing ? ACT_STOP : ACT_PLAY);
+            dispatch_action(playing ? ACT_STOP : ACT_PLAY, -1, 0.0f, false);
             break;
         case ACTION_PLAY:
-            dispatch_action(ACT_PLAY);
+            dispatch_action(ACT_PLAY, -1, 0.0f, false);
             break;
         case ACTION_STOP:
-            dispatch_action(ACT_STOP);
+            dispatch_action(ACT_STOP, -1, 0.0f, false);
             break;
         case ACTION_RETRIGGER:
-            dispatch_action(ACT_RETRIGGER);
+            dispatch_action(ACT_RETRIGGER, -1, 0.0f, false);
             break;
         case ACTION_NEXT_ORDER:
-            dispatch_action(ACT_NEXT_ORDER);
+            dispatch_action(ACT_NEXT_ORDER, -1, 0.0f, false);
             break;
         case ACTION_PREV_ORDER:
-            dispatch_action(ACT_PREV_ORDER);
+            dispatch_action(ACT_PREV_ORDER, -1, 0.0f, false);
             break;
         case ACTION_LOOP_TILL_ROW:
-            dispatch_action(ACT_LOOP_TILL_ROW);
+            dispatch_action(ACT_LOOP_TILL_ROW, -1, 0.0f, false);
             break;
         case ACTION_HALVE_LOOP:
-            dispatch_action(ACT_HALVE_LOOP);
+            dispatch_action(ACT_HALVE_LOOP, -1, 0.0f, false);
             break;
         case ACTION_FULL_LOOP:
-            dispatch_action(ACT_FULL_LOOP);
+            dispatch_action(ACT_FULL_LOOP, -1, 0.0f, false);
             break;
         case ACTION_PATTERN_MODE_TOGGLE:
-            dispatch_action(ACT_TOGGLE_LOOP);
+            dispatch_action(ACT_TOGGLE_LOOP, -1, 0.0f, false);
             break;
         case ACTION_MUTE_ALL:
-            dispatch_action(ACT_MUTE_ALL);
+            dispatch_action(ACT_MUTE_ALL, -1, 0.0f, false);
             break;
         case ACTION_UNMUTE_ALL:
-            dispatch_action(ACT_UNMUTE_ALL);
+            dispatch_action(ACT_UNMUTE_ALL, -1, 0.0f, false);
             break;
         case ACTION_PITCH_UP:
-            dispatch_action(ACT_PITCH_UP);
+            dispatch_action(ACT_PITCH_UP, -1, 0.0f, false);
             break;
         case ACTION_PITCH_DOWN:
-            dispatch_action(ACT_PITCH_DOWN);
+            dispatch_action(ACT_PITCH_DOWN, -1, 0.0f, false);
             break;
         case ACTION_PITCH_SET:
             // Map MIDI value (0-127) to pitch slider range (-1.0 to 1.0)
             {
                 float pitch_value = (event->value / 127.0f) * 2.0f - 1.0f; // Maps 0-127 to -1.0 to 1.0
-                dispatch_action(ACT_SET_PITCH, -1, pitch_value);
+                dispatch_action(ACT_SET_PITCH, -1, pitch_value, false);
             }
             break;
         case ACTION_PITCH_RESET:
-            dispatch_action(ACT_PITCH_RESET);
+            dispatch_action(ACT_PITCH_RESET, -1, 0.0f, false);
             break;
         case ACTION_QUIT:
             {
@@ -614,13 +615,13 @@ static void handle_input_event(InputEvent *event, bool from_playback) {
             }
             break;
         case ACTION_CHANNEL_MUTE:
-            dispatch_action(ACT_MUTE_CHANNEL, event->parameter);
+            dispatch_action(ACT_MUTE_CHANNEL, event->parameter, 0.0f, false);
             break;
         case ACTION_CHANNEL_SOLO:
-            dispatch_action(ACT_SOLO_CHANNEL, event->parameter);
+            dispatch_action(ACT_SOLO_CHANNEL, event->parameter, 0.0f, false);
             break;
         case ACTION_CHANNEL_VOLUME:
-            dispatch_action(ACT_VOLUME_CHANNEL, event->parameter, event->value / 127.0f);
+            dispatch_action(ACT_VOLUME_CHANNEL, event->parameter, event->value / 127.0f, false);
             break;
         case ACTION_TRIGGER_PAD:
             if (common_state && common_state->input_mappings &&
@@ -639,16 +640,16 @@ static void handle_input_event(InputEvent *event, bool from_playback) {
             }
             break;
         case ACTION_JUMP_TO_ORDER:
-            dispatch_action(ACT_JUMP_TO_ORDER, event->parameter);
+            dispatch_action(ACT_JUMP_TO_ORDER, event->parameter, 0.0f, false);
             break;
         case ACTION_JUMP_TO_PATTERN:
-            dispatch_action(ACT_JUMP_TO_PATTERN, event->parameter);
+            dispatch_action(ACT_JUMP_TO_PATTERN, event->parameter, 0.0f, false);
             break;
         case ACTION_QUEUE_ORDER:
-            dispatch_action(ACT_QUEUE_ORDER, event->parameter);
+            dispatch_action(ACT_QUEUE_ORDER, event->parameter, 0.0f, false);
             break;
         case ACTION_QUEUE_PATTERN:
-            dispatch_action(ACT_QUEUE_PATTERN, event->parameter);
+            dispatch_action(ACT_QUEUE_PATTERN, event->parameter, 0.0f, false);
             break;
         default:
             break;
