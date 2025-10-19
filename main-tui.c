@@ -277,6 +277,25 @@ void handle_input_event(InputEvent *event) {
                 }
             }
             break;
+        case ACTION_QUEUE_ORDER:
+            if (common_state->player && event->parameter >= 0) {
+                int num_orders = regroove_get_num_orders(common_state->player);
+                if (event->parameter < num_orders) {
+                    regroove_queue_order(common_state->player, event->parameter);
+                    int pat = regroove_get_order_pattern(common_state->player, event->parameter);
+                    printf("Queued jump to Order %d (Pattern %d) at pattern end\n", event->parameter, pat);
+                }
+            }
+            break;
+        case ACTION_QUEUE_PATTERN:
+            if (common_state->player && event->parameter >= 0) {
+                int num_patterns = regroove_get_num_patterns(common_state->player);
+                if (event->parameter < num_patterns) {
+                    regroove_queue_pattern(common_state->player, event->parameter);
+                    printf("Queued jump to Pattern %d at pattern end\n", event->parameter);
+                }
+            }
+            break;
         default:
             break;
     }

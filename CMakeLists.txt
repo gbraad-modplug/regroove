@@ -18,6 +18,7 @@ add_executable(regroove-tui
     main-tui.c
     regroove_engine.c
     regroove_common.c
+    regroove_metadata.c
     midi.c
     input_mappings.c
 )
@@ -45,6 +46,7 @@ add_executable(regroove-gui
     main-gui.cpp
     regroove_engine.c
     regroove_common.c
+    regroove_metadata.c
     midi.c
     input_mappings.c
     imgui/imgui.cpp

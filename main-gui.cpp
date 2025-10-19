@@ -214,7 +214,9 @@ enum GuiAction {
     ACT_MUTE_ALL,
     ACT_UNMUTE_ALL,
     ACT_JUMP_TO_ORDER,
-    ACT_JUMP_TO_PATTERN
+    ACT_JUMP_TO_PATTERN,
+    ACT_QUEUE_ORDER,
+    ACT_QUEUE_PATTERN
 };
 
 void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
@@ -389,6 +391,16 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f) {
                 regroove_jump_to_pattern(mod, arg1);
             }
             break;
+        case ACT_QUEUE_ORDER:
+            if (mod && arg1 >= 0) {
+                regroove_queue_order(mod, arg1);
+            }
+            break;
+        case ACT_QUEUE_PATTERN:
+            if (mod && arg1 >= 0) {
+                regroove_queue_pattern(mod, arg1);
+            }
+            break;
     }
 }
 
@@ -506,6 +518,12 @@ static void handle_input_event(InputEvent *event) {
         case ACTION_JUMP_TO_PATTERN:
             dispatch_action(ACT_JUMP_TO_PATTERN, event->parameter);
             break;
+        case ACTION_QUEUE_ORDER:
+            dispatch_action(ACT_QUEUE_ORDER, event->parameter);
+            break;
+        case ACTION_QUEUE_PATTERN:
+            dispatch_action(ACT_QUEUE_PATTERN, event->parameter);
+            break;
         default:
             break;
     }
@@ -520,6 +538,23 @@ static void save_mappings_to_config() {
         printf("Saved mappings to %s\n", current_config_file);
     } else {
         fprintf(stderr, "Failed to save mappings to %s\n", current_config_file);
+    }
+}
+
+// Save current .rgx metadata
+static void save_rgx_metadata() {
+    if (!common_state || !common_state->metadata) return;
+    if (common_state->current_module_path[0] == '\0') return;
+
+    // Get .rgx path from module path
+    char rgx_path[COMMON_MAX_PATH];
+    regroove_metadata_get_rgx_path(common_state->current_module_path, rgx_path, sizeof(rgx_path));
+
+    // Save metadata
+    if (regroove_metadata_save(common_state->metadata, rgx_path) == 0) {
+        printf("Saved metadata to %s\n", rgx_path);
+    } else {
+        fprintf(stderr, "Failed to save metadata to %s\n", rgx_path);
     }
 }
 
@@ -1205,14 +1240,6 @@ static void ShowMainUI() {
     ImGui::PopStyleColor();
     ImGui::SameLine();
 
-    // SETUP button with active state highlighting
-    ImVec4 setupCol = (ui_mode == UI_MODE_SETTINGS) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, setupCol);
-    if (ImGui::Button("SETUP", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        ui_mode = UI_MODE_SETTINGS;
-    }
-    ImGui::PopStyleColor();
-
     ImGui::Dummy(ImVec2(0, 8.0f));
 
     // INFO button with active state highlighting
@@ -1247,6 +1274,16 @@ static void ShowMainUI() {
         }
     }
     ImGui::PopStyleColor();
+    ImGui::SameLine();
+
+    // SETUP button with active state highlighting
+    ImVec4 setupCol = (ui_mode == UI_MODE_SETTINGS) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, setupCol);
+    if (ImGui::Button("SETUP", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_SETTINGS;
+    }
+    ImGui::PopStyleColor();
+
     ImGui::EndGroup();
 
     ImGui::EndChild();
@@ -1597,6 +1634,52 @@ static void ShowMainUI() {
 
             ImGui::Columns(1);
             ImGui::EndChild();
+
+            // Pattern Descriptions Section
+            ImGui::Dummy(ImVec2(0, 20.0f));
+            ImGui::Text("Pattern Descriptions");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Display pattern descriptions with editable text fields
+            int num_patterns = regroove_get_num_patterns(mod);
+
+            ImGui::BeginChild("##pattern_desc_list", ImVec2(rightW - 64.0f, 300.0f), true);
+
+            for (int p = 0; p < num_patterns; p++) {
+                ImGui::PushID(p);
+
+                ImGui::Text("Pattern %d:", p);
+                ImGui::SameLine(100.0f);
+
+                // Get current description from metadata
+                const char* current_desc = regroove_metadata_get_pattern_desc(common_state->metadata, p);
+                static char pattern_desc_buffers[RGX_MAX_PATTERNS][RGX_MAX_PATTERN_DESC];
+
+                // Initialize buffer with current description
+                if (current_desc && current_desc[0] != '\0') {
+                    strncpy(pattern_desc_buffers[p], current_desc, RGX_MAX_PATTERN_DESC - 1);
+                    pattern_desc_buffers[p][RGX_MAX_PATTERN_DESC - 1] = '\0';
+                } else if (pattern_desc_buffers[p][0] == '\0') {
+                    // Initialize empty buffer
+                    pattern_desc_buffers[p][0] = '\0';
+                }
+
+                ImGui::SetNextItemWidth(400.0f);
+                if (ImGui::InputText("##desc", pattern_desc_buffers[p], RGX_MAX_PATTERN_DESC)) {
+                    // Description was edited - save to metadata
+                    regroove_metadata_set_pattern_desc(common_state->metadata, p, pattern_desc_buffers[p]);
+                    // Auto-save .rgx file
+                    save_rgx_metadata();
+                }
+
+                ImGui::PopID();
+            }
+
+            ImGui::EndChild();
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+            ImGui::TextWrapped("Pattern descriptions are automatically saved to a .rgx file alongside your module file.");
         }
 
         ImGui::EndChild(); // End info_scroll child window
@@ -1856,13 +1939,21 @@ static void ShowMainUI() {
                     ImGui::InputInt("##param", &pad->parameter);
                     // Clamp to valid order range (will be validated at runtime)
                     if (pad->parameter < 0) pad->parameter = 0;
-                } else if (pad->action == ACTION_JUMP_TO_PATTERN) {
+                } else if (pad->action == ACTION_JUMP_TO_PATTERN || pad->action == ACTION_QUEUE_PATTERN) {
                     ImGui::SameLine();
                     ImGui::Text("Pattern:");
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(60.0f);
                     ImGui::InputInt("##param", &pad->parameter);
                     // Clamp to valid pattern range (will be validated at runtime)
+                    if (pad->parameter < 0) pad->parameter = 0;
+                } else if (pad->action == ACTION_QUEUE_ORDER) {
+                    ImGui::SameLine();
+                    ImGui::Text("Order:");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(60.0f);
+                    ImGui::InputInt("##param", &pad->parameter);
+                    // Clamp to valid order range (will be validated at runtime)
                     if (pad->parameter < 0) pad->parameter = 0;
                 }
 
@@ -1933,7 +2024,8 @@ static void ShowMainUI() {
                 // Display parameter
                 if (km->action == ACTION_CHANNEL_MUTE || km->action == ACTION_CHANNEL_SOLO ||
                     km->action == ACTION_CHANNEL_VOLUME || km->action == ACTION_TRIGGER_PAD ||
-                    km->action == ACTION_JUMP_TO_ORDER || km->action == ACTION_JUMP_TO_PATTERN) {
+                    km->action == ACTION_JUMP_TO_ORDER || km->action == ACTION_JUMP_TO_PATTERN ||
+                    km->action == ACTION_QUEUE_ORDER || km->action == ACTION_QUEUE_PATTERN) {
                     ImGui::Text("%d", km->parameter);
                 } else {
                     ImGui::Text("-");
@@ -2096,7 +2188,8 @@ static void ShowMainUI() {
                 // Display parameter
                 if (mm->action == ACTION_CHANNEL_MUTE || mm->action == ACTION_CHANNEL_SOLO ||
                     mm->action == ACTION_CHANNEL_VOLUME || mm->action == ACTION_TRIGGER_PAD ||
-                    mm->action == ACTION_JUMP_TO_ORDER || mm->action == ACTION_JUMP_TO_PATTERN) {
+                    mm->action == ACTION_JUMP_TO_ORDER || mm->action == ACTION_JUMP_TO_PATTERN ||
+                    mm->action == ACTION_QUEUE_ORDER || mm->action == ACTION_QUEUE_PATTERN) {
                     ImGui::Text("%d", mm->parameter);
                 } else {
                     ImGui::Text("-");

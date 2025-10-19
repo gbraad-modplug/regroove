@@ -22,7 +22,7 @@ static int is_module_file(const char *filename) {
         strcmp(ext, ".med") == 0  || strcmp(ext, ".mmd") == 0  ||
         strcmp(ext, ".mmd0") == 0 || strcmp(ext, ".mmd1") == 0 ||
         strcmp(ext, ".mmd2") == 0 || strcmp(ext, ".mmd3") == 0 ||
-        strcmp(ext, ".mmdc") == 0
+        strcmp(ext, ".mmdc") == 0 || strcmp(ext, ".rgx") == 0
     );
 }
 
@@ -138,6 +138,10 @@ RegrooveCommonState* regroove_common_create(void) {
     state->device_config.midi_device_1 = -1;  // Not configured
     state->device_config.audio_device = -1;   // Default device
 
+    // Initialize metadata
+    state->metadata = regroove_metadata_create();
+    state->current_module_path[0] = '\0';
+
     return state;
 }
 
@@ -210,10 +214,66 @@ int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_pa
     return 0;
 }
 
+// Helper: Check if path is .rgx file
+static int is_rgx_file(const char *path) {
+    const char *dot = strrchr(path, '.');
+    if (!dot) return 0;
+
+    char ext[16];
+    snprintf(ext, sizeof(ext), "%s", dot);
+    for (char *p = ext; *p; ++p) *p = tolower(*p);
+
+    return strcmp(ext, ".rgx") == 0;
+}
+
+// Helper: Get module path from .rgx file
+static int get_module_path_from_rgx(const char *rgx_path, char *module_path, size_t module_path_size) {
+    if (!rgx_path || !module_path) return -1;
+
+    // Load the .rgx file to get the referenced module filename
+    RegrooveMetadata *temp_meta = regroove_metadata_create();
+    if (!temp_meta) return -1;
+
+    if (regroove_metadata_load(temp_meta, rgx_path) != 0) {
+        regroove_metadata_destroy(temp_meta);
+        return -1;
+    }
+
+    // Get the directory from rgx_path
+    char dir[COMMON_MAX_PATH];
+    snprintf(dir, sizeof(dir), "%s", rgx_path);
+    char *last_slash = strrchr(dir, '/');
+    if (!last_slash) last_slash = strrchr(dir, '\\');
+    if (last_slash) {
+        *last_slash = '\0';
+    } else {
+        strcpy(dir, ".");
+    }
+
+    // Build full path to module file
+    snprintf(module_path, module_path_size, "%s/%s", dir, temp_meta->module_file);
+
+    regroove_metadata_destroy(temp_meta);
+    return 0;
+}
+
 // Load a module file safely (handles audio locking)
 int regroove_common_load_module(RegrooveCommonState *state, const char *path,
                                 struct RegrooveCallbacks *callbacks) {
     if (!state || !path) return -1;
+
+    // If this is an .rgx file, load the referenced module instead
+    char actual_module_path[COMMON_MAX_PATH];
+    const char *module_to_load = path;
+
+    if (is_rgx_file(path)) {
+        if (get_module_path_from_rgx(path, actual_module_path, sizeof(actual_module_path)) != 0) {
+            fprintf(stderr, "Failed to get module path from .rgx file: %s\n", path);
+            return -1;
+        }
+        module_to_load = actual_module_path;
+        printf("Loading module '%s' from .rgx file '%s'\n", module_to_load, path);
+    }
 
     // Lock audio before destroying old module
     if (state->audio_device_id) {
@@ -232,8 +292,8 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
         }
     }
 
-    // Create new module
-    Regroove *mod = regroove_create(path, 48000.0);
+    // Create new module (use the resolved module path)
+    Regroove *mod = regroove_create(module_to_load, 48000.0);
     if (!mod) {
         return -1;
     }
@@ -250,6 +310,40 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
     // Update state
     state->num_channels = regroove_get_num_channels(mod);
     state->paused = 1;
+
+    // Store current module path for .rgx saving (use the actual module path, not .rgx)
+    snprintf(state->current_module_path, COMMON_MAX_PATH, "%s", module_to_load);
+
+    // Load .rgx metadata
+    if (state->metadata) {
+        // Clear old metadata
+        regroove_metadata_destroy(state->metadata);
+        state->metadata = regroove_metadata_create();
+
+        // Determine which .rgx file to use
+        char rgx_path[COMMON_MAX_PATH];
+        if (is_rgx_file(path)) {
+            // User loaded an .rgx file directly - use it
+            snprintf(rgx_path, sizeof(rgx_path), "%s", path);
+        } else {
+            // User loaded a module file - look for corresponding .rgx
+            regroove_metadata_get_rgx_path(module_to_load, rgx_path, sizeof(rgx_path));
+        }
+
+        if (regroove_metadata_load(state->metadata, rgx_path) == 0) {
+            // Successfully loaded .rgx metadata
+            printf("Loaded metadata from %s\n", rgx_path);
+        } else {
+            // No .rgx file exists yet - will be created when user adds descriptions
+            // Store the module filename in metadata for when we save
+            const char *filename = strrchr(module_to_load, '/');
+            if (!filename) filename = strrchr(module_to_load, '\\');
+            if (!filename) filename = module_to_load;
+            else filename++; // Skip the separator
+
+            snprintf(state->metadata->module_file, RGX_MAX_FILEPATH, "%s", filename);
+        }
+    }
 
     // Set callbacks if provided
     if (callbacks) {
@@ -289,6 +383,11 @@ void regroove_common_destroy(RegrooveCommonState *state) {
     // Destroy file list
     if (state->file_list) {
         regroove_filelist_destroy(state->file_list);
+    }
+
+    // Destroy metadata
+    if (state->metadata) {
+        regroove_metadata_destroy(state->metadata);
     }
 
     free(state);

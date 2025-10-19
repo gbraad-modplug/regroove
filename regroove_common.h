@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include "regroove_engine.h"
 #include "input_mappings.h"
+#include "regroove_metadata.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,11 +50,13 @@ typedef struct {
     Regroove *player;
     InputMappings *input_mappings;
     RegrooveFileList *file_list;
+    RegrooveMetadata *metadata;
     RegrooveDeviceConfig device_config;
     int paused;
     int num_channels;
     double pitch;
     unsigned int audio_device_id;  // SDL_AudioDeviceID for device-specific audio control
+    char current_module_path[COMMON_MAX_PATH];  // Track current module for .rgx saving
 } RegrooveCommonState;
 
 // Initialize common state
