@@ -11,6 +11,7 @@
 typedef enum {
     RG_CMD_NONE,
     RG_CMD_QUEUE_ORDER,
+    RG_CMD_QUEUE_PATTERN,
     RG_CMD_JUMP_TO_PATTERN,
     RG_CMD_LOOP_TILL_ROW,
     RG_CMD_SET_PATTERN_MODE,
@@ -179,21 +180,44 @@ static void process_commands(struct Regroove* g) {
                     g->has_queued_jump = 1;
                 }
                 break;
-            case RG_CMD_JUMP_TO_PATTERN: {
+            case RG_CMD_QUEUE_PATTERN: {
+                // Find first order containing this pattern
                 int pattern_index = cmd->arg1;
                 int target_order = -1;
-
-                // Find first order that contains this pattern
                 for (int i = 0; i < g->num_orders; ++i) {
                     if (openmpt_module_get_order_pattern(g->mod, i) == pattern_index) {
                         target_order = i;
                         break;
                     }
                 }
+                if (target_order == -1) target_order = 0; // fallback
 
-                // If pattern not found in order list, use order 0 as fallback
+                // Queue this order (will jump at pattern end)
+                if (g->pattern_mode) {
+                    g->pending_pattern_mode_order = target_order;
+                } else {
+                    g->queued_order = target_order;
+                    g->queued_row = 0;
+                    g->has_queued_jump = 1;
+                }
+                break;
+            }
+            case RG_CMD_JUMP_TO_PATTERN: {
+                int pattern_index = cmd->arg1;
+                int target_order = cmd->arg2; // arg2 now carries explicit order, or -1 to search
+
+                // If order not specified, find first order that contains this pattern
                 if (target_order == -1) {
-                    target_order = 0;
+                    for (int i = 0; i < g->num_orders; ++i) {
+                        if (openmpt_module_get_order_pattern(g->mod, i) == pattern_index) {
+                            target_order = i;
+                            break;
+                        }
+                    }
+                    // If pattern not found in order list, use order 0 as fallback
+                    if (target_order == -1) {
+                        target_order = 0;
+                    }
                 }
 
                 // Update loop state for pattern mode
@@ -203,7 +227,7 @@ static void process_commands(struct Regroove* g) {
                 g->custom_loop_rows = 0;
                 g->prev_row = -1;
 
-                // Jump to the position
+                // Jump to the position immediately
                 openmpt_module_set_position_order_row(g->mod, target_order, 0);
                 if (g->interactive_ok) reapply_mutes(g);
                 break;
@@ -468,9 +492,24 @@ void regroove_queue_prev_order(Regroove* g) {
     int prev_order = cur_order > 0 ? cur_order - 1 : 0;
     enqueue_command(g, RG_CMD_QUEUE_ORDER, prev_order, 0);
 }
-void regroove_jump_to_order(Regroove* g, int order) {
+void regroove_queue_order(Regroove* g, int order) {
     if (order >= 0 && order < g->num_orders) {
         enqueue_command(g, RG_CMD_QUEUE_ORDER, order, 0);
+    }
+}
+void regroove_queue_pattern(Regroove* g, int pattern) {
+    if (!g || !g->mod) return;
+    int num_patterns = openmpt_module_get_num_patterns(g->mod);
+    if (pattern >= 0 && pattern < num_patterns) {
+        enqueue_command(g, RG_CMD_QUEUE_PATTERN, pattern, 0);
+    }
+}
+void regroove_jump_to_order(Regroove* g, int order) {
+    if (order >= 0 && order < g->num_orders) {
+        // Immediate jump - use JUMP_TO_PATTERN command which jumps immediately
+        int target_order = order;
+        int target_pattern = openmpt_module_get_order_pattern(g->mod, target_order);
+        enqueue_command(g, RG_CMD_JUMP_TO_PATTERN, target_pattern, target_order);
     }
 }
 void regroove_jump_to_pattern(Regroove* g, int pattern) {
@@ -478,7 +517,7 @@ void regroove_jump_to_pattern(Regroove* g, int pattern) {
     // Get total number of patterns to validate input
     int num_patterns = openmpt_module_get_num_patterns(g->mod);
     if (pattern >= 0 && pattern < num_patterns) {
-        enqueue_command(g, RG_CMD_JUMP_TO_PATTERN, pattern, 0);
+        enqueue_command(g, RG_CMD_JUMP_TO_PATTERN, pattern, -1); // -1 = auto-find order
     }
 }
 void regroove_loop_till_row(Regroove* g, int row) {

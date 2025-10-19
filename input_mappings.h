@@ -29,8 +29,10 @@ typedef enum {
     ACTION_CHANNEL_SOLO,     // parameter = channel index
     ACTION_CHANNEL_VOLUME,   // parameter = channel index, uses MIDI value for volume
     ACTION_TRIGGER_PAD,      // parameter = pad index (0-15)
-    ACTION_JUMP_TO_ORDER,    // parameter = order index (hot cue)
-    ACTION_JUMP_TO_PATTERN,  // parameter = pattern index
+    ACTION_JUMP_TO_ORDER,    // parameter = order index (immediate jump)
+    ACTION_JUMP_TO_PATTERN,  // parameter = pattern index (immediate jump)
+    ACTION_QUEUE_ORDER,      // parameter = order index (queued jump at pattern end)
+    ACTION_QUEUE_PATTERN,    // parameter = pattern index (queued jump at pattern end)
     ACTION_MAX
 } InputAction;
 

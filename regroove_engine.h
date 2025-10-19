@@ -36,6 +36,8 @@ void regroove_process_commands(Regroove *g);
 void regroove_pattern_mode(Regroove *g, int on);
 void regroove_queue_next_order(Regroove *g);
 void regroove_queue_prev_order(Regroove *g);
+void regroove_queue_order(Regroove *g, int order);
+void regroove_queue_pattern(Regroove *g, int pattern);
 void regroove_jump_to_order(Regroove *g, int order);
 void regroove_jump_to_pattern(Regroove *g, int pattern);
 void regroove_loop_till_row(Regroove *g, int row);

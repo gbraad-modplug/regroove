@@ -35,6 +35,8 @@ static InputAction parse_action(const char *str) {
     if (strcmp(str, "trigger_pad") == 0) return ACTION_TRIGGER_PAD;
     if (strcmp(str, "jump_to_order") == 0) return ACTION_JUMP_TO_ORDER;
     if (strcmp(str, "jump_to_pattern") == 0) return ACTION_JUMP_TO_PATTERN;
+    if (strcmp(str, "queue_order") == 0) return ACTION_QUEUE_ORDER;
+    if (strcmp(str, "queue_pattern") == 0) return ACTION_QUEUE_PATTERN;
     return ACTION_NONE;
 }
 
@@ -67,6 +69,8 @@ const char* input_action_name(InputAction action) {
         case ACTION_TRIGGER_PAD: return "trigger_pad";
         case ACTION_JUMP_TO_ORDER: return "jump_to_order";
         case ACTION_JUMP_TO_PATTERN: return "jump_to_pattern";
+        case ACTION_QUEUE_ORDER: return "queue_order";
+        case ACTION_QUEUE_PATTERN: return "queue_pattern";
         default: return "none";
     }
 }
