@@ -280,6 +280,13 @@ static int load_module(const char *path, struct RegrooveCallbacks *cbs) {
     }
 
     print_song_order(common_state->player);
+
+    // Debug: Check performance events after load
+    if (common_state && common_state->performance) {
+        int event_count = regroove_performance_get_event_count(common_state->performance);
+        printf("DEBUG: After load, performance event_count = %d\n", event_count);
+    }
+
     printf("\nPlayback paused (press SPACE or MIDI Play to start)\n");
     return 0;
 }

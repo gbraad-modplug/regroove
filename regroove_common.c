@@ -132,6 +132,14 @@ RegrooveCommonState* regroove_common_create(void) {
 
     state->paused = 1;
     state->pitch = 1.0;
+    state->executing_phrase_action = 0;
+
+    // Initialize phrase playback state
+    for (int i = 0; i < MAX_ACTIVE_PHRASES; i++) {
+        state->active_phrases[i].phrase_index = -1;
+        state->active_phrases[i].current_step = 0;
+        state->active_phrases[i].delay_counter = 0;
+    }
 
     // Initialize device config to defaults
     state->device_config.midi_device_0 = -1;      // Not configured
@@ -422,6 +430,26 @@ void regroove_common_destroy(RegrooveCommonState *state) {
 // Common control functions (using centralized state)
 void regroove_common_play_pause(RegrooveCommonState *state, int play) {
     if (!state || !state->player) return;
+
+    if (play && state->paused) {
+        // Starting playback - check for performance mode
+        // BUT: Don't enable performance playback if this is from a phrase
+        if (state->performance && !state->executing_phrase_action) {
+            int event_count = regroove_performance_get_event_count(state->performance);
+            if (event_count > 0) {
+                // Reset song position to order 0 when starting performance playback
+                regroove_jump_to_order(state->player, 0);
+                // Enable performance playback only if there are events
+                regroove_performance_set_playback(state->performance, 1);
+            }
+        }
+    } else if (!play && !state->paused) {
+        // Stopping playback - reset performance
+        if (state->performance) {
+            regroove_performance_set_playback(state->performance, 0);
+            regroove_performance_reset(state->performance);
+        }
+    }
 
     state->paused = !play;
     if (state->audio_device_id) {
@@ -779,4 +807,83 @@ int regroove_common_save_rgx(RegrooveCommonState *state) {
 
     printf("Saved .rgx file: %s\n", rgx_path);
     return 0;
+}
+
+// Phrase playback functions
+void regroove_common_set_phrase_callback(RegrooveCommonState *state, PhraseActionCallback callback, void *userdata) {
+    if (!state) return;
+    state->phrase_action_callback = callback;
+    state->phrase_callback_userdata = userdata;
+}
+
+void regroove_common_trigger_phrase(RegrooveCommonState *state, int phrase_index) {
+    if (!state || !state->metadata) return;
+    if (phrase_index < 0 || phrase_index >= state->metadata->phrase_count) return;
+
+    const Phrase *phrase = &state->metadata->phrases[phrase_index];
+    if (phrase->step_count == 0) return;
+
+    // Cancel all currently active phrases to avoid conflicts
+    for (int i = 0; i < MAX_ACTIVE_PHRASES; i++) {
+        if (state->active_phrases[i].phrase_index != -1) {
+            state->active_phrases[i].phrase_index = -1;
+        }
+    }
+
+    // Use slot 0 for the new phrase
+    state->active_phrases[0].phrase_index = phrase_index;
+    state->active_phrases[0].current_step = 0;
+    state->active_phrases[0].delay_counter = phrase->steps[0].delay_rows;
+
+    // Auto-start playback if not already playing
+    if (state->paused && state->player) {
+        if (state->audio_device_id) {
+            SDL_PauseAudioDevice(state->audio_device_id, 0);
+        }
+        state->paused = 0;
+    }
+}
+
+void regroove_common_update_phrases(RegrooveCommonState *state) {
+    if (!state || !state->metadata || !state->player) return;
+    if (state->paused) return;  // Only update when playing
+
+    for (int i = 0; i < MAX_ACTIVE_PHRASES; i++) {
+        ActivePhrase *ap = &state->active_phrases[i];
+        if (ap->phrase_index == -1) continue;
+
+        const Phrase *phrase = &state->metadata->phrases[ap->phrase_index];
+        if (ap->current_step >= phrase->step_count) {
+            ap->phrase_index = -1;
+            continue;
+        }
+
+        const PhraseStep *step = &phrase->steps[ap->current_step];
+
+        // Decrement delay counter
+        if (ap->delay_counter > 0) {
+            ap->delay_counter--;
+            continue;
+        }
+
+        // Execute current step via callback
+        if (state->phrase_action_callback) {
+            state->executing_phrase_action = 1;
+            state->phrase_action_callback(step->action, step->parameter, step->value,
+                                          state->phrase_callback_userdata);
+            state->executing_phrase_action = 0;
+        }
+
+        // Move to next step
+        ap->current_step++;
+        if (ap->current_step < phrase->step_count) {
+            ap->delay_counter = phrase->steps[ap->current_step].delay_rows;
+        } else {
+            // Phrase complete - reset playback position to order 0
+            if (state->player) {
+                regroove_jump_to_order(state->player, 0);
+            }
+            ap->phrase_index = -1;
+        }
+    }
 }

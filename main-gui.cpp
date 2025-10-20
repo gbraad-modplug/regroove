@@ -118,16 +118,8 @@ void add_to_midi_monitor(int device_id, const char* type, int number, int value,
     }
 }
 
-// Phrase playback state
-#define MAX_ACTIVE_PHRASES 16
-struct ActivePhrase {
-    int phrase_index;           // Which phrase is playing (-1 = inactive)
-    int current_step;           // Current step index
-    int delay_counter;          // Rows remaining before executing current step
-};
-static ActivePhrase active_phrases[MAX_ACTIVE_PHRASES];
-static int active_phrase_count = 0;
-static bool executing_phrase_action = false;  // Track when executing phrase steps
+// Phrase playback state is now in RegrooveCommonState (active_phrases, executing_phrase_action)
+// No local state needed - all managed by regroove_common
 
 void refresh_audio_devices() {
     audio_device_names.clear();
@@ -416,7 +408,7 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
             if (mod) {
                 // In performance mode, always start from the beginning
                 // BUT: Don't enable performance playback if this is from a phrase
-                if (common_state && common_state->performance && !executing_phrase_action) {
+                if (common_state && common_state->performance && !common_state->executing_phrase_action) {
                     int event_count = regroove_performance_get_event_count(common_state->performance);
                     if (event_count > 0) {
                         // Reset song position to order 0 when starting performance playback
@@ -613,104 +605,32 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
 // Phrase Playback System
 // -----------------------------------------------------------------------------
 static void trigger_phrase(int phrase_index) {
-    if (!common_state || !common_state->metadata) return;
-    if (phrase_index < 0 || phrase_index >= common_state->metadata->phrase_count) return;
+    // Use common library function
+    regroove_common_trigger_phrase(common_state, phrase_index);
 
-    const Phrase *phrase = &common_state->metadata->phrases[phrase_index];
-    if (phrase->step_count == 0) return;
-
-    // Cancel all currently active phrases to avoid conflicts
-    // Only one phrase should run at a time for predictable behavior
-    for (int i = 0; i < MAX_ACTIVE_PHRASES; i++) {
-        if (active_phrases[i].phrase_index != -1) {
-            printf("Cancelling Phrase %d (was on step %d)\n",
-                   active_phrases[i].phrase_index + 1,
-                   active_phrases[i].current_step + 1);
-            active_phrases[i].phrase_index = -1;
-        }
-    }
-
-    // Use slot 0 for the new phrase
-    int slot = 0;
-
-    // Initialize the active phrase
-    active_phrases[slot].phrase_index = phrase_index;
-    active_phrases[slot].current_step = 0;
-    active_phrases[slot].delay_counter = phrase->steps[0].delay_rows;
-
-    // Auto-start playback if not already playing
-    // Phrases need playback to be active for their timing to work
-    // Note: This does NOT reset song position or enable performance playback,
-    // it only unpauses audio so the row callback can advance the phrase timing
-    if (!playing && common_state->player) {
-        if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 0);
+    // Sync GUI playing state with common_state->paused
+    if (!common_state->paused) {
         playing = true;
-        printf("Auto-started playback for Phrase %d (audio unpaused)\n", phrase_index + 1);
     }
-
-    printf("Triggered Phrase %d (%d steps)\n", phrase_index + 1, phrase->step_count);
 }
 
 static void update_phrases() {
-    if (!common_state || !common_state->metadata) return;
-    if (!common_state->player) return;
-
-    // Only update phrases when module is playing
-    // This ensures delay_counter decrements sync with pattern rows
-    if (!playing) return;
-
-    for (int i = 0; i < MAX_ACTIVE_PHRASES; i++) {
-        ActivePhrase *ap = &active_phrases[i];
-        if (ap->phrase_index == -1) continue;
-
-        const Phrase *phrase = &common_state->metadata->phrases[ap->phrase_index];
-        if (ap->current_step >= phrase->step_count) {
-            // Phrase complete
-            ap->phrase_index = -1;
-            continue;
-        }
-
-        const PhraseStep *step = &phrase->steps[ap->current_step];
-
-        // Decrement delay counter
-        if (ap->delay_counter > 0) {
-            ap->delay_counter--;
-            printf("Phrase %d step %d: waiting (%d rows left)\n", ap->phrase_index + 1, ap->current_step + 1, ap->delay_counter);
-            continue;
-        }
-
-        // Execute current step
-        printf("Phrase %d step %d: EXECUTING %s (delay was %d)\n", ap->phrase_index + 1, ap->current_step + 1, input_action_name(step->action), step->delay_rows);
-
-        InputEvent evt;
-        evt.action = step->action;
-        evt.parameter = step->parameter;
-        evt.value = step->value;
-        // Treat phrase steps as playback (from_playback=true) so they don't get recorded
-        // Set flag so execute_action knows this is from a phrase, not performance playback
-        executing_phrase_action = true;
-        handle_input_event(&evt, true);
-        executing_phrase_action = false;
-
-        // Move to next step
-        ap->current_step++;
-        if (ap->current_step < phrase->step_count) {
-            ap->delay_counter = phrase->steps[ap->current_step].delay_rows;
-            printf("Phrase %d: moved to step %d, delay=%d\n", ap->phrase_index + 1, ap->current_step + 1, ap->delay_counter);
-        } else {
-            // Phrase complete - reset playback position to order 0
-            printf("Phrase %d: COMPLETE - resetting to order 0\n", ap->phrase_index + 1);
-            if (common_state->player) {
-                regroove_jump_to_order(common_state->player, 0);
-            }
-            ap->phrase_index = -1;
-        }
-    }
+    // Use common library function
+    regroove_common_update_phrases(common_state);
 }
 
 // -----------------------------------------------------------------------------
 // Performance Action Executor (Callback for performance engine)
 // -----------------------------------------------------------------------------
+
+// Forward declaration
+static void execute_action(InputAction action, int parameter, float value, void* userdata);
+
+// Wrapper for phrase callback (converts int value to float)
+static void phrase_action_callback(InputAction action, int parameter, int value, void* userdata) {
+    execute_action(action, parameter, (float)value, userdata);
+}
+
 // This function is called by the performance engine to execute actions
 // It maps InputAction -> GuiAction -> dispatch_action(should_record=false)
 static void execute_action(InputAction action, int parameter, float value, void* userdata) {
@@ -4236,17 +4156,15 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Initialize phrase playback state
-    for (int i = 0; i < MAX_ACTIVE_PHRASES; i++) {
-        active_phrases[i].phrase_index = -1;
-        active_phrases[i].current_step = 0;
-        active_phrases[i].delay_counter = 0;
-    }
+    // Phrase playback state is already initialized in regroove_common_create()
 
     // Set up performance action callback (routes actions through the performance engine)
     if (common_state->performance) {
         regroove_performance_set_action_callback(common_state->performance, execute_action, NULL);
     }
+
+    // Set up phrase action callback (routes phrase actions through execute_action)
+    regroove_common_set_phrase_callback(common_state, phrase_action_callback, NULL);
 
     // Track the config file for saving learned mappings
     current_config_file = config_file;
