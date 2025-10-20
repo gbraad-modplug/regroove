@@ -631,6 +631,41 @@ static void phrase_action_callback(InputAction action, int parameter, int value,
     execute_action(action, parameter, (float)value, userdata);
 }
 
+// Phrase reset callback - resets GUI state before phrase starts
+static void phrase_reset_callback(void* userdata) {
+    (void)userdata;
+
+    // Reset GUI channel visual state to clean slate
+    for (int i = 0; i < MAX_CHANNELS; ++i) {
+        channels[i].mute = false;
+        channels[i].solo = false;
+        channels[i].volume = 1.0f;
+    }
+}
+
+// Phrase completion callback - handles cleanup when phrase finishes
+static void phrase_completion_callback(int phrase_index, void* userdata) {
+    (void)phrase_index;
+    (void)userdata;
+
+    Regroove* mod = common_state ? common_state->player : NULL;
+    if (!mod) return;
+
+    // Stop playback
+    playing = false;
+    if (common_state->audio_device_id) {
+        SDL_PauseAudioDevice(common_state->audio_device_id, 1);
+    }
+    common_state->paused = 1;
+
+    // Reset to order 0
+    regroove_jump_to_order(mod, 0);
+
+    // Reset all channels - both engine and GUI state
+    regroove_unmute_all(mod);
+    phrase_reset_callback(NULL);  // Reuse the reset logic
+}
+
 // This function is called by the performance engine to execute actions
 // It maps InputAction -> GuiAction -> dispatch_action(should_record=false)
 static void execute_action(InputAction action, int parameter, float value, void* userdata) {
@@ -4163,8 +4198,12 @@ int main(int argc, char* argv[]) {
         regroove_performance_set_action_callback(common_state->performance, execute_action, NULL);
     }
 
-    // Set up phrase action callback (routes phrase actions through execute_action)
-    regroove_common_set_phrase_callback(common_state, phrase_action_callback, NULL);
+    // Set up phrase callbacks (pre-trigger reset, action execution, and completion cleanup)
+    if (common_state->phrase) {
+        regroove_phrase_set_reset_callback(common_state->phrase, phrase_reset_callback, NULL);
+        regroove_phrase_set_action_callback(common_state->phrase, phrase_action_callback, NULL);
+        regroove_phrase_set_completion_callback(common_state->phrase, phrase_completion_callback, NULL);
+    }
 
     // Track the config file for saving learned mappings
     current_config_file = config_file;

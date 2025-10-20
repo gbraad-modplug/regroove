@@ -10,6 +10,8 @@ struct RegroovePhrase {
     void* action_userdata;                      // User data for action callback
     PhraseCompletionCallback completion_callback; // Callback when phrase completes
     void* completion_userdata;                  // User data for completion callback
+    PhraseResetCallback reset_callback;         // Callback before phrase starts (for UI reset)
+    void* reset_userdata;                       // User data for reset callback
     int executing_action;                       // Flag to prevent recursion
 };
 
@@ -59,6 +61,15 @@ void regroove_phrase_set_completion_callback(RegroovePhrase* phrase,
     phrase->completion_userdata = userdata;
 }
 
+// Set the callback that will be called before a phrase starts (for UI reset)
+void regroove_phrase_set_reset_callback(RegroovePhrase* phrase,
+                                          PhraseResetCallback callback,
+                                          void* userdata) {
+    if (!phrase) return;
+    phrase->reset_callback = callback;
+    phrase->reset_userdata = userdata;
+}
+
 // Trigger a phrase to start playing
 int regroove_phrase_trigger(RegroovePhrase* phrase, int phrase_index) {
     if (!phrase || !phrase->metadata) return -1;
@@ -66,6 +77,11 @@ int regroove_phrase_trigger(RegroovePhrase* phrase, int phrase_index) {
 
     const Phrase* p = &phrase->metadata->phrases[phrase_index];
     if (p->step_count == 0) return -1;
+
+    // Call reset callback to allow UI to reset visual state
+    if (phrase->reset_callback) {
+        phrase->reset_callback(phrase->reset_userdata);
+    }
 
     // Cancel all currently active phrases to avoid conflicts
     for (int i = 0; i < PHRASE_MAX_ACTIVE; i++) {

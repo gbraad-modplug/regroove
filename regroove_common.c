@@ -847,20 +847,33 @@ void regroove_common_set_phrase_callback(RegrooveCommonState *state, PhraseActio
 }
 
 void regroove_common_trigger_phrase(RegrooveCommonState *state, int phrase_index) {
-    if (!state || !state->phrase) return;
+    if (!state || !state->phrase || !state->player) return;
+
+    printf("Triggering phrase %d - resetting state\n", phrase_index + 1);
+
+    // Reset to clean state before starting phrase
+    // 1. Stop playback
+    if (state->audio_device_id) {
+        SDL_PauseAudioDevice(state->audio_device_id, 1);
+    }
+    state->paused = 1;
+
+    // 2. Reset to order 0
+    regroove_jump_to_order(state->player, 0);
+
+    // 3. Unmute all channels (engine state)
+    regroove_unmute_all(state->player);
 
     // Trigger the phrase via the engine
     if (regroove_phrase_trigger(state->phrase, phrase_index) != 0) {
         return;  // Failed to trigger
     }
 
-    // Auto-start playback if not already playing
-    if (state->paused && state->player) {
-        if (state->audio_device_id) {
-            SDL_PauseAudioDevice(state->audio_device_id, 0);
-        }
-        state->paused = 0;
+    // Start playback for the phrase
+    if (state->audio_device_id) {
+        SDL_PauseAudioDevice(state->audio_device_id, 0);
     }
+    state->paused = 0;
 }
 
 void regroove_common_update_phrases(RegrooveCommonState *state) {

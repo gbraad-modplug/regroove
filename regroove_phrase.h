@@ -29,6 +29,10 @@ typedef void (*PhraseActionCallback)(InputAction action, int parameter, int valu
 // Called when a phrase finishes playback (all steps executed)
 typedef void (*PhraseCompletionCallback)(int phrase_index, void* userdata);
 
+// Callback function type for pre-trigger reset
+// Called before a phrase starts, to reset UI state
+typedef void (*PhraseResetCallback)(void* userdata);
+
 // Create a new phrase engine
 RegroovePhrase* regroove_phrase_create(void);
 
@@ -47,6 +51,11 @@ void regroove_phrase_set_action_callback(RegroovePhrase* phrase,
 void regroove_phrase_set_completion_callback(RegroovePhrase* phrase,
                                                PhraseCompletionCallback callback,
                                                void* userdata);
+
+// Set the callback that will be called before a phrase starts (for UI reset)
+void regroove_phrase_set_reset_callback(RegroovePhrase* phrase,
+                                          PhraseResetCallback callback,
+                                          void* userdata);
 
 // Trigger a phrase to start playing
 // - Cancels all currently active phrases to avoid conflicts
