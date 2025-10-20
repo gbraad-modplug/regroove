@@ -455,12 +455,8 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         g->on_order_change(final_order, final_pattern, g->callback_userdata);
         g->last_msg_order = final_order;
     }
-    if (g->on_row_change && g->last_msg_row != final_row) {
-        g->on_row_change(final_order, final_row, g->callback_userdata);
-        g->last_msg_row = final_row;
-    }
-
     // --- Call note callback for MIDI output (if registered) ---
+    // Do this BEFORE updating last_msg_row so it triggers on row changes
     if (g->on_note && g->last_msg_row != final_row) {
         // Process all channels for note events at the current row
         for (int ch = 0; ch < g->num_channels; ch++) {
@@ -533,6 +529,12 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
                 }
             }
         }
+    }
+
+    // --- Call row change callback (after note callback so notes are processed first) ---
+    if (g->on_row_change && g->last_msg_row != final_row) {
+        g->on_row_change(final_order, final_row, g->callback_userdata);
+        g->last_msg_row = final_row;
     }
 
     // --- Detect song loop event ---

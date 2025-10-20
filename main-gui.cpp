@@ -231,6 +231,8 @@ static void my_loop_song_callback(void *userdata) {
 
 static void my_note_callback(int channel, int note, int instrument, int volume,
                              int effect_cmd, int effect_param, void *userdata) {
+    (void)userdata;
+
     // Trigger channel highlighting for visual feedback
     if (channel >= 0 && channel < MAX_CHANNELS && note >= 0) {
         channel_note_fade[channel] = 1.0f;
@@ -1476,8 +1478,9 @@ static void ShowMainUI() {
         step_fade[i] = fmaxf(step_fade[i] - 0.02f, 0.0f);
 
     // Fade the channel note highlights
-    for (int i = 0; i < MAX_CHANNELS; i++)
+    for (int i = 0; i < MAX_CHANNELS; i++) {
         channel_note_fade[i] = fmaxf(channel_note_fade[i] - 0.05f, 0.0f);
+    }
 
     ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
@@ -1885,19 +1888,8 @@ static void ShowMainUI() {
 
             ImGui::Dummy(ImVec2(0, 6.0f));
 
-            // Add note highlight effect to slider background
-            if (channel_note_fade[i] > 0.0f) {
-                ImVec2 slider_pos = ImGui::GetCursorScreenPos();
-                ImDrawList* draw_list = ImGui::GetWindowDrawList();
-                ImU32 highlight_col = ImGui::ColorConvertFloat4ToU32(ImVec4(
-                    0.2f + channel_note_fade[i] * 0.6f,
-                    0.8f * channel_note_fade[i],
-                    0.2f + channel_note_fade[i] * 0.4f,
-                    channel_note_fade[i] * 0.5f
-                ));
-                draw_list->AddRectFilled(slider_pos, ImVec2(slider_pos.x + sliderW, slider_pos.y + sliderH),
-                                        highlight_col, 2.0f);
-            }
+            // Get slider position before drawing
+            ImVec2 slider_pos = ImGui::GetCursorScreenPos();
 
             float prev_vol = channels[i].volume;
             if (ImGui::VSliderFloat((std::string("##vol")+std::to_string(i)).c_str(),
@@ -1909,6 +1901,27 @@ static void ShowMainUI() {
                 } else if (prev_vol != channels[i].volume) {
                     dispatch_action(ACT_VOLUME_CHANNEL, i, channels[i].volume);
                 }
+            }
+
+            // Add note highlight effect AFTER slider (draw on top)
+            if (channel_note_fade[i] > 0.0f) {
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                // Very subtle cyan glow around the slider
+                ImU32 highlight_col = ImGui::ColorConvertFloat4ToU32(ImVec4(
+                    0.4f + channel_note_fade[i] * 0.15f,  // Very subtle red brightening
+                    0.5f + channel_note_fade[i] * 0.2f,   // Slight green
+                    0.6f + channel_note_fade[i] * 0.25f,  // Moderate blue (subtle cyan)
+                    0.35f * channel_note_fade[i]          // More transparent
+                ));
+                // Draw very subtle outline around slider
+                draw_list->AddRect(
+                    ImVec2(slider_pos.x - 1, slider_pos.y - 1),
+                    ImVec2(slider_pos.x + sliderW + 1, slider_pos.y + sliderH + 1),
+                    highlight_col,
+                    2.0f,
+                    0,
+                    1.5f + channel_note_fade[i] * 0.5f  // 1.5-2px thickness
+                );
             }
 
             ImGui::Dummy(ImVec2(0, 8.0f));
@@ -4033,26 +4046,39 @@ static void ShowMainUI() {
             }
             ImGui::Separator();
 
-            // Display ALL pattern rows
-            int start_row = 0;
-            int end_row = num_rows - 1;
+            // Calculate how many rows fit in the visible area
+            float window_height = ImGui::GetWindowHeight();
+            float line_height = ImGui::GetTextLineHeightWithSpacing();
+            int visible_rows = (int)(window_height / line_height);
+            int padding_rows = visible_rows / 2; // Half screen of padding on each side
+
+            // Display pattern rows with leading and trailing blank rows
+            int start_row = -padding_rows;
+            int end_row = num_rows - 1 + padding_rows;
 
             for (int row = start_row; row <= end_row; row++) {
                 ImGui::PushID(row);
 
-                // Highlight current row
+                // Check if this is a valid pattern row
+                bool is_valid_row = (row >= 0 && row < num_rows);
                 bool is_current = (row == current_row);
+
+                // Highlight current row
                 if (is_current) {
                     ImVec2 row_min = ImGui::GetCursorScreenPos();
                     ImVec2 row_max = ImVec2(row_min.x + ROW_COL_WIDTH + num_channels * channel_width, row_min.y + ImGui::GetTextLineHeight());
                     ImGui::GetWindowDrawList()->AddRectFilled(row_min, row_max, IM_COL32(60, 60, 40, 255));
                 }
 
-                // Row number
+                // Row number (blank for padding rows)
                 if (is_current) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
                 }
-                ImGui::Text("%02d", row);
+                if (is_valid_row) {
+                    ImGui::Text("%02d", row);
+                } else {
+                    ImGui::Text("  "); // Empty placeholder for padding rows
+                }
                 if (is_current) {
                     ImGui::PopStyleColor();
                 }
@@ -4060,32 +4086,37 @@ static void ShowMainUI() {
 
                 // Channel data
                 for (int ch = 0; ch < num_channels; ch++) {
-                    // Get pattern data for this cell
-                    char cell_text[128];
-                    int result = regroove_get_pattern_cell(mod, current_pattern, row, ch, cell_text, sizeof(cell_text));
+                    if (is_valid_row) {
+                        // Get pattern data for this cell
+                        char cell_text[128];
+                        int result = regroove_get_pattern_cell(mod, current_pattern, row, ch, cell_text, sizeof(cell_text));
 
-                    // Apply channel note highlighting
-                    bool has_note_highlight = (is_current && channel_note_fade[ch] > 0.0f);
-                    if (has_note_highlight) {
-                        ImVec4 highlight_color = ImVec4(
-                            0.2f + channel_note_fade[ch] * 0.6f,
-                            0.8f * channel_note_fade[ch],
-                            0.2f + channel_note_fade[ch] * 0.4f,
-                            1.0f
-                        );
-                        ImGui::PushStyleColor(ImGuiCol_Text, highlight_color);
-                    } else if (is_current) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-                    }
+                        // Apply channel note highlighting
+                        bool has_note_highlight = (is_current && channel_note_fade[ch] > 0.0f);
+                        if (has_note_highlight) {
+                            ImVec4 highlight_color = ImVec4(
+                                0.2f + channel_note_fade[ch] * 0.6f,
+                                0.8f * channel_note_fade[ch],
+                                0.2f + channel_note_fade[ch] * 0.4f,
+                                1.0f
+                            );
+                            ImGui::PushStyleColor(ImGuiCol_Text, highlight_color);
+                        } else if (is_current) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                        }
 
-                    if (result == 0 && cell_text[0] != '\0') {
-                        ImGui::Text("%s", cell_text);
+                        if (result == 0 && cell_text[0] != '\0') {
+                            ImGui::Text("%s", cell_text);
+                        } else {
+                            ImGui::Text("...");
+                        }
+
+                        if (has_note_highlight || is_current) {
+                            ImGui::PopStyleColor();
+                        }
                     } else {
-                        ImGui::Text("...");
-                    }
-
-                    if (has_note_highlight || is_current) {
-                        ImGui::PopStyleColor();
+                        // Empty cell for padding rows
+                        ImGui::Text("   ");
                     }
 
                     ImGui::NextColumn();
@@ -4096,18 +4127,12 @@ static void ShowMainUI() {
 
             ImGui::Columns(1);
 
-            // Auto-scroll to keep current row visible
+            // Auto-scroll to keep current row centered
             if (playing) {
-                float current_row_y = (current_row - start_row + 1) * ImGui::GetTextLineHeightWithSpacing();
-                float scroll_y = ImGui::GetScrollY();
-                float window_height = ImGui::GetWindowHeight();
-
-                // Scroll if current row is near top or bottom
-                if (current_row_y < scroll_y + 50.0f) {
-                    ImGui::SetScrollY(fmaxf(0.0f, current_row_y - 50.0f));
-                } else if (current_row_y > scroll_y + window_height - 50.0f) {
-                    ImGui::SetScrollY(current_row_y - window_height + 50.0f);
-                }
+                // Calculate position to center current row (accounting for padding)
+                float current_row_y = (current_row - start_row + 1) * line_height;
+                float target_scroll = current_row_y - (window_height * 0.5f);
+                ImGui::SetScrollY(fmaxf(0.0f, target_scroll));
             }
 
             ImGui::EndChild(); // End tracker_view
