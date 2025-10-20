@@ -22,6 +22,7 @@ extern "C" {
 // Forward Declarations
 // -----------------------------------------------------------------------------
 static void handle_input_event(InputEvent *event, bool from_playback = false);
+static void update_phrases(void);
 
 // -----------------------------------------------------------------------------
 // State & Helper Types
@@ -117,6 +118,17 @@ void add_to_midi_monitor(int device_id, const char* type, int number, int value,
     }
 }
 
+// Phrase playback state
+#define MAX_ACTIVE_PHRASES 16
+struct ActivePhrase {
+    int phrase_index;           // Which phrase is playing (-1 = inactive)
+    int current_step;           // Current step index
+    int delay_counter;          // Rows remaining before executing current step
+};
+static ActivePhrase active_phrases[MAX_ACTIVE_PHRASES];
+static int active_phrase_count = 0;
+static bool executing_phrase_action = false;  // Track when executing phrase steps
+
 void refresh_audio_devices() {
     audio_device_names.clear();
     int n = SDL_GetNumAudioDevices(0); // 0 = output devices
@@ -196,6 +208,9 @@ static void my_row_callback(int ord, int row, void *userdata) {
         // Now increment the performance row for the next callback
         regroove_performance_tick(common_state->performance);
     }
+
+    // Update active phrases on every row
+    update_phrases();
 
     if (total_rows <= 0) return;
     int rows_per_step = total_rows / 16;
@@ -400,7 +415,8 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
         case ACT_PLAY:
             if (mod) {
                 // In performance mode, always start from the beginning
-                if (common_state && common_state->performance) {
+                // BUT: Don't enable performance playback if this is from a phrase
+                if (common_state && common_state->performance && !executing_phrase_action) {
                     int event_count = regroove_performance_get_event_count(common_state->performance);
                     if (event_count > 0) {
                         // Reset song position to order 0 when starting performance playback
@@ -594,6 +610,105 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
 }
 
 // -----------------------------------------------------------------------------
+// Phrase Playback System
+// -----------------------------------------------------------------------------
+static void trigger_phrase(int phrase_index) {
+    if (!common_state || !common_state->metadata) return;
+    if (phrase_index < 0 || phrase_index >= common_state->metadata->phrase_count) return;
+
+    const Phrase *phrase = &common_state->metadata->phrases[phrase_index];
+    if (phrase->step_count == 0) return;
+
+    // Cancel all currently active phrases to avoid conflicts
+    // Only one phrase should run at a time for predictable behavior
+    for (int i = 0; i < MAX_ACTIVE_PHRASES; i++) {
+        if (active_phrases[i].phrase_index != -1) {
+            printf("Cancelling Phrase %d (was on step %d)\n",
+                   active_phrases[i].phrase_index + 1,
+                   active_phrases[i].current_step + 1);
+            active_phrases[i].phrase_index = -1;
+        }
+    }
+
+    // Use slot 0 for the new phrase
+    int slot = 0;
+
+    // Initialize the active phrase
+    active_phrases[slot].phrase_index = phrase_index;
+    active_phrases[slot].current_step = 0;
+    active_phrases[slot].delay_counter = phrase->steps[0].delay_rows;
+
+    // Auto-start playback if not already playing
+    // Phrases need playback to be active for their timing to work
+    // Note: This does NOT reset song position or enable performance playback,
+    // it only unpauses audio so the row callback can advance the phrase timing
+    if (!playing && common_state->player) {
+        if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 0);
+        playing = true;
+        printf("Auto-started playback for Phrase %d (audio unpaused)\n", phrase_index + 1);
+    }
+
+    printf("Triggered Phrase %d (%d steps)\n", phrase_index + 1, phrase->step_count);
+}
+
+static void update_phrases() {
+    if (!common_state || !common_state->metadata) return;
+    if (!common_state->player) return;
+
+    // Only update phrases when module is playing
+    // This ensures delay_counter decrements sync with pattern rows
+    if (!playing) return;
+
+    for (int i = 0; i < MAX_ACTIVE_PHRASES; i++) {
+        ActivePhrase *ap = &active_phrases[i];
+        if (ap->phrase_index == -1) continue;
+
+        const Phrase *phrase = &common_state->metadata->phrases[ap->phrase_index];
+        if (ap->current_step >= phrase->step_count) {
+            // Phrase complete
+            ap->phrase_index = -1;
+            continue;
+        }
+
+        const PhraseStep *step = &phrase->steps[ap->current_step];
+
+        // Decrement delay counter
+        if (ap->delay_counter > 0) {
+            ap->delay_counter--;
+            printf("Phrase %d step %d: waiting (%d rows left)\n", ap->phrase_index + 1, ap->current_step + 1, ap->delay_counter);
+            continue;
+        }
+
+        // Execute current step
+        printf("Phrase %d step %d: EXECUTING %s (delay was %d)\n", ap->phrase_index + 1, ap->current_step + 1, input_action_name(step->action), step->delay_rows);
+
+        InputEvent evt;
+        evt.action = step->action;
+        evt.parameter = step->parameter;
+        evt.value = step->value;
+        // Treat phrase steps as playback (from_playback=true) so they don't get recorded
+        // Set flag so execute_action knows this is from a phrase, not performance playback
+        executing_phrase_action = true;
+        handle_input_event(&evt, true);
+        executing_phrase_action = false;
+
+        // Move to next step
+        ap->current_step++;
+        if (ap->current_step < phrase->step_count) {
+            ap->delay_counter = phrase->steps[ap->current_step].delay_rows;
+            printf("Phrase %d: moved to step %d, delay=%d\n", ap->phrase_index + 1, ap->current_step + 1, ap->delay_counter);
+        } else {
+            // Phrase complete - reset playback position to order 0
+            printf("Phrase %d: COMPLETE - resetting to order 0\n", ap->phrase_index + 1);
+            if (common_state->player) {
+                regroove_jump_to_order(common_state->player, 0);
+            }
+            ap->phrase_index = -1;
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Performance Action Executor (Callback for performance engine)
 // -----------------------------------------------------------------------------
 // This function is called by the performance engine to execute actions
@@ -734,6 +849,12 @@ static void execute_action(InputAction action, int parameter, float value, void*
         case ACTION_SET_LOOP_STEP:
             dispatch_action(ACT_SET_LOOP_ROWS, parameter, 0.0f, false);
             break;
+        case ACTION_TRIGGER_PHRASE:
+            // Phrases should not be triggered from performance playback
+            // They are user-initiated triggers only, to prevent infinite loops
+            // during playback (phrase triggers itself from recording)
+            printf("Ignoring trigger_phrase during performance playback (param=%d)\n", parameter);
+            break;
         default:
             break;
     }
@@ -745,7 +866,18 @@ static void execute_action(InputAction action, int parameter, float value, void*
 static void handle_input_event(InputEvent *event, bool from_playback) {
     if (!event || event->action == ACTION_NONE) return;
 
-    // Route everything through the performance engine
+    // Handle phrase triggers directly (bypass performance engine)
+    // Phrases are user-initiated only, not part of performance recording/playback
+    if (event->action == ACTION_TRIGGER_PHRASE) {
+        if (!from_playback) {
+            // User-initiated phrase trigger - execute it
+            trigger_phrase(event->parameter);
+        }
+        // Don't route to performance engine (no recording/playback)
+        return;
+    }
+
+    // Route everything else through the performance engine
     // It will handle recording and execute via the callback we set up
     if (common_state && common_state->performance) {
         regroove_performance_handle_action(common_state->performance,
@@ -1123,6 +1255,12 @@ static void learn_midi_mapping(int device_id, int cc_or_note, bool is_note) {
 
 void handle_keyboard(SDL_Event &e, SDL_Window *window) {
     if (e.type != SDL_KEYDOWN) return;
+
+    // Don't process keyboard shortcuts if user is typing in a text field
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureKeyboard) {
+        return;
+    }
 
     // Handle special GUI-only keys first
     if (e.key.keysym.sym == SDLK_F11) {
@@ -1973,6 +2111,7 @@ static void ShowMainUI() {
                         trigger_pad_fade[global_idx] = 1.0f;
                         // Execute the configured action for this song pad
                         TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[idx];
+
                         if (pad->action != ACTION_NONE) {
                             InputEvent event;
                             event.action = pad->action;
@@ -2343,7 +2482,8 @@ static void ShowMainUI() {
                 if (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_CHANNEL_SOLO ||
                     pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_TRIGGER_PAD ||
                     pad->action == ACTION_JUMP_TO_ORDER || pad->action == ACTION_JUMP_TO_PATTERN ||
-                    pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN) {
+                    pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN ||
+                    pad->action == ACTION_TRIGGER_PHRASE) {
 
                     if (ImGui::Button("-", ImVec2(30.0f, 0.0f))) {
                         if (pad->parameter > 0) {
@@ -2431,6 +2571,230 @@ static void ShowMainUI() {
 
             ImGui::Dummy(ImVec2(0, 12.0f));
             ImGui::TextWrapped("To assign MIDI notes to song pads, use LEARN mode: click the LEARN button, then click a pad on the SONG panel, then press a MIDI note on your controller.");
+
+            // Phrase Editor Section
+            ImGui::Dummy(ImVec2(0, 20.0f));
+            ImGui::Text("Phrase Editor");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            ImGui::TextWrapped("Phrases are sequences of actions that execute in succession. Assign phrases to song pads to trigger complex sequences.");
+            ImGui::Dummy(ImVec2(0, 12.0f));
+
+            // Phrase list and editor
+            static int selected_phrase_idx = -1;
+            static char new_phrase_desc[RGX_MAX_PHRASE_NAME] = "";
+
+            // Phrase list
+            ImGui::BeginChild("##phrase_list", ImVec2(300.0f, 300.0f), true);
+            ImGui::Text("Phrases (%d/%d)", common_state->metadata->phrase_count, RGX_MAX_PHRASES);
+            ImGui::Separator();
+
+            for (int i = 0; i < common_state->metadata->phrase_count; i++) {
+                Phrase* phrase = &common_state->metadata->phrases[i];
+                ImGui::PushID(i);
+
+                // Display as "Phrase 1: description" or just "Phrase 1" if no description
+                char label[128];
+                if (phrase->name[0] != '\0') {
+                    snprintf(label, sizeof(label), "Phrase %d: %s", i + 1, phrase->name);
+                } else {
+                    snprintf(label, sizeof(label), "Phrase %d", i + 1);
+                }
+
+                bool is_selected = (selected_phrase_idx == i);
+                if (ImGui::Selectable(label, is_selected)) {
+                    selected_phrase_idx = i;
+                }
+
+                ImGui::PopID();
+            }
+
+            ImGui::EndChild();
+
+            ImGui::SameLine();
+
+            // Phrase editor (right side)
+            ImGui::BeginChild("##phrase_editor", ImVec2(rightW - 400.0f, 300.0f), true);
+
+            if (selected_phrase_idx >= 0 && selected_phrase_idx < common_state->metadata->phrase_count) {
+                Phrase* phrase = &common_state->metadata->phrases[selected_phrase_idx];
+
+                ImGui::Text("Editing: Phrase %d", selected_phrase_idx + 1);
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0, 8.0f));
+
+                // Phrase description editor
+                char desc_buffer[RGX_MAX_PHRASE_NAME];
+                strncpy(desc_buffer, phrase->name, RGX_MAX_PHRASE_NAME - 1);
+                desc_buffer[RGX_MAX_PHRASE_NAME - 1] = '\0';
+                ImGui::Text("Description:");
+                ImGui::SameLine(100.0f);
+                ImGui::SetNextItemWidth(200.0f);
+                if (ImGui::InputText("##phrase_desc", desc_buffer, RGX_MAX_PHRASE_NAME)) {
+                    strncpy(phrase->name, desc_buffer, RGX_MAX_PHRASE_NAME - 1);
+                    phrase->name[RGX_MAX_PHRASE_NAME - 1] = '\0';
+                    regroove_common_save_rgx(common_state);
+                }
+
+                ImGui::Dummy(ImVec2(0, 12.0f));
+                ImGui::Text("Steps (%d/%d)", phrase->step_count, RGX_MAX_PHRASE_STEPS);
+                ImGui::Separator();
+
+                // Steps list
+                ImGui::BeginChild("##phrase_steps", ImVec2(0, 150.0f), true);
+
+                int delete_step_idx = -1;
+                for (int i = 0; i < phrase->step_count; i++) {
+                    PhraseStep* step = &phrase->steps[i];
+                    ImGui::PushID(1000 + i);
+
+                    ImGui::Text("%d.", i + 1);
+                    ImGui::SameLine(40.0f);
+
+                    // Action dropdown
+                    ImGui::SetNextItemWidth(150.0f);
+                    if (ImGui::BeginCombo("##action", input_action_name(step->action))) {
+                        for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
+                            InputAction act = (InputAction)a;
+                            if (ImGui::Selectable(input_action_name(act), step->action == act)) {
+                                step->action = act;
+                                regroove_common_save_rgx(common_state);
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+
+                    // Parameter (conditional)
+                    if (step->action == ACTION_CHANNEL_MUTE || step->action == ACTION_CHANNEL_SOLO ||
+                        step->action == ACTION_CHANNEL_VOLUME || step->action == ACTION_TRIGGER_PAD ||
+                        step->action == ACTION_JUMP_TO_ORDER || step->action == ACTION_JUMP_TO_PATTERN ||
+                        step->action == ACTION_QUEUE_ORDER || step->action == ACTION_QUEUE_PATTERN) {
+                        ImGui::SameLine();
+                        ImGui::Text("Param:");
+                        ImGui::SameLine();
+                        ImGui::SetNextItemWidth(60.0f);
+                        if (ImGui::InputInt("##param", &step->parameter, 0, 0)) {
+                            if (step->parameter < 0) step->parameter = 0;
+                            regroove_common_save_rgx(common_state);
+                        }
+                    }
+
+                    // Value (for volume/pitch)
+                    if (step->action == ACTION_CHANNEL_VOLUME || step->action == ACTION_PITCH_SET) {
+                        ImGui::SameLine();
+                        ImGui::Text("Val:");
+                        ImGui::SameLine();
+                        ImGui::SetNextItemWidth(60.0f);
+                        if (ImGui::InputInt("##value", &step->value, 0, 0)) {
+                            if (step->value < 0) step->value = 0;
+                            if (step->value > 127) step->value = 127;
+                            regroove_common_save_rgx(common_state);
+                        }
+                    }
+
+                    // Delay
+                    ImGui::SameLine();
+                    ImGui::Text("Delay:");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(60.0f);
+                    if (ImGui::InputInt("##delay", &step->delay_rows, 0, 0)) {
+                        if (step->delay_rows < 0) step->delay_rows = 0;
+                        regroove_common_save_rgx(common_state);
+                    }
+
+                    // Delete button
+                    ImGui::SameLine();
+                    if (ImGui::Button("X", ImVec2(30.0f, 0.0f))) {
+                        delete_step_idx = i;
+                    }
+
+                    ImGui::PopID();
+                }
+
+                // Handle step deletion
+                if (delete_step_idx >= 0) {
+                    for (int i = delete_step_idx; i < phrase->step_count - 1; i++) {
+                        phrase->steps[i] = phrase->steps[i + 1];
+                    }
+                    phrase->step_count--;
+                    regroove_common_save_rgx(common_state);
+                }
+
+                ImGui::EndChild();
+
+                // Add step button
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (phrase->step_count < RGX_MAX_PHRASE_STEPS) {
+                    if (ImGui::Button("Add Step", ImVec2(120.0f, 0.0f))) {
+                        PhraseStep* new_step = &phrase->steps[phrase->step_count];
+                        new_step->action = ACTION_PLAY;
+                        new_step->parameter = 0;
+                        new_step->value = 127;
+                        new_step->delay_rows = 0;
+                        phrase->step_count++;
+                        regroove_common_save_rgx(common_state);
+                    }
+                } else {
+                    ImGui::TextDisabled("Max steps reached");
+                }
+
+                // Delete phrase button
+                ImGui::SameLine();
+                if (ImGui::Button("Delete Phrase", ImVec2(120.0f, 0.0f))) {
+                    // Remove phrase from list
+                    for (int i = selected_phrase_idx; i < common_state->metadata->phrase_count - 1; i++) {
+                        common_state->metadata->phrases[i] = common_state->metadata->phrases[i + 1];
+                    }
+                    common_state->metadata->phrase_count--;
+
+                    // Clear any song pads that referenced this phrase
+                    for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
+                        if (common_state->metadata->song_trigger_pads[i].phrase_index == selected_phrase_idx) {
+                            common_state->metadata->song_trigger_pads[i].phrase_index = -1;
+                        } else if (common_state->metadata->song_trigger_pads[i].phrase_index > selected_phrase_idx) {
+                            // Adjust indices for pads that referenced phrases after the deleted one
+                            common_state->metadata->song_trigger_pads[i].phrase_index--;
+                        }
+                    }
+
+                    selected_phrase_idx = -1;
+                    regroove_common_save_rgx(common_state);
+                }
+
+            } else {
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Select a phrase to edit");
+            }
+
+            ImGui::EndChild();
+
+            // Create new phrase
+            ImGui::Dummy(ImVec2(0, 12.0f));
+            ImGui::Text("Create New Phrase:");
+            ImGui::SetNextItemWidth(200.0f);
+            ImGui::InputText("##new_phrase_desc", new_phrase_desc, RGX_MAX_PHRASE_NAME);
+            ImGui::SameLine();
+            if (ImGui::Button("Create", ImVec2(80.0f, 0.0f))) {
+                if (common_state->metadata->phrase_count < RGX_MAX_PHRASES) {
+                    Phrase* new_phrase = &common_state->metadata->phrases[common_state->metadata->phrase_count];
+                    // Description is optional, can be empty
+                    if (new_phrase_desc[0] != '\0') {
+                        strncpy(new_phrase->name, new_phrase_desc, RGX_MAX_PHRASE_NAME - 1);
+                        new_phrase->name[RGX_MAX_PHRASE_NAME - 1] = '\0';
+                    } else {
+                        new_phrase->name[0] = '\0';
+                    }
+                    new_phrase->step_count = 0;
+                    common_state->metadata->phrase_count++;
+                    selected_phrase_idx = common_state->metadata->phrase_count - 1;
+                    new_phrase_desc[0] = '\0';
+                    regroove_common_save_rgx(common_state);
+                    printf("Created Phrase %d\n", common_state->metadata->phrase_count);
+                }
+            }
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+            ImGui::TextWrapped("Phrases are saved automatically to the .rgx file. To trigger a phrase from a song pad, set the pad's action to 'trigger_phrase' and the parameter to the phrase index (Phrase 1 = parameter 0, Phrase 2 = parameter 1, etc.).");
         }
 
         ImGui::EndChild(); // End perf_scroll child window
@@ -3062,7 +3426,8 @@ static void ShowMainUI() {
                 if (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_CHANNEL_SOLO ||
                     pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_TRIGGER_PAD ||
                     pad->action == ACTION_JUMP_TO_ORDER || pad->action == ACTION_JUMP_TO_PATTERN ||
-                    pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN) {
+                    pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN ||
+                    pad->action == ACTION_TRIGGER_PHRASE) {
 
                     if (ImGui::Button("-", ImVec2(30.0f, 0.0f))) {
                         if (pad->parameter > 0) pad->parameter--;
@@ -3203,7 +3568,8 @@ static void ShowMainUI() {
                 if (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_CHANNEL_SOLO ||
                     pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_TRIGGER_PAD ||
                     pad->action == ACTION_JUMP_TO_ORDER || pad->action == ACTION_JUMP_TO_PATTERN ||
-                    pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN) {
+                    pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN ||
+                    pad->action == ACTION_TRIGGER_PHRASE) {
 
                     if (ImGui::Button("-", ImVec2(30.0f, 0.0f))) {
                         if (pad->parameter > 0) {
@@ -3994,6 +4360,13 @@ int main(int argc, char* argv[]) {
     if (!common_state) {
         fprintf(stderr, "Failed to create common state\n");
         return 1;
+    }
+
+    // Initialize phrase playback state
+    for (int i = 0; i < MAX_ACTIVE_PHRASES; i++) {
+        active_phrases[i].phrase_index = -1;
+        active_phrases[i].current_step = 0;
+        active_phrases[i].delay_counter = 0;
     }
 
     // Set up performance action callback (routes actions through the performance engine)
