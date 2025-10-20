@@ -803,18 +803,37 @@ static void execute_action(InputAction action, int parameter, float value, void*
             dispatch_action(ACT_VOLUME_CHANNEL, parameter, value / 127.0f, false);
             break;
         case ACTION_TRIGGER_PAD:
-            if (common_state && common_state->input_mappings &&
-                parameter >= 0 && parameter < MAX_TRIGGER_PADS) {
-                TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[parameter];
-                // Trigger visual feedback
-                trigger_pad_fade[parameter] = 1.0f;
-                // Execute the trigger pad's configured action
-                if (pad->action != ACTION_NONE) {
-                    InputEvent pad_event;
-                    pad_event.action = pad->action;
-                    pad_event.parameter = pad->parameter;
-                    pad_event.value = (int)value;
-                    handle_input_event(&pad_event, false);  // from_playback=false
+            // Handle both application pads (0-15) and song pads (16-31)
+            if (parameter >= 0 && parameter < MAX_TRIGGER_PADS) {
+                // Application pad (A1-A16)
+                if (common_state && common_state->input_mappings) {
+                    TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[parameter];
+                    // Trigger visual feedback
+                    trigger_pad_fade[parameter] = 1.0f;
+                    // Execute the trigger pad's configured action
+                    if (pad->action != ACTION_NONE) {
+                        InputEvent pad_event;
+                        pad_event.action = pad->action;
+                        pad_event.parameter = pad->parameter;
+                        pad_event.value = (int)value;
+                        handle_input_event(&pad_event, false);  // from_playback=false
+                    }
+                }
+            } else if (parameter >= MAX_TRIGGER_PADS && parameter < MAX_TRIGGER_PADS + MAX_SONG_TRIGGER_PADS) {
+                // Song pad (S1-S16)
+                int song_pad_idx = parameter - MAX_TRIGGER_PADS;
+                if (common_state && common_state->metadata) {
+                    TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[song_pad_idx];
+                    // Trigger visual feedback (offset for song pads)
+                    trigger_pad_fade[parameter] = 1.0f;
+                    // Execute the trigger pad's configured action
+                    if (pad->action != ACTION_NONE) {
+                        InputEvent pad_event;
+                        pad_event.action = pad->action;
+                        pad_event.parameter = pad->parameter;
+                        pad_event.value = (int)value;
+                        handle_input_event(&pad_event, false);  // from_playback=false
+                    }
                 }
             }
             break;
