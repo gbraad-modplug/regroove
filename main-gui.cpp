@@ -52,12 +52,16 @@ enum UIMode {
     UI_MODE_PERF = 3,
     UI_MODE_INFO = 4,
     UI_MODE_MIDI = 5,
-    UI_MODE_SETTINGS = 6
+    UI_MODE_TRACKER = 6,
+    UI_MODE_SETTINGS = 7
 };
 static UIMode ui_mode = UI_MODE_VOLUME;
 
 // Visual feedback for trigger pads (fade effect) - supports both A and S pads
 static float trigger_pad_fade[MAX_TOTAL_TRIGGER_PADS] = {0.0f};
+
+// Channel note highlighting (for tracker view and volume faders)
+static float channel_note_fade[MAX_CHANNELS] = {0.0f};
 
 // Shared state
 static RegrooveCommonState *common_state = NULL;
@@ -220,6 +224,11 @@ static void my_loop_song_callback(void *userdata) {
 
 static void my_note_callback(int channel, int note, int instrument, int volume,
                              int effect_cmd, int effect_param, void *userdata) {
+    // Trigger channel highlighting for visual feedback
+    if (channel >= 0 && channel < MAX_CHANNELS && note >= 0) {
+        channel_note_fade[channel] = 1.0f;
+    }
+
     if (!midi_output_enabled) return;
 
     // Check for note-off effect commands (0FFF or EC0)
@@ -1354,6 +1363,10 @@ static void ShowMainUI() {
     for (int i = 0; i < 16; i++)
         step_fade[i] = fmaxf(step_fade[i] - 0.02f, 0.0f);
 
+    // Fade the channel note highlights
+    for (int i = 0; i < MAX_CHANNELS; i++)
+        channel_note_fade[i] = fmaxf(channel_note_fade[i] - 0.05f, 0.0f);
+
     ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
     ImGuiWindowFlags rootFlags =
@@ -1631,6 +1644,15 @@ static void ShowMainUI() {
 
     ImGui::Dummy(ImVec2(0, 8.0f));
 
+    // TRACKER button with active state highlighting
+    ImVec4 trackCol = (ui_mode == UI_MODE_TRACKER) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, trackCol);
+    if (ImGui::Button("TRACK", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_TRACKER;
+    }
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+
     // INFO button with active state highlighting
     ImVec4 infoCol = (ui_mode == UI_MODE_INFO) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_Button, infoCol);
@@ -1647,24 +1669,13 @@ static void ShowMainUI() {
         ui_mode = UI_MODE_PERF;
     }
     ImGui::PopStyleColor();
-    ImGui::SameLine();
 
-    // MIDI button with active state highlighting
-    ImVec4 midiCol = (ui_mode == UI_MODE_MIDI) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, midiCol);
-    if (ImGui::Button("MIDI", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        ui_mode = UI_MODE_MIDI;
-    }
-    ImGui::PopStyleColor();
-    ImGui::EndGroup();
+    ImGui::Dummy(ImVec2(0, 8.0f));
 
-    ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
-
-    ImGui::BeginGroup();
     // Input learning mode button
     ImVec4 learnCol = learn_mode_active ? ImVec4(0.90f, 0.16f, 0.18f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_Button, learnCol);
-    if (ImGui::Button("LEARN", ImVec2(BUTTON_SIZE * 2 + 8, BUTTON_SIZE))) {
+    if (ImGui::Button("LEARN", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
         if (learn_mode_active && learn_target_type != LEARN_NONE) {
             // If we're waiting for input, unlearn the current target
             unlearn_current_target();
@@ -1679,6 +1690,15 @@ static void ShowMainUI() {
                 learn_target_pad_index = -1;
             }
         }
+    }
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+
+    // MIDI button with active state highlighting
+    ImVec4 midiCol = (ui_mode == UI_MODE_MIDI) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, midiCol);
+    if (ImGui::Button("MIDI", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_MIDI;
     }
     ImGui::PopStyleColor();
     ImGui::SameLine();
@@ -1752,6 +1772,21 @@ static void ShowMainUI() {
             ImGui::PopStyleColor();
 
             ImGui::Dummy(ImVec2(0, 6.0f));
+
+            // Add note highlight effect to slider background
+            if (channel_note_fade[i] > 0.0f) {
+                ImVec2 slider_pos = ImGui::GetCursorScreenPos();
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                ImU32 highlight_col = ImGui::ColorConvertFloat4ToU32(ImVec4(
+                    0.2f + channel_note_fade[i] * 0.6f,
+                    0.8f * channel_note_fade[i],
+                    0.2f + channel_note_fade[i] * 0.4f,
+                    channel_note_fade[i] * 0.5f
+                ));
+                draw_list->AddRectFilled(slider_pos, ImVec2(slider_pos.x + sliderW, slider_pos.y + sliderH),
+                                        highlight_col, 2.0f);
+            }
+
             float prev_vol = channels[i].volume;
             if (ImGui::VSliderFloat((std::string("##vol")+std::to_string(i)).c_str(),
                                     ImVec2(sliderW, sliderH),
@@ -3748,6 +3783,142 @@ static void ShowMainUI() {
         ImGui::EndGroup();
 
         ImGui::EndChild(); // End settings_scroll child window
+    }
+    else if (ui_mode == UI_MODE_TRACKER) {
+        // TRACKER MODE: Display tracker lanes with pattern data
+
+        ImGui::SetCursorPos(ImVec2(origin.x + 16.0f, origin.y + 16.0f));
+
+        // Make the entire tracker area scrollable
+        ImGui::BeginChild("##tracker_scroll", ImVec2(rightW - 32.0f, contentHeight - 32.0f), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+        Regroove *mod = common_state ? common_state->player : NULL;
+
+        if (!mod) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No module loaded");
+        } else {
+            int num_channels = common_state->num_channels;
+            int current_pattern = regroove_get_current_pattern(mod);
+            int current_row = regroove_get_current_row(mod);
+            int num_rows = regroove_get_full_pattern_rows(mod);
+
+            ImGui::Text("Tracker View - Pattern %d (%d rows, %d channels)", current_pattern, num_rows, num_channels);
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Calculate column widths
+            const float ROW_COL_WIDTH = 50.0f;
+            const float CHANNEL_COL_WIDTH = 140.0f;
+            const float MIN_CHANNEL_WIDTH = 100.0f;
+
+            // Adjust channel width based on available space
+            float available_width = rightW - 64.0f - ROW_COL_WIDTH;
+            float channel_width = CHANNEL_COL_WIDTH;
+            if (num_channels > 0) {
+                float total_needed = num_channels * CHANNEL_COL_WIDTH;
+                if (total_needed > available_width) {
+                    channel_width = fmaxf(available_width / num_channels, MIN_CHANNEL_WIDTH);
+                }
+            }
+
+            // Tracker display area
+            ImGui::BeginChild("##tracker_view", ImVec2(rightW - 64.0f, contentHeight - 64.0f), true, ImGuiWindowFlags_AlwaysVerticalScrollbar | ImGuiWindowFlags_AlwaysHorizontalScrollbar);
+
+            // Header row
+            ImGui::Columns(num_channels + 1, "tracker_columns", true);
+            ImGui::SetColumnWidth(0, ROW_COL_WIDTH);
+            for (int i = 0; i < num_channels; i++) {
+                ImGui::SetColumnWidth(i + 1, channel_width);
+            }
+
+            // Column headers
+            ImGui::Text("Row"); ImGui::NextColumn();
+            for (int ch = 0; ch < num_channels; ch++) {
+                ImGui::Text("Ch%d", ch + 1); ImGui::NextColumn();
+            }
+            ImGui::Separator();
+
+            // Display ALL pattern rows
+            int start_row = 0;
+            int end_row = num_rows - 1;
+
+            for (int row = start_row; row <= end_row; row++) {
+                ImGui::PushID(row);
+
+                // Highlight current row
+                bool is_current = (row == current_row);
+                if (is_current) {
+                    ImVec2 row_min = ImGui::GetCursorScreenPos();
+                    ImVec2 row_max = ImVec2(row_min.x + ROW_COL_WIDTH + num_channels * channel_width, row_min.y + ImGui::GetTextLineHeight());
+                    ImGui::GetWindowDrawList()->AddRectFilled(row_min, row_max, IM_COL32(60, 60, 40, 255));
+                }
+
+                // Row number
+                if (is_current) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                }
+                ImGui::Text("%02d", row);
+                if (is_current) {
+                    ImGui::PopStyleColor();
+                }
+                ImGui::NextColumn();
+
+                // Channel data
+                for (int ch = 0; ch < num_channels; ch++) {
+                    // Get pattern data for this cell
+                    char cell_text[128];
+                    int result = regroove_get_pattern_cell(mod, current_pattern, row, ch, cell_text, sizeof(cell_text));
+
+                    // Apply channel note highlighting
+                    bool has_note_highlight = (is_current && channel_note_fade[ch] > 0.0f);
+                    if (has_note_highlight) {
+                        ImVec4 highlight_color = ImVec4(
+                            0.2f + channel_note_fade[ch] * 0.6f,
+                            0.8f * channel_note_fade[ch],
+                            0.2f + channel_note_fade[ch] * 0.4f,
+                            1.0f
+                        );
+                        ImGui::PushStyleColor(ImGuiCol_Text, highlight_color);
+                    } else if (is_current) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                    }
+
+                    if (result == 0 && cell_text[0] != '\0') {
+                        ImGui::Text("%s", cell_text);
+                    } else {
+                        ImGui::Text("...");
+                    }
+
+                    if (has_note_highlight || is_current) {
+                        ImGui::PopStyleColor();
+                    }
+
+                    ImGui::NextColumn();
+                }
+
+                ImGui::PopID();
+            }
+
+            ImGui::Columns(1);
+
+            // Auto-scroll to keep current row visible
+            if (playing) {
+                float current_row_y = (current_row - start_row + 1) * ImGui::GetTextLineHeightWithSpacing();
+                float scroll_y = ImGui::GetScrollY();
+                float window_height = ImGui::GetWindowHeight();
+
+                // Scroll if current row is near top or bottom
+                if (current_row_y < scroll_y + 50.0f) {
+                    ImGui::SetScrollY(fmaxf(0.0f, current_row_y - 50.0f));
+                } else if (current_row_y > scroll_y + window_height - 50.0f) {
+                    ImGui::SetScrollY(current_row_y - window_height + 50.0f);
+                }
+            }
+
+            ImGui::EndChild(); // End tracker_view
+        }
+
+        ImGui::EndChild(); // End tracker_scroll child window
     }
 
     ImGui::EndChild();

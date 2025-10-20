@@ -11,12 +11,30 @@ extern "C" {
 #define RGX_MAX_PATTERN_DESC 128
 #define RGX_MAX_PATTERNS 256
 #define RGX_MAX_FILEPATH 512
+#define RGX_MAX_PHRASE_NAME 64
+#define RGX_MAX_PHRASE_STEPS 32
+#define RGX_MAX_PHRASES 64
 
 // Metadata for a single pattern
 typedef struct {
     int pattern_index;
     char description[RGX_MAX_PATTERN_DESC];
 } RegroovePatternMeta;
+
+// Phrase step - single action in a phrase sequence
+typedef struct {
+    InputAction action;      // Action to execute
+    int parameter;           // Action parameter
+    int value;               // Action value (for continuous controls)
+    int delay_rows;          // Delay in performance rows before executing this step (0 = immediate)
+} PhraseStep;
+
+// Phrase - sequence of actions
+typedef struct {
+    char name[RGX_MAX_PHRASE_NAME];
+    PhraseStep steps[RGX_MAX_PHRASE_STEPS];
+    int step_count;
+} Phrase;
 
 // .rgx file metadata container
 typedef struct {
@@ -27,6 +45,10 @@ typedef struct {
     RegroovePatternMeta *pattern_meta;
     int pattern_meta_count;
     int pattern_meta_capacity;
+
+    // Phrases (song-specific action sequences)
+    Phrase phrases[RGX_MAX_PHRASES];
+    int phrase_count;
 
     // Song-specific trigger pads (S1-S16)
     TriggerPadConfig song_trigger_pads[MAX_SONG_TRIGGER_PADS];

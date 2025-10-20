@@ -35,6 +35,7 @@ typedef enum {
     ACTION_QUEUE_PATTERN,    // parameter = pattern index (queued jump at pattern end)
     ACTION_RECORD_TOGGLE,    // toggle performance recording
     ACTION_SET_LOOP_STEP,    // parameter = step index (0-15), sets loop length
+    ACTION_TRIGGER_PHRASE,   // parameter = phrase index (triggers phrase sequence)
     ACTION_MAX
 } InputAction;
 
@@ -68,10 +69,11 @@ typedef struct {
 #define MAX_TOTAL_TRIGGER_PADS (MAX_TRIGGER_PADS + MAX_SONG_TRIGGER_PADS)
 
 typedef struct {
-    InputAction action;      // Action to trigger
+    InputAction action;      // Action to trigger (ACTION_NONE if using phrase)
     int parameter;           // Action parameter (channel index, etc.)
     int midi_note;           // MIDI note number that triggers this pad (-1 = not mapped)
     int midi_device;         // Which MIDI device (-1 = any)
+    int phrase_index;        // Index into phrases array (-1 = not using phrase, use action instead)
 } TriggerPadConfig;
 
 // Input mappings configuration (application-wide from regroove.ini)

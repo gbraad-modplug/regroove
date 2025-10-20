@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include <stddef.h>
 
 typedef struct Regroove Regroove;
 
@@ -76,6 +77,11 @@ int regroove_get_pattern_mode(const Regroove *g);
 int regroove_get_custom_loop_rows(const Regroove *g);
 int regroove_get_full_pattern_rows(const Regroove *g);
 double regroove_get_current_bpm(const Regroove *g);
+
+// Get formatted pattern cell data (note, instrument, volume, effects)
+// Returns 0 on success, -1 on error
+// buffer should be at least 32 bytes
+int regroove_get_pattern_cell(const Regroove *g, int pattern, int row, int channel, char *buffer, size_t buffer_size);
 
 #ifdef __cplusplus
 }

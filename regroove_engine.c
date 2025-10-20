@@ -663,3 +663,19 @@ double regroove_get_current_bpm(const Regroove* g) {
     if (!g || !g->mod) return 0.0;
     return openmpt_module_get_current_estimated_bpm(g->mod);
 }
+
+int regroove_get_pattern_cell(const Regroove *g, int pattern, int row, int channel, char *buffer, size_t buffer_size) {
+    if (!g || !g->mod || !buffer || buffer_size < 32) return -1;
+
+    // Use openmpt API to get formatted pattern cell
+    const char *cell_text = openmpt_module_format_pattern_row_channel(g->mod, pattern, row, channel, buffer_size, 1);
+    if (!cell_text) {
+        buffer[0] = '\0';
+        return -1;
+    }
+
+    // Copy to buffer
+    snprintf(buffer, buffer_size, "%s", cell_text);
+    openmpt_free_string(cell_text);
+    return 0;
+}

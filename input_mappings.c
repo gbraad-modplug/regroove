@@ -39,6 +39,7 @@ InputAction parse_action(const char *str) {
     if (strcmp(str, "queue_pattern") == 0) return ACTION_QUEUE_PATTERN;
     if (strcmp(str, "record_toggle") == 0) return ACTION_RECORD_TOGGLE;
     if (strcmp(str, "set_loop_step") == 0) return ACTION_SET_LOOP_STEP;
+    if (strcmp(str, "trigger_phrase") == 0) return ACTION_TRIGGER_PHRASE;
     return ACTION_NONE;
 }
 
@@ -75,6 +76,7 @@ const char* input_action_name(InputAction action) {
         case ACTION_QUEUE_PATTERN: return "queue_pattern";
         case ACTION_RECORD_TOGGLE: return "record_toggle";
         case ACTION_SET_LOOP_STEP: return "set_loop_step";
+        case ACTION_TRIGGER_PHRASE: return "trigger_phrase";
         default: return "none";
     }
 }
@@ -126,6 +128,7 @@ void input_mappings_reset_defaults(InputMappings *mappings) {
         mappings->trigger_pads[i].parameter = 0;
         mappings->trigger_pads[i].midi_note = -1;
         mappings->trigger_pads[i].midi_device = -1;
+        mappings->trigger_pads[i].phrase_index = -1;
     }
 
     // Set up default bindings for trigger pads

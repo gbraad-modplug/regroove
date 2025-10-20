@@ -24,6 +24,14 @@ RegrooveMetadata* regroove_metadata_create(void) {
         meta->song_trigger_pads[i].parameter = 0;
         meta->song_trigger_pads[i].midi_note = -1;  // Not mapped
         meta->song_trigger_pads[i].midi_device = -1; // Any device
+        meta->song_trigger_pads[i].phrase_index = -1; // No phrase assigned
+    }
+
+    // Initialize phrases
+    meta->phrase_count = 0;
+    for (int i = 0; i < RGX_MAX_PHRASES; i++) {
+        meta->phrases[i].name[0] = '\0';
+        meta->phrases[i].step_count = 0;
     }
 
     return meta;
@@ -145,6 +153,48 @@ int regroove_metadata_load(RegrooveMetadata *meta, const char *rgx_path) {
                         meta->song_trigger_pads[pad_index].midi_note = atoi(value);
                     } else if (strstr(key, "_midi_device")) {
                         meta->song_trigger_pads[pad_index].midi_device = atoi(value);
+                    } else if (strstr(key, "_phrase")) {
+                        meta->song_trigger_pads[pad_index].phrase_index = atoi(value);
+                    }
+                }
+            }
+        } else if (strcmp(section, "Phrases") == 0) {
+            // Phrase configuration
+            if (strcmp(key, "count") == 0) {
+                meta->phrase_count = atoi(value);
+                if (meta->phrase_count > RGX_MAX_PHRASES) meta->phrase_count = RGX_MAX_PHRASES;
+            } else if (strncmp(key, "phrase_", 7) == 0) {
+                int phrase_idx = atoi(key + 7);
+                if (phrase_idx >= 0 && phrase_idx < RGX_MAX_PHRASES) {
+                    Phrase *phrase = &meta->phrases[phrase_idx];
+
+                    // Parse phrase properties
+                    if (strstr(key, "_name")) {
+                        strncpy(phrase->name, value, RGX_MAX_PHRASE_NAME - 1);
+                        phrase->name[RGX_MAX_PHRASE_NAME - 1] = '\0';
+                    } else if (strstr(key, "_steps")) {
+                        phrase->step_count = atoi(value);
+                        if (phrase->step_count > RGX_MAX_PHRASE_STEPS)
+                            phrase->step_count = RGX_MAX_PHRASE_STEPS;
+                    } else if (strstr(key, "_step_")) {
+                        // Parse step index: phrase_0_step_1_action
+                        char *step_ptr = strstr(key, "_step_");
+                        if (step_ptr) {
+                            int step_idx = atoi(step_ptr + 6);
+                            if (step_idx >= 0 && step_idx < RGX_MAX_PHRASE_STEPS) {
+                                PhraseStep *step = &phrase->steps[step_idx];
+
+                                if (strstr(key, "_action")) {
+                                    step->action = parse_action(value);
+                                } else if (strstr(key, "_parameter")) {
+                                    step->parameter = atoi(value);
+                                } else if (strstr(key, "_value")) {
+                                    step->value = atoi(value);
+                                } else if (strstr(key, "_delay")) {
+                                    step->delay_rows = atoi(value);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -202,6 +252,29 @@ int regroove_metadata_save(const RegrooveMetadata *meta, const char *rgx_path) {
                     fprintf(f, "pad_S%d_midi_note=%d\n", i + 1, pad->midi_note);
                     fprintf(f, "pad_S%d_midi_device=%d\n", i + 1, pad->midi_device);
                 }
+                // Save phrase index if assigned
+                if (pad->phrase_index >= 0) {
+                    fprintf(f, "pad_S%d_phrase=%d\n", i + 1, pad->phrase_index);
+                }
+            }
+        }
+        fprintf(f, "\n");
+    }
+
+    // Write Phrases section if any exist
+    if (meta->phrase_count > 0) {
+        fprintf(f, "[Phrases]\n");
+        fprintf(f, "count=%d\n", meta->phrase_count);
+        for (int i = 0; i < meta->phrase_count; i++) {
+            const Phrase *phrase = &meta->phrases[i];
+            fprintf(f, "\nphrase_%d_name=\"%s\"\n", i, phrase->name);
+            fprintf(f, "phrase_%d_steps=%d\n", i, phrase->step_count);
+            for (int j = 0; j < phrase->step_count; j++) {
+                const PhraseStep *step = &phrase->steps[j];
+                fprintf(f, "phrase_%d_step_%d_action=%s\n", i, j, input_action_name(step->action));
+                fprintf(f, "phrase_%d_step_%d_parameter=%d\n", i, j, step->parameter);
+                fprintf(f, "phrase_%d_step_%d_value=%d\n", i, j, step->value);
+                fprintf(f, "phrase_%d_step_%d_delay=%d\n", i, j, step->delay_rows);
             }
         }
         fprintf(f, "\n");
