@@ -190,8 +190,9 @@ int regroove_metadata_load(RegrooveMetadata *meta, const char *rgx_path) {
                                     step->parameter = atoi(value);
                                 } else if (strstr(key, "_value")) {
                                     step->value = atoi(value);
-                                } else if (strstr(key, "_delay")) {
-                                    step->delay_rows = atoi(value);
+                                } else if (strstr(key, "_delay") || strstr(key, "_position")) {
+                                    // Support both old "delay" and new "position" naming
+                                    step->position_rows = atoi(value);
                                 }
                             }
                         }
@@ -274,7 +275,7 @@ int regroove_metadata_save(const RegrooveMetadata *meta, const char *rgx_path) {
                 fprintf(f, "phrase_%d_step_%d_action=%s\n", i, j, input_action_name(step->action));
                 fprintf(f, "phrase_%d_step_%d_parameter=%d\n", i, j, step->parameter);
                 fprintf(f, "phrase_%d_step_%d_value=%d\n", i, j, step->value);
-                fprintf(f, "phrase_%d_step_%d_delay=%d\n", i, j, step->delay_rows);
+                fprintf(f, "phrase_%d_step_%d_position=%d\n", i, j, step->position_rows);
             }
         }
         fprintf(f, "\n");

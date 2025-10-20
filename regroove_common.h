@@ -6,6 +6,7 @@
 #include "input_mappings.h"
 #include "regroove_metadata.h"
 #include "regroove_performance.h"
+#include "regroove_phrase.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,17 +48,6 @@ typedef struct {
     int midi_output_device; // MIDI output device port (-1 = disabled)
 } RegrooveDeviceConfig;
 
-// Phrase playback state
-#define MAX_ACTIVE_PHRASES 16
-typedef struct {
-    int phrase_index;           // Which phrase is playing (-1 = inactive)
-    int current_step;           // Current step index
-    int delay_counter;          // Rows remaining before executing current step
-} ActivePhrase;
-
-// Forward declaration for phrase action callback
-typedef void (*PhraseActionCallback)(InputAction action, int parameter, int value, void* userdata);
-
 // Common playback state
 typedef struct {
     Regroove *player;
@@ -65,16 +55,13 @@ typedef struct {
     RegrooveFileList *file_list;
     RegrooveMetadata *metadata;
     RegroovePerformance *performance;
+    RegroovePhrase *phrase;
     RegrooveDeviceConfig device_config;
     int paused;
     int num_channels;
     double pitch;
     unsigned int audio_device_id;  // SDL_AudioDeviceID for device-specific audio control
     char current_module_path[COMMON_MAX_PATH];  // Track current module for .rgx saving
-    int executing_phrase_action;  // Flag to prevent phrase PLAY from enabling performance playback
-    ActivePhrase active_phrases[MAX_ACTIVE_PHRASES];  // Active phrase playback state
-    PhraseActionCallback phrase_action_callback;  // Callback to execute phrase actions
-    void *phrase_callback_userdata;
 } RegrooveCommonState;
 
 // Initialize common state
@@ -106,10 +93,11 @@ void regroove_common_pitch_up(RegrooveCommonState *state);
 void regroove_common_pitch_down(RegrooveCommonState *state);
 void regroove_common_set_pitch(RegrooveCommonState *state, double pitch);
 
-// Phrase playback functions
+// Phrase playback functions (wrappers around phrase engine)
 void regroove_common_set_phrase_callback(RegrooveCommonState *state, PhraseActionCallback callback, void *userdata);
 void regroove_common_trigger_phrase(RegrooveCommonState *state, int phrase_index);
 void regroove_common_update_phrases(RegrooveCommonState *state);
+int regroove_common_phrase_is_active(const RegrooveCommonState *state);
 
 // Save device configuration to existing INI file
 int regroove_common_save_device_config(RegrooveCommonState *state, const char *filepath);

@@ -20,6 +20,7 @@ add_executable(regroove-tui
     regroove_common.c
     regroove_metadata.c
     regroove_performance.c
+    regroove_phrase.c
     midi.c
     midi_output.c
     input_mappings.c
@@ -50,6 +51,7 @@ add_executable(regroove-gui
     regroove_common.c
     regroove_metadata.c
     regroove_performance.c
+    regroove_phrase.c
     midi.c
     midi_output.c
     input_mappings.c

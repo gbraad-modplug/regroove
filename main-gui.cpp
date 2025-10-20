@@ -118,8 +118,8 @@ void add_to_midi_monitor(int device_id, const char* type, int number, int value,
     }
 }
 
-// Phrase playback state is now in RegrooveCommonState (active_phrases, executing_phrase_action)
-// No local state needed - all managed by regroove_common
+// Phrase playback state is now managed by the phrase engine via regroove_common
+// No local state needed
 
 void refresh_audio_devices() {
     audio_device_names.clear();
@@ -408,7 +408,7 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
             if (mod) {
                 // In performance mode, always start from the beginning
                 // BUT: Don't enable performance playback if this is from a phrase
-                if (common_state && common_state->performance && !common_state->executing_phrase_action) {
+                if (common_state && common_state->performance && !regroove_common_phrase_is_active(common_state)) {
                     int event_count = regroove_performance_get_event_count(common_state->performance);
                     if (event_count > 0) {
                         // Reset song position to order 0 when starting performance playback
@@ -2487,13 +2487,13 @@ static void ShowMainUI() {
                         }
                     }
 
-                    // Delay
+                    // Position
                     ImGui::SameLine();
-                    ImGui::Text("Delay:");
+                    ImGui::Text("Pos:");
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(60.0f);
-                    if (ImGui::InputInt("##delay", &step->delay_rows, 0, 0)) {
-                        if (step->delay_rows < 0) step->delay_rows = 0;
+                    if (ImGui::InputInt("##position", &step->position_rows, 0, 0)) {
+                        if (step->position_rows < 0) step->position_rows = 0;
                         regroove_common_save_rgx(common_state);
                     }
 
@@ -2525,7 +2525,7 @@ static void ShowMainUI() {
                         new_step->action = ACTION_PLAY;
                         new_step->parameter = 0;
                         new_step->value = 127;
-                        new_step->delay_rows = 0;
+                        new_step->position_rows = 0;
                         phrase->step_count++;
                         regroove_common_save_rgx(common_state);
                     }

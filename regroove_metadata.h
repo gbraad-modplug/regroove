@@ -26,7 +26,7 @@ typedef struct {
     InputAction action;      // Action to execute
     int parameter;           // Action parameter
     int value;               // Action value (for continuous controls)
-    int delay_rows;          // Delay in performance rows before executing this step (0 = immediate)
+    int position_rows;       // Absolute position in performance rows when this step executes (0 = immediately)
 } PhraseStep;
 
 // Phrase - sequence of actions

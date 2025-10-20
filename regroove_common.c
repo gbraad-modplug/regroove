@@ -132,14 +132,6 @@ RegrooveCommonState* regroove_common_create(void) {
 
     state->paused = 1;
     state->pitch = 1.0;
-    state->executing_phrase_action = 0;
-
-    // Initialize phrase playback state
-    for (int i = 0; i < MAX_ACTIVE_PHRASES; i++) {
-        state->active_phrases[i].phrase_index = -1;
-        state->active_phrases[i].current_step = 0;
-        state->active_phrases[i].delay_counter = 0;
-    }
 
     // Initialize device config to defaults
     state->device_config.midi_device_0 = -1;      // Not configured
@@ -153,6 +145,12 @@ RegrooveCommonState* regroove_common_create(void) {
 
     // Initialize performance
     state->performance = regroove_performance_create();
+
+    // Initialize phrase engine
+    state->phrase = regroove_phrase_create();
+    if (state->phrase && state->metadata) {
+        regroove_phrase_set_metadata(state->phrase, state->metadata);
+    }
 
     return state;
 }
@@ -340,6 +338,12 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
             regroove_performance_reset(state->performance);
         }
 
+        // Stop all active phrases and reconnect phrase engine to new metadata
+        if (state->phrase) {
+            regroove_phrase_stop_all(state->phrase);
+            regroove_phrase_set_metadata(state->phrase, state->metadata);
+        }
+
         // Only load .rgx file if user explicitly loaded one
         // Loading a .mod file does NOT automatically load the .rgx (allows starting fresh performances)
         if (is_rgx_file(path)) {
@@ -424,6 +428,11 @@ void regroove_common_destroy(RegrooveCommonState *state) {
         regroove_performance_destroy(state->performance);
     }
 
+    // Destroy phrase engine
+    if (state->phrase) {
+        regroove_phrase_destroy(state->phrase);
+    }
+
     free(state);
 }
 
@@ -434,7 +443,7 @@ void regroove_common_play_pause(RegrooveCommonState *state, int play) {
     if (play && state->paused) {
         // Starting playback - check for performance mode
         // BUT: Don't enable performance playback if this is from a phrase
-        if (state->performance && !state->executing_phrase_action) {
+        if (state->performance && state->phrase && !regroove_phrase_is_active(state->phrase)) {
             int event_count = regroove_performance_get_event_count(state->performance);
             if (event_count > 0) {
                 // Reset song position to order 0 when starting performance playback
@@ -809,31 +818,41 @@ int regroove_common_save_rgx(RegrooveCommonState *state) {
     return 0;
 }
 
-// Phrase playback functions
+// Phrase completion callback - handles cleanup when phrase finishes
+static void phrase_completion_callback(int phrase_index, void *userdata) {
+    RegrooveCommonState *state = (RegrooveCommonState*)userdata;
+    if (!state || !state->player) return;
+
+    printf("Phrase %d completed - stopping playback, resetting to order 0, unmuting all channels\n", phrase_index + 1);
+
+    // Stop playback
+    if (state->audio_device_id) {
+        SDL_PauseAudioDevice(state->audio_device_id, 1);
+    }
+    state->paused = 1;
+
+    // Reset to order 0
+    regroove_jump_to_order(state->player, 0);
+
+    // Unmute all channels
+    regroove_unmute_all(state->player);
+}
+
+// Phrase playback functions (wrappers around phrase engine)
 void regroove_common_set_phrase_callback(RegrooveCommonState *state, PhraseActionCallback callback, void *userdata) {
-    if (!state) return;
-    state->phrase_action_callback = callback;
-    state->phrase_callback_userdata = userdata;
+    if (!state || !state->phrase) return;
+    regroove_phrase_set_action_callback(state->phrase, callback, userdata);
+    // Also set completion callback to handle cleanup
+    regroove_phrase_set_completion_callback(state->phrase, phrase_completion_callback, state);
 }
 
 void regroove_common_trigger_phrase(RegrooveCommonState *state, int phrase_index) {
-    if (!state || !state->metadata) return;
-    if (phrase_index < 0 || phrase_index >= state->metadata->phrase_count) return;
+    if (!state || !state->phrase) return;
 
-    const Phrase *phrase = &state->metadata->phrases[phrase_index];
-    if (phrase->step_count == 0) return;
-
-    // Cancel all currently active phrases to avoid conflicts
-    for (int i = 0; i < MAX_ACTIVE_PHRASES; i++) {
-        if (state->active_phrases[i].phrase_index != -1) {
-            state->active_phrases[i].phrase_index = -1;
-        }
+    // Trigger the phrase via the engine
+    if (regroove_phrase_trigger(state->phrase, phrase_index) != 0) {
+        return;  // Failed to trigger
     }
-
-    // Use slot 0 for the new phrase
-    state->active_phrases[0].phrase_index = phrase_index;
-    state->active_phrases[0].current_step = 0;
-    state->active_phrases[0].delay_counter = phrase->steps[0].delay_rows;
 
     // Auto-start playback if not already playing
     if (state->paused && state->player) {
@@ -845,45 +864,14 @@ void regroove_common_trigger_phrase(RegrooveCommonState *state, int phrase_index
 }
 
 void regroove_common_update_phrases(RegrooveCommonState *state) {
-    if (!state || !state->metadata || !state->player) return;
+    if (!state || !state->phrase) return;
     if (state->paused) return;  // Only update when playing
 
-    for (int i = 0; i < MAX_ACTIVE_PHRASES; i++) {
-        ActivePhrase *ap = &state->active_phrases[i];
-        if (ap->phrase_index == -1) continue;
+    regroove_phrase_update(state->phrase);
+    // Completion handling is done via the completion callback
+}
 
-        const Phrase *phrase = &state->metadata->phrases[ap->phrase_index];
-        if (ap->current_step >= phrase->step_count) {
-            ap->phrase_index = -1;
-            continue;
-        }
-
-        const PhraseStep *step = &phrase->steps[ap->current_step];
-
-        // Decrement delay counter
-        if (ap->delay_counter > 0) {
-            ap->delay_counter--;
-            continue;
-        }
-
-        // Execute current step via callback
-        if (state->phrase_action_callback) {
-            state->executing_phrase_action = 1;
-            state->phrase_action_callback(step->action, step->parameter, step->value,
-                                          state->phrase_callback_userdata);
-            state->executing_phrase_action = 0;
-        }
-
-        // Move to next step
-        ap->current_step++;
-        if (ap->current_step < phrase->step_count) {
-            ap->delay_counter = phrase->steps[ap->current_step].delay_rows;
-        } else {
-            // Phrase complete - reset playback position to order 0
-            if (state->player) {
-                regroove_jump_to_order(state->player, 0);
-            }
-            ap->phrase_index = -1;
-        }
-    }
+int regroove_common_phrase_is_active(const RegrooveCommonState *state) {
+    if (!state || !state->phrase) return 0;
+    return regroove_phrase_is_active(state->phrase);
 }
