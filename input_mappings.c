@@ -40,6 +40,12 @@ InputAction parse_action(const char *str) {
     if (strcmp(str, "record_toggle") == 0) return ACTION_RECORD_TOGGLE;
     if (strcmp(str, "set_loop_step") == 0) return ACTION_SET_LOOP_STEP;
     if (strcmp(str, "trigger_phrase") == 0) return ACTION_TRIGGER_PHRASE;
+    if (strcmp(str, "fx_distortion_drive") == 0) return ACTION_FX_DISTORTION_DRIVE;
+    if (strcmp(str, "fx_distortion_mix") == 0) return ACTION_FX_DISTORTION_MIX;
+    if (strcmp(str, "fx_filter_cutoff") == 0) return ACTION_FX_FILTER_CUTOFF;
+    if (strcmp(str, "fx_filter_resonance") == 0) return ACTION_FX_FILTER_RESONANCE;
+    if (strcmp(str, "fx_distortion_toggle") == 0) return ACTION_FX_DISTORTION_TOGGLE;
+    if (strcmp(str, "fx_filter_toggle") == 0) return ACTION_FX_FILTER_TOGGLE;
     return ACTION_NONE;
 }
 
@@ -77,6 +83,12 @@ const char* input_action_name(InputAction action) {
         case ACTION_RECORD_TOGGLE: return "record_toggle";
         case ACTION_SET_LOOP_STEP: return "set_loop_step";
         case ACTION_TRIGGER_PHRASE: return "trigger_phrase";
+        case ACTION_FX_DISTORTION_DRIVE: return "fx_distortion_drive";
+        case ACTION_FX_DISTORTION_MIX: return "fx_distortion_mix";
+        case ACTION_FX_FILTER_CUTOFF: return "fx_filter_cutoff";
+        case ACTION_FX_FILTER_RESONANCE: return "fx_filter_resonance";
+        case ACTION_FX_DISTORTION_TOGGLE: return "fx_distortion_toggle";
+        case ACTION_FX_FILTER_TOGGLE: return "fx_filter_toggle";
         default: return "none";
     }
 }

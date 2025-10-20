@@ -21,6 +21,7 @@ add_executable(regroove-tui
     regroove_metadata.c
     regroove_performance.c
     regroove_phrase.c
+    regroove_effects.c
     midi.c
     midi_output.c
     input_mappings.c
@@ -36,6 +37,7 @@ target_link_libraries(regroove-tui PRIVATE
     ${SDL2_LIBRARIES}
     ${OPENMPT_LIBRARIES}
     ${RTMIDI_LIBRARIES}
+    m
 )
 
 target_compile_options(regroove-tui PRIVATE
@@ -52,6 +54,7 @@ add_executable(regroove-gui
     regroove_metadata.c
     regroove_performance.c
     regroove_phrase.c
+    regroove_effects.c
     midi.c
     midi_output.c
     input_mappings.c
@@ -80,6 +83,7 @@ target_link_libraries(regroove-gui PRIVATE
     GL
     dl
     pthread
+    m
 )
 
 target_compile_options(regroove-gui PRIVATE

@@ -16,6 +16,7 @@ extern "C" {
 #include "midi.h"
 #include "midi_output.h"
 #include "lcd.h"
+#include "regroove_effects.h"
 }
 
 // -----------------------------------------------------------------------------
@@ -54,7 +55,8 @@ enum UIMode {
     UI_MODE_INFO = 4,
     UI_MODE_MIDI = 5,
     UI_MODE_TRACKER = 6,
-    UI_MODE_SETTINGS = 7
+    UI_MODE_EFFECTS = 7,
+    UI_MODE_SETTINGS = 8
 };
 static UIMode ui_mode = UI_MODE_VOLUME;
 
@@ -83,6 +85,9 @@ static LCD* lcd_display = NULL;
 // MIDI output state
 static int midi_output_device = -1;  // -1 = disabled
 static bool midi_output_enabled = false;
+
+// Effects state
+static RegrooveEffects* effects = NULL;
 
 // MIDI monitor (circular buffer for recent MIDI messages)
 #define MIDI_MONITOR_SIZE 50
@@ -831,6 +836,39 @@ static void execute_action(InputAction action, int parameter, float value, void*
             // during playback (phrase triggers itself from recording)
             printf("Ignoring trigger_phrase during performance playback (param=%d)\n", parameter);
             break;
+        case ACTION_FX_DISTORTION_DRIVE:
+            if (effects) {
+                // Map MIDI value (0-127) to normalized 0.0-1.0
+                regroove_effects_set_distortion_drive(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_DISTORTION_MIX:
+            if (effects) {
+                regroove_effects_set_distortion_mix(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_FILTER_CUTOFF:
+            if (effects) {
+                regroove_effects_set_filter_cutoff(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_FILTER_RESONANCE:
+            if (effects) {
+                regroove_effects_set_filter_resonance(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_DISTORTION_TOGGLE:
+            if (effects) {
+                int enabled = regroove_effects_get_distortion_enabled(effects);
+                regroove_effects_set_distortion_enabled(effects, !enabled);
+            }
+            break;
+        case ACTION_FX_FILTER_TOGGLE:
+            if (effects) {
+                int enabled = regroove_effects_get_filter_enabled(effects);
+                regroove_effects_set_filter_enabled(effects, !enabled);
+            }
+            break;
         default:
             break;
     }
@@ -1197,9 +1235,14 @@ static void learn_midi_mapping(int device_id, int cc_or_note, bool is_note) {
             new_mapping.device_id = device_id;
             new_mapping.cc_number = cc_or_note;
 
-            // Set continuous mode for volume and pitch controls
+            // Set continuous mode for volume, pitch, and effects controls
             if (learn_target_type == LEARN_ACTION &&
-                (learn_target_action == ACTION_CHANNEL_VOLUME || learn_target_action == ACTION_PITCH_SET)) {
+                (learn_target_action == ACTION_CHANNEL_VOLUME ||
+                 learn_target_action == ACTION_PITCH_SET ||
+                 learn_target_action == ACTION_FX_DISTORTION_DRIVE ||
+                 learn_target_action == ACTION_FX_DISTORTION_MIX ||
+                 learn_target_action == ACTION_FX_FILTER_CUTOFF ||
+                 learn_target_action == ACTION_FX_FILTER_RESONANCE)) {
                 new_mapping.threshold = 0;
                 new_mapping.continuous = 1; // Continuous fader mode
             } else {
@@ -1408,6 +1451,11 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
     int16_t *buffer = (int16_t *)stream;
     int frames = len / (2 * sizeof(int16_t));
     regroove_render_audio(common_state->player, buffer, frames);
+
+    // Apply effects if available
+    if (effects) {
+        regroove_effects_process(effects, buffer, frames, 48000);
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -1740,20 +1788,30 @@ static void ShowMainUI() {
     ImGui::PopStyleColor();
     ImGui::SameLine();
 
-    // PADS button with active state highlighting
-    ImVec4 padsCol = (ui_mode == UI_MODE_PADS) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, padsCol);
-    if (ImGui::Button("PADS", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        ui_mode = UI_MODE_PADS;
+    // EFFECTS button with active state highlighting
+    ImVec4 fxCol = (ui_mode == UI_MODE_EFFECTS) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, fxCol);
+    if (ImGui::Button("FX", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_EFFECTS;
     }
     ImGui::PopStyleColor();
-    ImGui::SameLine();
+
+    ImGui::Dummy(ImVec2(0, 8.0f));
 
     // SONG button with active state highlighting
     ImVec4 songCol = (ui_mode == UI_MODE_SONG) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_Button, songCol);
     if (ImGui::Button("SONG", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
         ui_mode = UI_MODE_SONG;
+    }
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+
+    // PADS button with active state highlighting
+    ImVec4 padsCol = (ui_mode == UI_MODE_PADS) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, padsCol);
+    if (ImGui::Button("PADS", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_PADS;
     }
     ImGui::PopStyleColor();
 
@@ -3638,8 +3696,13 @@ static void ShowMainUI() {
                     if (ImGui::Selectable(input_action_name(act), new_midi_action == act)) {
                         new_midi_action = act;
                         new_midi_parameter = 0;
-                        // Auto-set continuous mode for volume and pitch controls
-                        if (act == ACTION_CHANNEL_VOLUME || act == ACTION_PITCH_SET) {
+                        // Auto-set continuous mode for volume, pitch, and effects controls
+                        if (act == ACTION_CHANNEL_VOLUME ||
+                            act == ACTION_PITCH_SET ||
+                            act == ACTION_FX_DISTORTION_DRIVE ||
+                            act == ACTION_FX_DISTORTION_MIX ||
+                            act == ACTION_FX_FILTER_CUTOFF ||
+                            act == ACTION_FX_FILTER_RESONANCE) {
                             new_midi_continuous = 1;
                             new_midi_threshold = 0;
                         } else {
@@ -3731,6 +3794,128 @@ static void ShowMainUI() {
         ImGui::EndGroup();
 
         ImGui::EndChild(); // End midi_scroll child window
+    }
+    else if (ui_mode == UI_MODE_EFFECTS) {
+        // EFFECTS MODE: Audio effects configuration
+
+        ImGui::SetCursorPos(ImVec2(origin.x + 16.0f, origin.y + 16.0f));
+
+        // Make the entire effects area scrollable
+        ImGui::BeginChild("##effects_scroll", ImVec2(rightW - 32.0f, contentHeight - 32.0f), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+        ImGui::BeginGroup();
+
+        if (!effects) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Effects system not initialized");
+        } else {
+            // =====================================================================
+            // DISTORTION SECTION
+            // =====================================================================
+            ImGui::Text("Distortion");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 12.0f));
+
+            // Enable checkbox
+            int distortion_enabled = regroove_effects_get_distortion_enabled(effects);
+            if (ImGui::Checkbox("Enable Distortion", (bool*)&distortion_enabled)) {
+                if (learn_mode_active && ImGui::IsItemActivated()) {
+                    start_learn_for_action(ACTION_FX_DISTORTION_TOGGLE);
+                } else {
+                    regroove_effects_set_distortion_enabled(effects, distortion_enabled);
+                }
+            }
+
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Drive slider
+            ImGui::Text("Drive:");
+            ImGui::SameLine(150.0f);
+            float drive = regroove_effects_get_distortion_drive(effects);
+            ImGui::SetNextItemWidth(300.0f);
+            if (ImGui::SliderFloat("##dist_drive", &drive, 0.0f, 1.0f, "%.2f")) {
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    start_learn_for_action(ACTION_FX_DISTORTION_DRIVE);
+                } else {
+                    regroove_effects_set_distortion_drive(effects, drive);
+                }
+            }
+
+            // Mix slider
+            ImGui::Text("Mix:");
+            ImGui::SameLine(150.0f);
+            float mix = regroove_effects_get_distortion_mix(effects);
+            ImGui::SetNextItemWidth(300.0f);
+            if (ImGui::SliderFloat("##dist_mix", &mix, 0.0f, 1.0f, "%.2f")) {
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    start_learn_for_action(ACTION_FX_DISTORTION_MIX);
+                } else {
+                    regroove_effects_set_distortion_mix(effects, mix);
+                }
+            }
+
+            ImGui::Dummy(ImVec2(0, 20.0f));
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 20.0f));
+
+            // =====================================================================
+            // FILTER SECTION
+            // =====================================================================
+            ImGui::Text("Resonant Low-Pass Filter");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 12.0f));
+
+            // Enable checkbox
+            int filter_enabled = regroove_effects_get_filter_enabled(effects);
+            if (ImGui::Checkbox("Enable Filter", (bool*)&filter_enabled)) {
+                if (learn_mode_active && ImGui::IsItemActivated()) {
+                    start_learn_for_action(ACTION_FX_FILTER_TOGGLE);
+                } else {
+                    regroove_effects_set_filter_enabled(effects, filter_enabled);
+                }
+            }
+
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Cutoff slider
+            ImGui::Text("Cutoff:");
+            ImGui::SameLine(150.0f);
+            float cutoff = regroove_effects_get_filter_cutoff(effects);
+            ImGui::SetNextItemWidth(300.0f);
+            if (ImGui::SliderFloat("##filter_cutoff", &cutoff, 0.0f, 1.0f, "%.2f")) {
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    start_learn_for_action(ACTION_FX_FILTER_CUTOFF);
+                } else {
+                    regroove_effects_set_filter_cutoff(effects, cutoff);
+                }
+            }
+
+            // Resonance slider
+            ImGui::Text("Resonance:");
+            ImGui::SameLine(150.0f);
+            float resonance = regroove_effects_get_filter_resonance(effects);
+            ImGui::SetNextItemWidth(300.0f);
+            if (ImGui::SliderFloat("##filter_resonance", &resonance, 0.0f, 1.0f, "%.2f")) {
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    start_learn_for_action(ACTION_FX_FILTER_RESONANCE);
+                } else {
+                    regroove_effects_set_filter_resonance(effects, resonance);
+                }
+            }
+
+            ImGui::Dummy(ImVec2(0, 20.0f));
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 20.0f));
+
+            // =====================================================================
+            // INFORMATION
+            // =====================================================================
+            ImGui::TextWrapped("Tip: Use LEARN mode to bind MIDI controllers to these parameters. "
+                             "Click LEARN, then drag a slider, then move a knob or fader on your MIDI controller.");
+        }
+
+        ImGui::EndGroup();
+
+        ImGui::EndChild(); // End effects_scroll child window
     }
     else if (ui_mode == UI_MODE_SETTINGS) {
         // SETTINGS MODE: Audio and keyboard configuration
@@ -4318,6 +4503,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Initialize effects
+    effects = regroove_effects_create();
+    if (!effects) {
+        fprintf(stderr, "Failed to initialize effects system\n");
+        return 1;
+    }
+
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ApplyFlatBlackRedSkin();
@@ -4369,6 +4561,11 @@ int main(int argc, char* argv[]) {
     }
 
     regroove_common_destroy(common_state);
+
+    // Cleanup effects
+    if (effects) {
+        regroove_effects_destroy(effects);
+    }
 
     // Cleanup LCD display
     if (lcd_display) {

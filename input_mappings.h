@@ -36,6 +36,14 @@ typedef enum {
     ACTION_RECORD_TOGGLE,    // toggle performance recording
     ACTION_SET_LOOP_STEP,    // parameter = step index (0-15), sets loop length
     ACTION_TRIGGER_PHRASE,   // parameter = phrase index (triggers phrase sequence)
+    // Effects actions (continuous, use MIDI value 0-127)
+    ACTION_FX_DISTORTION_DRIVE,    // distortion drive amount
+    ACTION_FX_DISTORTION_MIX,      // distortion dry/wet mix
+    ACTION_FX_FILTER_CUTOFF,       // filter cutoff frequency
+    ACTION_FX_FILTER_RESONANCE,    // filter resonance/Q
+    // Effects toggles (button/trigger)
+    ACTION_FX_DISTORTION_TOGGLE,   // toggle distortion on/off
+    ACTION_FX_FILTER_TOGGLE,       // toggle filter on/off
     ACTION_MAX
 } InputAction;
 

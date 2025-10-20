@@ -9,6 +9,7 @@
 #include "regroove_common.h"
 #include "midi.h"
 #include "midi_output.h"
+#include "regroove_effects.h"
 
 static volatile int running = 1;
 static struct termios orig_termios;
@@ -20,6 +21,9 @@ static SDL_AudioDeviceID audio_device_id = 0;
 // MIDI output state
 static int midi_output_device = -1;  // -1 = disabled
 static int midi_output_enabled = 0;
+
+// Effects state
+static RegrooveEffects* effects = NULL;
 
 // No local phrase state needed - using phrase engine via common_state
 
@@ -164,6 +168,11 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
     int16_t *buffer = (int16_t *)stream;
     int frames = len / (2 * sizeof(int16_t));
     regroove_render_audio(common_state->player, buffer, frames);
+
+    // Apply effects if available
+    if (effects) {
+        regroove_effects_process(effects, buffer, frames, 48000);
+    }
 }
 
 // --- Only one set of global callbacks ---
@@ -462,6 +471,41 @@ static void execute_action(InputAction action, int parameter, float value, void*
                 }
             }
             break;
+        case ACTION_FX_DISTORTION_DRIVE:
+            if (effects) {
+                // Map MIDI value (0-127) to normalized 0.0-1.0
+                regroove_effects_set_distortion_drive(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_DISTORTION_MIX:
+            if (effects) {
+                regroove_effects_set_distortion_mix(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_FILTER_CUTOFF:
+            if (effects) {
+                regroove_effects_set_filter_cutoff(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_FILTER_RESONANCE:
+            if (effects) {
+                regroove_effects_set_filter_resonance(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_DISTORTION_TOGGLE:
+            if (effects) {
+                int enabled = regroove_effects_get_distortion_enabled(effects);
+                regroove_effects_set_distortion_enabled(effects, !enabled);
+                printf("Distortion: %s\n", enabled ? "OFF" : "ON");
+            }
+            break;
+        case ACTION_FX_FILTER_TOGGLE:
+            if (effects) {
+                int enabled = regroove_effects_get_filter_enabled(effects);
+                regroove_effects_set_filter_enabled(effects, !enabled);
+                printf("Filter: %s\n", enabled ? "OFF" : "ON");
+            }
+            break;
         default:
             break;
     }
@@ -683,6 +727,15 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // Initialize effects
+    effects = regroove_effects_create();
+    if (!effects) {
+        fprintf(stderr, "Failed to initialize effects system\n");
+        regroove_common_destroy(common_state);
+        SDL_Quit();
+        return 1;
+    }
+
     // Open audio device (use selected device or NULL for default)
     const char* device_name = NULL;
     int selected_audio_device = common_state->device_config.audio_device;
@@ -762,6 +815,11 @@ int main(int argc, char *argv[]) {
     }
 
     regroove_common_destroy(common_state);
+
+    // Cleanup effects
+    if (effects) {
+        regroove_effects_destroy(effects);
+    }
 
     SDL_Quit();
     return 0;
