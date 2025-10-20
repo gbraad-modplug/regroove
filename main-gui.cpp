@@ -9,6 +9,7 @@
 #include <cmath>
 #include <vector>
 #include <sys/stat.h>
+#include <ctime>
 
 extern "C" {
 #include "regroove_common.h"
@@ -50,7 +51,8 @@ enum UIMode {
     UI_MODE_SONG = 2,
     UI_MODE_PERF = 3,
     UI_MODE_INFO = 4,
-    UI_MODE_SETTINGS = 5
+    UI_MODE_MIDI = 5,
+    UI_MODE_SETTINGS = 6
 };
 static UIMode ui_mode = UI_MODE_VOLUME;
 
@@ -76,6 +78,40 @@ static LCD* lcd_display = NULL;
 // MIDI output state
 static int midi_output_device = -1;  // -1 = disabled
 static bool midi_output_enabled = false;
+
+// MIDI monitor (circular buffer for recent MIDI messages)
+#define MIDI_MONITOR_SIZE 50
+struct MidiMonitorEntry {
+    char timestamp[16];
+    int device_id;
+    char type[16];      // "Note On", "Note Off", "CC", etc.
+    int number;         // Note number or CC number
+    int value;          // Velocity or CC value
+    bool is_output;     // true = OUT, false = IN
+};
+static MidiMonitorEntry midi_monitor[MIDI_MONITOR_SIZE];
+static int midi_monitor_head = 0;
+static int midi_monitor_count = 0;
+
+void add_to_midi_monitor(int device_id, const char* type, int number, int value, bool is_output) {
+    MidiMonitorEntry* entry = &midi_monitor[midi_monitor_head];
+
+    // Get current time
+    time_t now = time(NULL);
+    struct tm* tm_info = localtime(&now);
+    strftime(entry->timestamp, sizeof(entry->timestamp), "%H:%M:%S", tm_info);
+
+    entry->device_id = device_id;
+    snprintf(entry->type, sizeof(entry->type), "%s", type);
+    entry->number = number;
+    entry->value = value;
+    entry->is_output = is_output;
+
+    midi_monitor_head = (midi_monitor_head + 1) % MIDI_MONITOR_SIZE;
+    if (midi_monitor_count < MIDI_MONITOR_SIZE) {
+        midi_monitor_count++;
+    }
+}
 
 void refresh_audio_devices() {
     audio_device_names.clear();
@@ -670,6 +706,25 @@ static void execute_action(InputAction action, int parameter, float value, void*
         case ACTION_QUEUE_PATTERN:
             dispatch_action(ACT_QUEUE_PATTERN, parameter, 0.0f, false);
             break;
+        case ACTION_RECORD_TOGGLE:
+            // Toggle recording state
+            if (common_state && common_state->performance) {
+                static bool recording = false;
+                recording = !recording;
+                regroove_performance_set_recording(common_state->performance, recording);
+                if (recording) {
+                    if (playing) {
+                        dispatch_action(ACT_STOP, -1, 0.0f, false);
+                    }
+                    printf("Performance recording started\n");
+                } else {
+                    printf("Performance recording stopped\n");
+                }
+            }
+            break;
+        case ACTION_SET_LOOP_STEP:
+            dispatch_action(ACT_SET_LOOP_ROWS, parameter, 0.0f, false);
+            break;
         default:
             break;
     }
@@ -1125,6 +1180,15 @@ void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned ch
 
     unsigned char msg_type = status & 0xF0;
 
+    // Log to MIDI monitor
+    if (msg_type == 0x90) {  // Note On
+        add_to_midi_monitor(device_id, value > 0 ? "Note On" : "Note Off", cc_or_note, value, false);
+    } else if (msg_type == 0x80) {  // Note Off
+        add_to_midi_monitor(device_id, "Note Off", cc_or_note, value, false);
+    } else if (msg_type == 0xB0) {  // Control Change
+        add_to_midi_monitor(device_id, "CC", cc_or_note, value, false);
+    }
+
     // If in learn mode, capture the MIDI input
     if (learn_mode_active) {
         // Only learn on note-on or CC with value > 0
@@ -1472,7 +1536,9 @@ static void ShowMainUI() {
     ImVec4 recCol = recording ? ImVec4(0.90f, 0.16f, 0.18f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_Button, recCol);
     if (ImGui::Button("O", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        if (common_state && common_state->performance) {
+        if (learn_mode_active) {
+            start_learn_for_action(ACTION_RECORD_TOGGLE);
+        } else if (common_state && common_state->performance) {
             recording = !recording;
             regroove_performance_set_recording(common_state->performance, recording);
             if (recording) {
@@ -1581,6 +1647,15 @@ static void ShowMainUI() {
         ui_mode = UI_MODE_PERF;
     }
     ImGui::PopStyleColor();
+    ImGui::SameLine();
+
+    // MIDI button with active state highlighting
+    ImVec4 midiCol = (ui_mode == UI_MODE_MIDI) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, midiCol);
+    if (ImGui::Button("MIDI", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_MIDI;
+    }
+    ImGui::PopStyleColor();
     ImGui::EndGroup();
 
     ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
@@ -1644,7 +1719,8 @@ static void ShowMainUI() {
     ImVec2 origin = ImGui::GetCursorPos();
 
     // Detect UI mode change to refresh devices only when needed
-    if (ui_mode == UI_MODE_SETTINGS && last_ui_mode != UI_MODE_SETTINGS) {
+    if ((ui_mode == UI_MODE_SETTINGS || ui_mode == UI_MODE_MIDI) &&
+        (last_ui_mode != UI_MODE_SETTINGS && last_ui_mode != UI_MODE_MIDI)) {
         refresh_midi_devices();
         if (audio_device_names.empty()) {
             refresh_audio_devices();
@@ -2601,24 +2677,28 @@ static void ShowMainUI() {
 
         ImGui::EndChild(); // End info_scroll child window
     }
-    else if (ui_mode == UI_MODE_SETTINGS) {
-        // SETTINGS MODE: Show device configuration and input mappings
+    else if (ui_mode == UI_MODE_MIDI) {
+        // MIDI MODE: Consolidated MIDI configuration panel
 
         ImGui::SetCursorPos(ImVec2(origin.x + 16.0f, origin.y + 16.0f));
 
-        // Make the entire settings area scrollable
-        ImGui::BeginChild("##settings_scroll", ImVec2(rightW - 32.0f, contentHeight - 32.0f), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+        // Make the entire MIDI area scrollable
+        ImGui::BeginChild("##midi_scroll", ImVec2(rightW - 32.0f, contentHeight - 32.0f), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
         ImGui::BeginGroup();
 
+        // =====================================================================
+        // SECTION 1: MIDI DEVICES
+        // =====================================================================
         ImGui::Text("MIDI Device Configuration");
+        ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 12.0f));
 
         // Use cached MIDI port count (refreshed when panel is first shown)
         int num_midi_ports = cached_midi_port_count >= 0 ? cached_midi_port_count : 0;
 
         // MIDI Device 0 selection
-        ImGui::Text("MIDI Device 0:");
+        ImGui::Text("MIDI Input 0:");
         ImGui::SameLine(150.0f);
         int current_device_0 = common_state ? common_state->device_config.midi_device_0 : -1;
         char device_0_label[128];
@@ -2685,7 +2765,7 @@ static void ShowMainUI() {
         ImGui::Dummy(ImVec2(0, 8.0f));
 
         // MIDI Device 1 selection
-        ImGui::Text("MIDI Device 1:");
+        ImGui::Text("MIDI Input 1:");
         ImGui::SameLine(150.0f);
         int current_device_1 = common_state ? common_state->device_config.midi_device_1 : -1;
         char device_1_label[128];
@@ -2758,8 +2838,9 @@ static void ShowMainUI() {
         ImGui::Dummy(ImVec2(0, 20.0f));
 
         // MIDI Output Device Configuration
-        ImGui::Text("MIDI Output Configuration (Experimental)");
-        ImGui::Dummy(ImVec2(0, 12.0f));
+        ImGui::Text("MIDI Output (Experimental)");
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 8.0f));
         ImGui::TextWrapped("Send MIDI notes to external synths based on tracker playback. Effect commands 0FFF and EC0 trigger note-off.");
         ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -2824,63 +2905,78 @@ static void ShowMainUI() {
         }
 
         ImGui::Dummy(ImVec2(0, 20.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 20.0f));
 
-        // Audio Device Configuration
-        ImGui::Text("Audio Device Configuration");
-        ImGui::Dummy(ImVec2(0, 12.0f));
+        // =====================================================================
+        // SECTION 2: MIDI MONITOR
+        // =====================================================================
+        ImGui::Text("MIDI Monitor");
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 8.0f));
 
-        // Refresh audio device list if empty
-        if (audio_device_names.empty()) {
-            refresh_audio_devices();
+        ImGui::TextWrapped("Recent MIDI messages (IN = incoming from devices, OUT = outgoing to synths):");
+        ImGui::Dummy(ImVec2(0, 8.0f));
+
+        // MIDI monitor table
+        ImGui::BeginChild("##midi_monitor", ImVec2(rightW - 64.0f, 250.0f), true);
+
+        ImGui::Columns(6, "midi_monitor_columns");
+        ImGui::SetColumnWidth(0, 80.0f);   // Time
+        ImGui::SetColumnWidth(1, 60.0f);   // Dir
+        ImGui::SetColumnWidth(2, 70.0f);   // Device
+        ImGui::SetColumnWidth(3, 100.0f);  // Type
+        ImGui::SetColumnWidth(4, 80.0f);   // Number
+        ImGui::SetColumnWidth(5, 80.0f);   // Value
+
+        ImGui::Text("Time"); ImGui::NextColumn();
+        ImGui::Text("Dir"); ImGui::NextColumn();
+        ImGui::Text("Device"); ImGui::NextColumn();
+        ImGui::Text("Type"); ImGui::NextColumn();
+        ImGui::Text("Number"); ImGui::NextColumn();
+        ImGui::Text("Value"); ImGui::NextColumn();
+        ImGui::Separator();
+
+        // Display MIDI monitor entries (newest first)
+        for (int i = 0; i < midi_monitor_count; i++) {
+            int idx = (midi_monitor_head - 1 - i + MIDI_MONITOR_SIZE) % MIDI_MONITOR_SIZE;
+            MidiMonitorEntry* entry = &midi_monitor[idx];
+
+            ImGui::Text("%s", entry->timestamp); ImGui::NextColumn();
+
+            // Direction with color
+            if (entry->is_output) {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f), "OUT");
+            } else {
+                ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "IN");
+            }
+            ImGui::NextColumn();
+
+            ImGui::Text("Dev %d", entry->device_id); ImGui::NextColumn();
+            ImGui::Text("%s", entry->type); ImGui::NextColumn();
+            ImGui::Text("%d", entry->number); ImGui::NextColumn();
+            ImGui::Text("%d", entry->value); ImGui::NextColumn();
         }
 
-        ImGui::Text("Audio Output:");
-        ImGui::SameLine(150.0f);
+        ImGui::Columns(1);
+        ImGui::EndChild();
 
-        const char* current_audio_label = (selected_audio_device >= 0 && selected_audio_device < (int)audio_device_names.size())
-            ? audio_device_names[selected_audio_device].c_str()
-            : "Default";
-
-        if (ImGui::BeginCombo("##audio_device", current_audio_label)) {
-            // Default device option
-            if (ImGui::Selectable("Default", selected_audio_device == -1)) {
-                selected_audio_device = -1;
-                if (common_state) {
-                    common_state->device_config.audio_device = -1;
-                    regroove_common_save_device_config(common_state, current_config_file);
-                }
-                printf("Audio device set to: Default\n");
-                // Note: Audio device hot-swap would require SDL_CloseAudio() and SDL_OpenAudio()
-                // which is more complex than MIDI hot-swap. For now, just save the preference.
-            }
-
-            // List all available audio devices
-            for (int i = 0; i < (int)audio_device_names.size(); i++) {
-                if (ImGui::Selectable(audio_device_names[i].c_str(), selected_audio_device == i)) {
-                    selected_audio_device = i;
-                    if (common_state) {
-                        common_state->device_config.audio_device = i;
-                        regroove_common_save_device_config(common_state, current_config_file);
-                    }
-                    printf("Audio device set to: %s\n", audio_device_names[i].c_str());
-                    // Note: Audio device hot-swap would require SDL_CloseAudio() and SDL_OpenAudio()
-                    // which is more complex than MIDI hot-swap. For now, just save the preference.
-                }
-            }
-            ImGui::EndCombo();
-        }
-
-        ImGui::SameLine();
-        if (ImGui::Button("Refresh##audio", ImVec2(80.0f, 0.0f))) {
-            refresh_audio_devices();
-            printf("Refreshed audio device list (%d devices found)\n", (int)audio_device_names.size());
+        ImGui::Dummy(ImVec2(0, 8.0f));
+        if (ImGui::Button("Clear Monitor", ImVec2(120.0f, 0.0f))) {
+            midi_monitor_count = 0;
+            midi_monitor_head = 0;
         }
 
         ImGui::Dummy(ImVec2(0, 20.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 20.0f));
 
-        // Trigger Pad Configuration (Application Pads A1-A16)
-        ImGui::Text("Trigger Pad Configuration (A1-A16)");
-        ImGui::Dummy(ImVec2(0, 12.0f));
+        // =====================================================================
+        // SECTION 3: APPLICATION TRIGGER PADS (A1-A16)
+        // =====================================================================
+        ImGui::Text("Application Trigger Pads (A1-A16)");
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 8.0f));
 
         ImGui::TextWrapped("Configure application-wide trigger pads. Use LEARN mode on the PADS panel to assign MIDI notes.");
         ImGui::Dummy(ImVec2(0, 12.0f));
@@ -3015,8 +3111,452 @@ static void ShowMainUI() {
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 20.0f));
 
+        // =====================================================================
+        // SECTION 4: SONG TRIGGER PADS (S1-S16)
+        // =====================================================================
+        ImGui::Text("Song Trigger Pads (S1-S16)");
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 8.0f));
+
+        ImGui::TextWrapped("Configure song-specific trigger pads that are saved with this module. Use LEARN mode on the SONG panel to assign MIDI notes.");
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
+        // Song pads configuration table
+        ImGui::BeginChild("##song_pads_table", ImVec2(rightW - 64.0f, 400.0f), true);
+
+        if (common_state && common_state->metadata) {
+            ImGui::Columns(6, "song_pad_columns");
+            ImGui::SetColumnWidth(0, 50.0f);   // Pad
+            ImGui::SetColumnWidth(1, 160.0f);  // Action
+            ImGui::SetColumnWidth(2, 150.0f);  // Parameter
+            ImGui::SetColumnWidth(3, 90.0f);   // MIDI Note
+            ImGui::SetColumnWidth(4, 100.0f);  // Device
+            ImGui::SetColumnWidth(5, 80.0f);   // Actions
+
+            ImGui::Text("Pad"); ImGui::NextColumn();
+            ImGui::Text("Action"); ImGui::NextColumn();
+            ImGui::Text("Parameter"); ImGui::NextColumn();
+            ImGui::Text("MIDI Note"); ImGui::NextColumn();
+            ImGui::Text("Device"); ImGui::NextColumn();
+            ImGui::Text("Actions"); ImGui::NextColumn();
+            ImGui::Separator();
+
+            bool song_pads_changed = false;
+            for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
+                TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[i];
+                ImGui::PushID(i + 1000); // Offset to avoid ID collision
+
+                // Pad number
+                ImGui::Text("S%d", i + 1);
+                ImGui::NextColumn();
+
+                // Action dropdown
+                ImGui::SetNextItemWidth(180.0f);
+                if (ImGui::BeginCombo("##action", input_action_name(pad->action))) {
+                    for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
+                        InputAction act = (InputAction)a;
+                        if (ImGui::Selectable(input_action_name(act), pad->action == act)) {
+                            pad->action = act;
+                            song_pads_changed = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::NextColumn();
+
+                // Parameter with +/- buttons (conditional based on action)
+                if (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_CHANNEL_SOLO ||
+                    pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_TRIGGER_PAD ||
+                    pad->action == ACTION_JUMP_TO_ORDER || pad->action == ACTION_JUMP_TO_PATTERN ||
+                    pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN) {
+
+                    if (ImGui::Button("-", ImVec2(30.0f, 0.0f))) {
+                        if (pad->parameter > 0) {
+                            pad->parameter--;
+                            song_pads_changed = true;
+                        }
+                    }
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(60.0f);
+                    if (ImGui::InputInt("##param", &pad->parameter, 0, 0)) {
+                        if (pad->parameter < 0) pad->parameter = 0;
+                        song_pads_changed = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("+", ImVec2(30.0f, 0.0f))) {
+                        pad->parameter++;
+                        song_pads_changed = true;
+                    }
+                } else {
+                    ImGui::Text("-");
+                }
+                ImGui::NextColumn();
+
+                // MIDI Note display (read-only, set via LEARN mode)
+                if (pad->midi_note >= 0) {
+                    ImGui::Text("Note %d", pad->midi_note);
+                } else {
+                    ImGui::TextDisabled("Not set");
+                }
+                ImGui::NextColumn();
+
+                // Device selection
+                if (pad->midi_note >= 0) {
+                    const char* device_label = pad->midi_device == -1 ? "Any" :
+                                               pad->midi_device == -2 ? "Disabled" :
+                                               (pad->midi_device == 0 ? "Dev 0" : "Dev 1");
+                    ImGui::SetNextItemWidth(90.0f);
+                    if (ImGui::BeginCombo("##device", device_label)) {
+                        if (ImGui::Selectable("Any", pad->midi_device == -1)) {
+                            pad->midi_device = -1;
+                            song_pads_changed = true;
+                        }
+                        if (ImGui::Selectable("Dev 0", pad->midi_device == 0)) {
+                            pad->midi_device = 0;
+                            song_pads_changed = true;
+                        }
+                        if (ImGui::Selectable("Dev 1", pad->midi_device == 1)) {
+                            pad->midi_device = 1;
+                            song_pads_changed = true;
+                        }
+                        if (ImGui::Selectable("Disabled", pad->midi_device == -2)) {
+                            pad->midi_device = -2;
+                            song_pads_changed = true;
+                        }
+                        ImGui::EndCombo();
+                    }
+                } else {
+                    ImGui::TextDisabled("-");
+                }
+                ImGui::NextColumn();
+
+                // Unmap button
+                if (pad->midi_note >= 0) {
+                    if (ImGui::Button("Unmap", ImVec2(70.0f, 0.0f))) {
+                        pad->midi_note = -1;
+                        pad->midi_device = -1;
+                        song_pads_changed = true;
+                        printf("Unmapped Song Pad S%d\n", i + 1);
+                    }
+                } else {
+                    ImGui::TextDisabled("-");
+                }
+                ImGui::NextColumn();
+
+                ImGui::PopID();
+            }
+
+            // Auto-save if any changes were made
+            if (song_pads_changed) {
+                regroove_common_save_rgx(common_state);
+            }
+
+            ImGui::Columns(1);
+        }
+
+        ImGui::EndChild();
+
+        ImGui::Dummy(ImVec2(0, 12.0f));
+        ImGui::TextWrapped("To assign MIDI notes to song pads, use LEARN mode: click the LEARN button, then click a pad on the SONG panel, then press a MIDI note on your controller.");
+
+        ImGui::Dummy(ImVec2(0, 20.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
+        // =====================================================================
+        // SECTION 5: MIDI CC MAPPINGS
+        // =====================================================================
+        ImGui::Text("MIDI CC Mappings");
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
+        // Static variables for new MIDI mapping
+        static InputAction new_midi_action = ACTION_PLAY_PAUSE;
+        static int new_midi_parameter = 0;
+        static int new_midi_device = -1; // -1 = any device
+        static int new_midi_cc = 1;
+        static int new_midi_threshold = 64;
+        static int new_midi_continuous = 0;
+
+        if (common_state && common_state->input_mappings) {
+            // Display existing MIDI mappings in a table
+            ImGui::BeginChild("##midi_mappings_list", ImVec2(rightW - 64.0f, 200.0f), true);
+
+            ImGui::Columns(6, "midi_columns");
+            ImGui::SetColumnWidth(0, 80.0f);
+            ImGui::SetColumnWidth(1, 80.0f);
+            ImGui::SetColumnWidth(2, 180.0f);
+            ImGui::SetColumnWidth(3, 80.0f);
+            ImGui::SetColumnWidth(4, 100.0f);
+            ImGui::SetColumnWidth(5, 80.0f);
+
+            ImGui::Text("Device"); ImGui::NextColumn();
+            ImGui::Text("CC"); ImGui::NextColumn();
+            ImGui::Text("Action"); ImGui::NextColumn();
+            ImGui::Text("Param"); ImGui::NextColumn();
+            ImGui::Text("Mode"); ImGui::NextColumn();
+            ImGui::Text("Delete"); ImGui::NextColumn();
+            ImGui::Separator();
+
+            int delete_midi_index = -1;
+            for (int i = 0; i < common_state->input_mappings->midi_count; i++) {
+                MidiMapping *mm = &common_state->input_mappings->midi_mappings[i];
+
+                // Display device
+                if (mm->device_id == -1) {
+                    ImGui::Text("Any");
+                } else {
+                    ImGui::Text("%d", mm->device_id);
+                }
+                ImGui::NextColumn();
+
+                // Display CC number
+                ImGui::Text("CC%d", mm->cc_number); ImGui::NextColumn();
+
+                // Display action
+                ImGui::Text("%s", input_action_name(mm->action)); ImGui::NextColumn();
+
+                // Display parameter
+                if (mm->action == ACTION_CHANNEL_MUTE || mm->action == ACTION_CHANNEL_SOLO ||
+                    mm->action == ACTION_CHANNEL_VOLUME || mm->action == ACTION_TRIGGER_PAD ||
+                    mm->action == ACTION_JUMP_TO_ORDER || mm->action == ACTION_JUMP_TO_PATTERN ||
+                    mm->action == ACTION_QUEUE_ORDER || mm->action == ACTION_QUEUE_PATTERN) {
+                    ImGui::Text("%d", mm->parameter);
+                } else {
+                    ImGui::Text("-");
+                }
+                ImGui::NextColumn();
+
+                // Display mode
+                if (mm->continuous) {
+                    ImGui::Text("Continuous");
+                } else {
+                    ImGui::Text("Trigger@%d", mm->threshold);
+                }
+                ImGui::NextColumn();
+
+                // Delete button
+                ImGui::PushID(2000 + i);
+                if (ImGui::Button("X", ImVec2(40.0f, 0.0f))) {
+                    delete_midi_index = i;
+                }
+                ImGui::PopID();
+                ImGui::NextColumn();
+            }
+
+            ImGui::Columns(1);
+            ImGui::EndChild();
+
+            // Handle deletion
+            if (delete_midi_index >= 0) {
+                for (int j = delete_midi_index; j < common_state->input_mappings->midi_count - 1; j++) {
+                    common_state->input_mappings->midi_mappings[j] =
+                        common_state->input_mappings->midi_mappings[j + 1];
+                }
+                common_state->input_mappings->midi_count--;
+                printf("Deleted MIDI mapping at index %d\n", delete_midi_index);
+                save_mappings_to_config();
+            }
+
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Add new MIDI mapping UI
+            ImGui::Text("Add MIDI CC Mapping:");
+            ImGui::Dummy(ImVec2(0, 4.0f));
+
+            // Device dropdown
+            ImGui::Text("Device:");
+            ImGui::SameLine(150.0f);
+            ImGui::SetNextItemWidth(150.0f);
+            const char* device_labels[] = { "Any", "Device 0", "Device 1" };
+            int device_combo_idx = new_midi_device == -1 ? 0 : new_midi_device + 1;
+            if (ImGui::BeginCombo("##new_midi_device", device_labels[device_combo_idx])) {
+                if (ImGui::Selectable("Any", new_midi_device == -1)) new_midi_device = -1;
+                if (ImGui::Selectable("Device 0", new_midi_device == 0)) new_midi_device = 0;
+                if (ImGui::Selectable("Device 1", new_midi_device == 1)) new_midi_device = 1;
+                ImGui::EndCombo();
+            }
+
+            // CC number
+            ImGui::Text("CC Number:");
+            ImGui::SameLine(150.0f);
+            ImGui::SetNextItemWidth(100.0f);
+            ImGui::InputInt("##new_midi_cc", &new_midi_cc);
+            if (new_midi_cc < 0) new_midi_cc = 0;
+            if (new_midi_cc > 127) new_midi_cc = 127;
+
+            // Action dropdown
+            ImGui::Text("Action:");
+            ImGui::SameLine(150.0f);
+            ImGui::SetNextItemWidth(200.0f);
+            if (ImGui::BeginCombo("##new_midi_action", input_action_name(new_midi_action))) {
+                for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
+                    InputAction act = (InputAction)a;
+                    if (ImGui::Selectable(input_action_name(act), new_midi_action == act)) {
+                        new_midi_action = act;
+                        new_midi_parameter = 0;
+                        // Auto-set continuous mode for volume and pitch controls
+                        if (act == ACTION_CHANNEL_VOLUME || act == ACTION_PITCH_SET) {
+                            new_midi_continuous = 1;
+                            new_midi_threshold = 0;
+                        } else {
+                            new_midi_continuous = 0;
+                            new_midi_threshold = 64;
+                        }
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            // Parameter input (only for actions that need it)
+            if (new_midi_action == ACTION_CHANNEL_MUTE || new_midi_action == ACTION_CHANNEL_SOLO ||
+                new_midi_action == ACTION_CHANNEL_VOLUME || new_midi_action == ACTION_TRIGGER_PAD) {
+                ImGui::Text("Parameter:");
+                ImGui::SameLine(150.0f);
+                ImGui::SetNextItemWidth(100.0f);
+                ImGui::InputInt("##new_midi_param", &new_midi_parameter);
+                if (new_midi_parameter < 0) new_midi_parameter = 0;
+                if (new_midi_action == ACTION_TRIGGER_PAD && new_midi_parameter >= MAX_TRIGGER_PADS)
+                    new_midi_parameter = MAX_TRIGGER_PADS - 1;
+                if ((new_midi_action == ACTION_CHANNEL_MUTE || new_midi_action == ACTION_CHANNEL_SOLO ||
+                     new_midi_action == ACTION_CHANNEL_VOLUME) && new_midi_parameter >= MAX_CHANNELS)
+                    new_midi_parameter = MAX_CHANNELS - 1;
+            }
+
+            // Mode selection
+            ImGui::Text("Mode:");
+            ImGui::SameLine(150.0f);
+            ImGui::Checkbox("Continuous", (bool*)&new_midi_continuous);
+            if (!new_midi_continuous) {
+                ImGui::SameLine();
+                ImGui::Text("Threshold:");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(100.0f);
+                ImGui::InputInt("##new_midi_threshold", &new_midi_threshold);
+                if (new_midi_threshold < 0) new_midi_threshold = 0;
+                if (new_midi_threshold > 127) new_midi_threshold = 127;
+            }
+
+            // Add button
+            if (ImGui::Button("Add MIDI Mapping", ImVec2(200.0f, 0.0f))) {
+                if (common_state->input_mappings->midi_count < common_state->input_mappings->midi_capacity) {
+                    // Check if this CC/device combo already exists, remove it
+                    for (int i = 0; i < common_state->input_mappings->midi_count; i++) {
+                        MidiMapping *m = &common_state->input_mappings->midi_mappings[i];
+                        if (m->cc_number == new_midi_cc &&
+                            (m->device_id == new_midi_device || m->device_id == -1 || new_midi_device == -1)) {
+                            for (int j = i; j < common_state->input_mappings->midi_count - 1; j++) {
+                                common_state->input_mappings->midi_mappings[j] =
+                                    common_state->input_mappings->midi_mappings[j + 1];
+                            }
+                            common_state->input_mappings->midi_count--;
+                            break;
+                        }
+                    }
+
+                    // Add new mapping
+                    MidiMapping new_mapping;
+                    new_mapping.device_id = new_midi_device;
+                    new_mapping.cc_number = new_midi_cc;
+                    new_mapping.action = new_midi_action;
+                    new_mapping.parameter = new_midi_parameter;
+                    new_mapping.threshold = new_midi_threshold;
+                    new_mapping.continuous = new_midi_continuous;
+                    common_state->input_mappings->midi_mappings[common_state->input_mappings->midi_count++] = new_mapping;
+                    printf("Added MIDI mapping: CC%d (device %d) -> %s (param=%d, %s)\n",
+                           new_midi_cc, new_midi_device, input_action_name(new_midi_action),
+                           new_midi_parameter, new_midi_continuous ? "continuous" : "trigger");
+                    save_mappings_to_config();
+                } else {
+                    printf("MIDI mappings capacity reached\n");
+                }
+            }
+        }
+
+        ImGui::Dummy(ImVec2(0, 20.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
+        // =====================================================================
+        // SECTION 6: SAVE BUTTON
+        // =====================================================================
+        if (ImGui::Button("Save All MIDI Settings", ImVec2(220.0f, 40.0f))) {
+            save_mappings_to_config();
+            printf("MIDI settings saved to %s\n", current_config_file);
+        }
+
+        ImGui::EndGroup();
+
+        ImGui::EndChild(); // End midi_scroll child window
+    }
+    else if (ui_mode == UI_MODE_SETTINGS) {
+        // SETTINGS MODE: Audio and keyboard configuration
+
+        ImGui::SetCursorPos(ImVec2(origin.x + 16.0f, origin.y + 16.0f));
+
+        // Make the entire settings area scrollable
+        ImGui::BeginChild("##settings_scroll", ImVec2(rightW - 32.0f, contentHeight - 32.0f), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+        ImGui::BeginGroup();
+
+        ImGui::Text("Audio Device Configuration");
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
+        // Refresh audio device list if empty
+        if (audio_device_names.empty()) {
+            refresh_audio_devices();
+        }
+
+        ImGui::Text("Audio Output:");
+        ImGui::SameLine(150.0f);
+
+        const char* current_audio_label = (selected_audio_device >= 0 && selected_audio_device < (int)audio_device_names.size())
+            ? audio_device_names[selected_audio_device].c_str()
+            : "Default";
+
+        if (ImGui::BeginCombo("##audio_device", current_audio_label)) {
+            // Default device option
+            if (ImGui::Selectable("Default", selected_audio_device == -1)) {
+                selected_audio_device = -1;
+                if (common_state) {
+                    common_state->device_config.audio_device = -1;
+                    regroove_common_save_device_config(common_state, current_config_file);
+                }
+                printf("Audio device set to: Default\n");
+                // Note: Audio device hot-swap would require SDL_CloseAudio() and SDL_OpenAudio()
+                // which is more complex than MIDI hot-swap. For now, just save the preference.
+            }
+
+            // List all available audio devices
+            for (int i = 0; i < (int)audio_device_names.size(); i++) {
+                if (ImGui::Selectable(audio_device_names[i].c_str(), selected_audio_device == i)) {
+                    selected_audio_device = i;
+                    if (common_state) {
+                        common_state->device_config.audio_device = i;
+                        regroove_common_save_device_config(common_state, current_config_file);
+                    }
+                    printf("Audio device set to: %s\n", audio_device_names[i].c_str());
+                    // Note: Audio device hot-swap would require SDL_CloseAudio() and SDL_OpenAudio()
+                    // which is more complex than MIDI hot-swap. For now, just save the preference.
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Refresh##audio", ImVec2(80.0f, 0.0f))) {
+            refresh_audio_devices();
+            printf("Refreshed audio device list (%d devices found)\n", (int)audio_device_names.size());
+        }
+
+        ImGui::Dummy(ImVec2(0, 20.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
         // Keyboard Mappings Section
         ImGui::Text("Keyboard Mappings");
+        ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 12.0f));
 
         // Static variables for new keyboard mapping
@@ -3171,216 +3711,6 @@ static void ShowMainUI() {
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 20.0f));
 
-        // MIDI CC Mappings Section
-        ImGui::Text("MIDI CC Mappings");
-        ImGui::Dummy(ImVec2(0, 12.0f));
-
-        // Static variables for new MIDI mapping
-        static InputAction new_midi_action = ACTION_PLAY_PAUSE;
-        static int new_midi_parameter = 0;
-        static int new_midi_device = -1; // -1 = any device
-        static int new_midi_cc = 1;
-        static int new_midi_threshold = 64;
-        static int new_midi_continuous = 0;
-
-        if (common_state && common_state->input_mappings) {
-            // Display existing MIDI mappings in a table
-            ImGui::BeginChild("##midi_mappings_list", ImVec2(rightW - 64.0f, 200.0f), true);
-
-            ImGui::Columns(6, "midi_columns");
-            ImGui::SetColumnWidth(0, 80.0f);
-            ImGui::SetColumnWidth(1, 80.0f);
-            ImGui::SetColumnWidth(2, 180.0f);
-            ImGui::SetColumnWidth(3, 80.0f);
-            ImGui::SetColumnWidth(4, 100.0f);
-            ImGui::SetColumnWidth(5, 80.0f);
-
-            ImGui::Text("Device"); ImGui::NextColumn();
-            ImGui::Text("CC"); ImGui::NextColumn();
-            ImGui::Text("Action"); ImGui::NextColumn();
-            ImGui::Text("Param"); ImGui::NextColumn();
-            ImGui::Text("Mode"); ImGui::NextColumn();
-            ImGui::Text("Delete"); ImGui::NextColumn();
-            ImGui::Separator();
-
-            int delete_midi_index = -1;
-            for (int i = 0; i < common_state->input_mappings->midi_count; i++) {
-                MidiMapping *mm = &common_state->input_mappings->midi_mappings[i];
-
-                // Display device
-                if (mm->device_id == -1) {
-                    ImGui::Text("Any");
-                } else {
-                    ImGui::Text("%d", mm->device_id);
-                }
-                ImGui::NextColumn();
-
-                // Display CC number
-                ImGui::Text("CC%d", mm->cc_number); ImGui::NextColumn();
-
-                // Display action
-                ImGui::Text("%s", input_action_name(mm->action)); ImGui::NextColumn();
-
-                // Display parameter
-                if (mm->action == ACTION_CHANNEL_MUTE || mm->action == ACTION_CHANNEL_SOLO ||
-                    mm->action == ACTION_CHANNEL_VOLUME || mm->action == ACTION_TRIGGER_PAD ||
-                    mm->action == ACTION_JUMP_TO_ORDER || mm->action == ACTION_JUMP_TO_PATTERN ||
-                    mm->action == ACTION_QUEUE_ORDER || mm->action == ACTION_QUEUE_PATTERN) {
-                    ImGui::Text("%d", mm->parameter);
-                } else {
-                    ImGui::Text("-");
-                }
-                ImGui::NextColumn();
-
-                // Display mode
-                if (mm->continuous) {
-                    ImGui::Text("Continuous");
-                } else {
-                    ImGui::Text("Trigger@%d", mm->threshold);
-                }
-                ImGui::NextColumn();
-
-                // Delete button
-                ImGui::PushID(1000 + i);
-                if (ImGui::Button("X", ImVec2(40.0f, 0.0f))) {
-                    delete_midi_index = i;
-                }
-                ImGui::PopID();
-                ImGui::NextColumn();
-            }
-
-            ImGui::Columns(1);
-            ImGui::EndChild();
-
-            // Handle deletion
-            if (delete_midi_index >= 0) {
-                for (int j = delete_midi_index; j < common_state->input_mappings->midi_count - 1; j++) {
-                    common_state->input_mappings->midi_mappings[j] =
-                        common_state->input_mappings->midi_mappings[j + 1];
-                }
-                common_state->input_mappings->midi_count--;
-                printf("Deleted MIDI mapping at index %d\n", delete_midi_index);
-            }
-
-            ImGui::Dummy(ImVec2(0, 8.0f));
-
-            // Add new MIDI mapping UI
-            ImGui::Text("Add MIDI CC Mapping:");
-            ImGui::Dummy(ImVec2(0, 4.0f));
-
-            // Device dropdown
-            ImGui::Text("Device:");
-            ImGui::SameLine(150.0f);
-            ImGui::SetNextItemWidth(150.0f);
-            const char* device_labels[] = { "Any", "Device 0", "Device 1" };
-            int device_combo_idx = new_midi_device == -1 ? 0 : new_midi_device + 1;
-            if (ImGui::BeginCombo("##new_midi_device", device_labels[device_combo_idx])) {
-                if (ImGui::Selectable("Any", new_midi_device == -1)) new_midi_device = -1;
-                if (ImGui::Selectable("Device 0", new_midi_device == 0)) new_midi_device = 0;
-                if (ImGui::Selectable("Device 1", new_midi_device == 1)) new_midi_device = 1;
-                ImGui::EndCombo();
-            }
-
-            // CC number
-            ImGui::Text("CC Number:");
-            ImGui::SameLine(150.0f);
-            ImGui::SetNextItemWidth(100.0f);
-            ImGui::InputInt("##new_midi_cc", &new_midi_cc);
-            if (new_midi_cc < 0) new_midi_cc = 0;
-            if (new_midi_cc > 127) new_midi_cc = 127;
-
-            // Action dropdown
-            ImGui::Text("Action:");
-            ImGui::SameLine(150.0f);
-            ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::BeginCombo("##new_midi_action", input_action_name(new_midi_action))) {
-                for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
-                    InputAction act = (InputAction)a;
-                    if (ImGui::Selectable(input_action_name(act), new_midi_action == act)) {
-                        new_midi_action = act;
-                        new_midi_parameter = 0;
-                        // Auto-set continuous mode for volume and pitch controls
-                        if (act == ACTION_CHANNEL_VOLUME || act == ACTION_PITCH_SET) {
-                            new_midi_continuous = 1;
-                            new_midi_threshold = 0;
-                        } else {
-                            new_midi_continuous = 0;
-                            new_midi_threshold = 64;
-                        }
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            // Parameter input (only for actions that need it)
-            if (new_midi_action == ACTION_CHANNEL_MUTE || new_midi_action == ACTION_CHANNEL_SOLO ||
-                new_midi_action == ACTION_CHANNEL_VOLUME || new_midi_action == ACTION_TRIGGER_PAD) {
-                ImGui::Text("Parameter:");
-                ImGui::SameLine(150.0f);
-                ImGui::SetNextItemWidth(100.0f);
-                ImGui::InputInt("##new_midi_param", &new_midi_parameter);
-                if (new_midi_parameter < 0) new_midi_parameter = 0;
-                if (new_midi_action == ACTION_TRIGGER_PAD && new_midi_parameter >= MAX_TRIGGER_PADS)
-                    new_midi_parameter = MAX_TRIGGER_PADS - 1;
-                if ((new_midi_action == ACTION_CHANNEL_MUTE || new_midi_action == ACTION_CHANNEL_SOLO ||
-                     new_midi_action == ACTION_CHANNEL_VOLUME) && new_midi_parameter >= MAX_CHANNELS)
-                    new_midi_parameter = MAX_CHANNELS - 1;
-            }
-
-            // Mode selection
-            ImGui::Text("Mode:");
-            ImGui::SameLine(150.0f);
-            ImGui::Checkbox("Continuous", (bool*)&new_midi_continuous);
-            if (!new_midi_continuous) {
-                ImGui::SameLine();
-                ImGui::Text("Threshold:");
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(100.0f);
-                ImGui::InputInt("##new_midi_threshold", &new_midi_threshold);
-                if (new_midi_threshold < 0) new_midi_threshold = 0;
-                if (new_midi_threshold > 127) new_midi_threshold = 127;
-            }
-
-            // Add button
-            if (ImGui::Button("Add MIDI Mapping", ImVec2(200.0f, 0.0f))) {
-                if (common_state->input_mappings->midi_count < common_state->input_mappings->midi_capacity) {
-                    // Check if this CC/device combo already exists, remove it
-                    for (int i = 0; i < common_state->input_mappings->midi_count; i++) {
-                        MidiMapping *m = &common_state->input_mappings->midi_mappings[i];
-                        if (m->cc_number == new_midi_cc &&
-                            (m->device_id == new_midi_device || m->device_id == -1 || new_midi_device == -1)) {
-                            for (int j = i; j < common_state->input_mappings->midi_count - 1; j++) {
-                                common_state->input_mappings->midi_mappings[j] =
-                                    common_state->input_mappings->midi_mappings[j + 1];
-                            }
-                            common_state->input_mappings->midi_count--;
-                            break;
-                        }
-                    }
-
-                    // Add new mapping
-                    MidiMapping new_mapping;
-                    new_mapping.device_id = new_midi_device;
-                    new_mapping.cc_number = new_midi_cc;
-                    new_mapping.action = new_midi_action;
-                    new_mapping.parameter = new_midi_parameter;
-                    new_mapping.threshold = new_midi_threshold;
-                    new_mapping.continuous = new_midi_continuous;
-                    common_state->input_mappings->midi_mappings[common_state->input_mappings->midi_count++] = new_mapping;
-                    printf("Added MIDI mapping: CC%d (device %d) -> %s (param=%d, %s)\n",
-                           new_midi_cc, new_midi_device, input_action_name(new_midi_action),
-                           new_midi_parameter, new_midi_continuous ? "continuous" : "trigger");
-                } else {
-                    printf("MIDI mappings capacity reached\n");
-                }
-            }
-        }
-
-        ImGui::Dummy(ImVec2(0, 20.0f));
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0, 20.0f));
-
-        // Save button to persist settings
         if (ImGui::Button("Save Settings", ImVec2(180.0f, 40.0f))) {
             if (common_state && common_state->input_mappings) {
                 // Save input mappings
@@ -3445,8 +3775,13 @@ static void ShowMainUI() {
         ImGui::PushStyleColor(ImGuiCol_Button, btnCol);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f,0.48f,0.32f,1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.42f,0.65f,0.42f,1.0f));
-        if (ImGui::Button((std::string("##step")+std::to_string(i)).c_str(), ImVec2(stepWidth, stepWidth)))
-            dispatch_action(ACT_SET_LOOP_ROWS, i);
+        if (ImGui::Button((std::string("##step")+std::to_string(i)).c_str(), ImVec2(stepWidth, stepWidth))) {
+            if (learn_mode_active) {
+                start_learn_for_action(ACTION_SET_LOOP_STEP, i);
+            } else {
+                dispatch_action(ACT_SET_LOOP_ROWS, i);
+            }
+        }
         ImGui::PopStyleColor(3);
         if (i != numSteps - 1) ImGui::SameLine(0.0f, gap);
     }

@@ -33,6 +33,8 @@ typedef enum {
     ACTION_JUMP_TO_PATTERN,  // parameter = pattern index (immediate jump)
     ACTION_QUEUE_ORDER,      // parameter = order index (queued jump at pattern end)
     ACTION_QUEUE_PATTERN,    // parameter = pattern index (queued jump at pattern end)
+    ACTION_RECORD_TOGGLE,    // toggle performance recording
+    ACTION_SET_LOOP_STEP,    // parameter = step index (0-15), sets loop length
     ACTION_MAX
 } InputAction;
 

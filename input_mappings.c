@@ -37,6 +37,8 @@ InputAction parse_action(const char *str) {
     if (strcmp(str, "jump_to_pattern") == 0) return ACTION_JUMP_TO_PATTERN;
     if (strcmp(str, "queue_order") == 0) return ACTION_QUEUE_ORDER;
     if (strcmp(str, "queue_pattern") == 0) return ACTION_QUEUE_PATTERN;
+    if (strcmp(str, "record_toggle") == 0) return ACTION_RECORD_TOGGLE;
+    if (strcmp(str, "set_loop_step") == 0) return ACTION_SET_LOOP_STEP;
     return ACTION_NONE;
 }
 
@@ -71,6 +73,8 @@ const char* input_action_name(InputAction action) {
         case ACTION_JUMP_TO_PATTERN: return "jump_to_pattern";
         case ACTION_QUEUE_ORDER: return "queue_order";
         case ACTION_QUEUE_PATTERN: return "queue_pattern";
+        case ACTION_RECORD_TOGGLE: return "record_toggle";
+        case ACTION_SET_LOOP_STEP: return "set_loop_step";
         default: return "none";
     }
 }
