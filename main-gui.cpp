@@ -3915,11 +3915,15 @@ static void ShowMainUI() {
                         regroove_effects_set_distortion_drive(effects, drive);
                     }
                 }
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (ImGui::Button("R##dist_drive_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                    regroove_effects_set_distortion_drive(effects, 0.5f);
+                }
                 ImGui::EndGroup();
                 col_index++;
             }
 
-            // Mix (no enable - invisible spacer)
+            // Mix (with reset button)
             {
                 float colX = origin.x + col_index * (sliderW + fx_spacing);
                 ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
@@ -3927,7 +3931,7 @@ static void ShowMainUI() {
                 ImGui::Text("Mix");
                 ImGui::Dummy(ImVec2(0, 4.0f));
 
-                // Invisible spacer to align with faders that have enable buttons
+                // Spacer to align with faders that have enable buttons
                 ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
                 ImGui::Dummy(ImVec2(0, 6.0f));
 
@@ -3938,6 +3942,10 @@ static void ShowMainUI() {
                     } else {
                         regroove_effects_set_distortion_mix(effects, mix);
                     }
+                }
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (ImGui::Button("R##dist_mix_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                    regroove_effects_set_distortion_mix(effects, 0.5f); // Reset to 50% mix
                 }
                 ImGui::EndGroup();
                 col_index++;
@@ -3979,11 +3987,15 @@ static void ShowMainUI() {
                         regroove_effects_set_filter_cutoff(effects, cutoff);
                     }
                 }
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (ImGui::Button("R##filt_cutoff_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                    regroove_effects_set_filter_cutoff(effects, 1.0f); // Reset to fully open
+                }
                 ImGui::EndGroup();
                 col_index++;
             }
 
-            // Resonance (no enable - invisible spacer)
+            // Resonance (with reset button)
             {
                 float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
                 ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
@@ -3991,7 +4003,7 @@ static void ShowMainUI() {
                 ImGui::Text("Resonance");
                 ImGui::Dummy(ImVec2(0, 4.0f));
 
-                // Invisible spacer
+                // Spacer to align with faders that have enable buttons
                 ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
                 ImGui::Dummy(ImVec2(0, 6.0f));
 
@@ -4002,6 +4014,10 @@ static void ShowMainUI() {
                     } else {
                         regroove_effects_set_filter_resonance(effects, reso);
                     }
+                }
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (ImGui::Button("R##filt_reso_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                    regroove_effects_set_filter_resonance(effects, 0.0f); // Reset to 0
                 }
                 ImGui::EndGroup();
                 col_index++;
@@ -4041,11 +4057,15 @@ static void ShowMainUI() {
                         regroove_effects_set_eq_low(effects, eq_low);
                     }
                 }
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (ImGui::Button("R##eq_low_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                    regroove_effects_set_eq_low(effects, 0.5f); // Reset to 50% (neutral)
+                }
                 ImGui::EndGroup();
                 col_index++;
             }
 
-            // EQ Mid (no enable - invisible spacer)
+            // EQ Mid (with reset button)
             {
                 float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
                 ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
@@ -4053,7 +4073,7 @@ static void ShowMainUI() {
                 ImGui::Text("Mid");
                 ImGui::Dummy(ImVec2(0, 4.0f));
 
-                // Invisible spacer
+                // Spacer to align with faders that have enable buttons
                 ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
                 ImGui::Dummy(ImVec2(0, 6.0f));
 
@@ -4065,11 +4085,15 @@ static void ShowMainUI() {
                         regroove_effects_set_eq_mid(effects, eq_mid);
                     }
                 }
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (ImGui::Button("R##eq_mid_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                    regroove_effects_set_eq_mid(effects, 0.5f); // Reset to 50% (neutral)
+                }
                 ImGui::EndGroup();
                 col_index++;
             }
 
-            // EQ High (no enable - invisible spacer)
+            // EQ High (with reset button)
             {
                 float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
                 ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
@@ -4077,7 +4101,7 @@ static void ShowMainUI() {
                 ImGui::Text("High");
                 ImGui::Dummy(ImVec2(0, 4.0f));
 
-                // Invisible spacer
+                // Spacer to align with faders that have enable buttons
                 ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
                 ImGui::Dummy(ImVec2(0, 6.0f));
 
@@ -4088,6 +4112,10 @@ static void ShowMainUI() {
                     } else {
                         regroove_effects_set_eq_high(effects, eq_high);
                     }
+                }
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (ImGui::Button("R##eq_high_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                    regroove_effects_set_eq_high(effects, 0.5f); // Reset to 50% (neutral)
                 }
                 ImGui::EndGroup();
                 col_index++;
@@ -4127,11 +4155,15 @@ static void ShowMainUI() {
                         regroove_effects_set_compressor_threshold(effects, thresh);
                     }
                 }
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (ImGui::Button("R##comp_thresh_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                    regroove_effects_set_compressor_threshold(effects, 0.5f);
+                }
                 ImGui::EndGroup();
                 col_index++;
             }
 
-            // Ratio (no enable - invisible spacer)
+            // Ratio (with reset button)
             {
                 float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
                 ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
@@ -4139,7 +4171,7 @@ static void ShowMainUI() {
                 ImGui::Text("Ratio");
                 ImGui::Dummy(ImVec2(0, 4.0f));
 
-                // Invisible spacer
+                // Spacer to align with faders that have enable buttons
                 ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
                 ImGui::Dummy(ImVec2(0, 6.0f));
 
@@ -4150,6 +4182,10 @@ static void ShowMainUI() {
                     } else {
                         regroove_effects_set_compressor_ratio(effects, ratio);
                     }
+                }
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (ImGui::Button("R##comp_ratio_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                    regroove_effects_set_compressor_ratio(effects, 0.0f); // Reset to 1:1 (no compression)
                 }
                 ImGui::EndGroup();
                 col_index++;
@@ -4189,11 +4225,15 @@ static void ShowMainUI() {
                         regroove_effects_set_delay_time(effects, time);
                     }
                 }
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (ImGui::Button("R##delay_time_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                    regroove_effects_set_delay_time(effects, 0.25f); // Reset to 250ms
+                }
                 ImGui::EndGroup();
                 col_index++;
             }
 
-            // Feedback (no enable - invisible spacer)
+            // Feedback (with reset button)
             {
                 float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
                 ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
@@ -4201,7 +4241,7 @@ static void ShowMainUI() {
                 ImGui::Text("Feedback");
                 ImGui::Dummy(ImVec2(0, 4.0f));
 
-                // Invisible spacer
+                // Spacer to align with faders that have enable buttons
                 ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
                 ImGui::Dummy(ImVec2(0, 6.0f));
 
@@ -4213,11 +4253,15 @@ static void ShowMainUI() {
                         regroove_effects_set_delay_feedback(effects, feedback);
                     }
                 }
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (ImGui::Button("R##delay_fb_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                    regroove_effects_set_delay_feedback(effects, 0.0f); // Reset to 0 (no feedback)
+                }
                 ImGui::EndGroup();
                 col_index++;
             }
 
-            // Mix (no enable - invisible spacer)
+            // Mix (with reset button)
             {
                 float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
                 ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
@@ -4225,7 +4269,7 @@ static void ShowMainUI() {
                 ImGui::Text("Mix");
                 ImGui::Dummy(ImVec2(0, 4.0f));
 
-                // Invisible spacer
+                // Spacer to align with faders that have enable buttons
                 ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
                 ImGui::Dummy(ImVec2(0, 6.0f));
 
@@ -4236,6 +4280,10 @@ static void ShowMainUI() {
                     } else {
                         regroove_effects_set_delay_mix(effects, mix);
                     }
+                }
+                ImGui::Dummy(ImVec2(0, 8.0f));
+                if (ImGui::Button("R##delay_mix_reset", ImVec2(sliderW, MUTE_SIZE))) {
+                    regroove_effects_set_delay_mix(effects, 0.5f); // Reset to 50% mix
                 }
                 ImGui::EndGroup();
                 col_index++;

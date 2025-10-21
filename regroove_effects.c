@@ -167,15 +167,41 @@ void regroove_effects_process(RegrooveEffects* fx, int16_t* buffer, int frames, 
 
         // --- 3-BAND EQ ---
         if (fx->eq_enabled) {
-            // Simple 3-band parametric EQ using cascaded filters
-            // Low band (~100Hz), Mid band (~1kHz), High band (~10kHz)
-            float low_gain = (fx->eq_low - 0.5f) * 2.0f; // -1 to +1
-            float mid_gain = (fx->eq_mid - 0.5f) * 2.0f;
-            float high_gain = (fx->eq_high - 0.5f) * 2.0f;
+            // 3-band EQ using stable cascaded filters
+            // Low shelf (~250Hz), Mid band (~1kHz), High shelf (~6kHz)
+            // Gain range: 0.5 = neutral, 0.0 = -12dB cut, 1.0 = +12dB boost
+            float low_gain = fx->eq_low;   // 0.0 to 1.0
+            float mid_gain = fx->eq_mid;   // 0.0 to 1.0
+            float high_gain = fx->eq_high; // 0.0 to 1.0
 
-            // Apply simple shelf filters (very basic but CPU-efficient)
-            left = left * (1.0f + low_gain * 0.3f + mid_gain * 0.3f + high_gain * 0.3f);
-            right = right * (1.0f + low_gain * 0.3f + mid_gain * 0.3f + high_gain * 0.3f);
+            // Convert to linear gain (0.25x to 4x, with 1.0x at 0.5)
+            float low_mult = powf(4.0f, (low_gain - 0.5f) * 2.0f);   // 0.25 to 4.0
+            float mid_mult = powf(4.0f, (mid_gain - 0.5f) * 2.0f);
+            float high_mult = powf(4.0f, (high_gain - 0.5f) * 2.0f);
+
+            for (int ch = 0; ch < 2; ch++) {
+                float sample = (ch == 0) ? left : right;
+
+                // Low shelf: one-pole lowpass filter for bass (below 250Hz)
+                float low_freq = 250.0f / sample_rate;
+                float low_alpha = 1.0f - expf(-2.0f * 3.14159f * low_freq);
+                fx->eq_lp1[ch] += low_alpha * (sample - fx->eq_lp1[ch]);
+                float low_out = fx->eq_lp1[ch] * low_mult + (sample - fx->eq_lp1[ch]);
+
+                // Mid band: bandpass (250Hz to 6kHz) - what's left after low and high
+                float mid_freq = 6000.0f / sample_rate;
+                float mid_alpha = 1.0f - expf(-2.0f * 3.14159f * mid_freq);
+                fx->eq_lp2[ch] += mid_alpha * (low_out - fx->eq_lp2[ch]);
+                float mid_band = fx->eq_lp2[ch] - fx->eq_lp1[ch];
+                float mid_out = low_out + mid_band * (mid_mult - 1.0f);
+
+                // High shelf: boost/cut high frequencies (above 6kHz)
+                float high_band = mid_out - fx->eq_lp2[ch];
+                float final_out = mid_out + high_band * (high_mult - 1.0f);
+
+                if (ch == 0) left = final_out;
+                else right = final_out;
+            }
         }
 
         // --- COMPRESSOR ---
