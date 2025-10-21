@@ -40,12 +40,29 @@ void regroove_filelist_prev(RegrooveFileList *list);
 // Free file list
 void regroove_filelist_destroy(RegrooveFileList *list);
 
-// Device configuration
+// Device configuration and effect defaults
 typedef struct {
     int midi_device_0;      // MIDI device 0 port (-1 = not configured)
     int midi_device_1;      // MIDI device 1 port (-1 = not configured)
     int audio_device;       // Audio device index (-1 = default)
     int midi_output_device; // MIDI output device port (-1 = disabled)
+
+    // Default effect parameters (applied on song load)
+    float fx_distortion_drive;      // 0.0 - 1.0
+    float fx_distortion_mix;        // 0.0 - 1.0
+    float fx_filter_cutoff;         // 0.0 - 1.0
+    float fx_filter_resonance;      // 0.0 - 1.0
+    float fx_eq_low;                // 0.0 - 1.0
+    float fx_eq_mid;                // 0.0 - 1.0
+    float fx_eq_high;               // 0.0 - 1.0
+    float fx_compressor_threshold;  // 0.0 - 1.0
+    float fx_compressor_ratio;      // 0.0 - 1.0
+    float fx_compressor_attack;     // 0.0 - 1.0
+    float fx_compressor_release;    // 0.0 - 1.0
+    float fx_compressor_makeup;     // 0.0 - 1.0
+    float fx_delay_time;            // 0.0 - 1.0
+    float fx_delay_feedback;        // 0.0 - 1.0
+    float fx_delay_mix;             // 0.0 - 1.0
 } RegrooveDeviceConfig;
 
 // Common playback state

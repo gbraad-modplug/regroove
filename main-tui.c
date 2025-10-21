@@ -199,6 +199,35 @@ static int load_module(const char *path, struct RegrooveCallbacks *cbs) {
         printf("DEBUG: After load, performance event_count = %d\n", event_count);
     }
 
+    // Clear effects buffers and reset to default parameters
+    if (effects) {
+        regroove_effects_reset(effects);
+
+        // Disable all effects
+        regroove_effects_set_distortion_enabled(effects, 0);
+        regroove_effects_set_filter_enabled(effects, 0);
+        regroove_effects_set_eq_enabled(effects, 0);
+        regroove_effects_set_compressor_enabled(effects, 0);
+        regroove_effects_set_delay_enabled(effects, 0);
+
+        // Reset all parameters to defaults from config
+        regroove_effects_set_distortion_drive(effects, common_state->device_config.fx_distortion_drive);
+        regroove_effects_set_distortion_mix(effects, common_state->device_config.fx_distortion_mix);
+        regroove_effects_set_filter_cutoff(effects, common_state->device_config.fx_filter_cutoff);
+        regroove_effects_set_filter_resonance(effects, common_state->device_config.fx_filter_resonance);
+        regroove_effects_set_eq_low(effects, common_state->device_config.fx_eq_low);
+        regroove_effects_set_eq_mid(effects, common_state->device_config.fx_eq_mid);
+        regroove_effects_set_eq_high(effects, common_state->device_config.fx_eq_high);
+        regroove_effects_set_compressor_threshold(effects, common_state->device_config.fx_compressor_threshold);
+        regroove_effects_set_compressor_ratio(effects, common_state->device_config.fx_compressor_ratio);
+        regroove_effects_set_compressor_attack(effects, common_state->device_config.fx_compressor_attack);
+        regroove_effects_set_compressor_release(effects, common_state->device_config.fx_compressor_release);
+        regroove_effects_set_compressor_makeup(effects, common_state->device_config.fx_compressor_makeup);
+        regroove_effects_set_delay_time(effects, common_state->device_config.fx_delay_time);
+        regroove_effects_set_delay_feedback(effects, common_state->device_config.fx_delay_feedback);
+        regroove_effects_set_delay_mix(effects, common_state->device_config.fx_delay_mix);
+    }
+
     printf("\nPlayback paused (press SPACE or MIDI Play to start)\n");
     return 0;
 }

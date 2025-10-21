@@ -278,6 +278,9 @@ static void my_note_callback(int channel, int note, int instrument, int volume,
 // Configured for UI panel width of 190px - 20 chars fits nicely
 static constexpr int MAX_LCD_TEXTLENGTH = LCD_COLS;
 
+// UI Color Constants
+static const ImVec4 COLOR_SECTION_HEADING = ImVec4(1.0f, 0.8f, 0.3f, 1.0f);  // Orange/amber for section headings
+
 static int load_module(const char *path) {
     struct RegrooveCallbacks cbs = {
         .on_order_change = my_order_callback,
@@ -316,9 +319,33 @@ static int load_module(const char *path) {
     regroove_set_custom_loop_rows(mod, 0); // 0 disables custom loop
     regroove_set_pitch(mod, MapPitchFader(0.0f)); // Reset pitch
 
-    // Clear effects buffers to prevent artifacts from previous song
+    // Clear effects buffers and reset to default parameters
     if (effects) {
         regroove_effects_reset(effects);
+
+        // Disable all effects
+        regroove_effects_set_distortion_enabled(effects, 0);
+        regroove_effects_set_filter_enabled(effects, 0);
+        regroove_effects_set_eq_enabled(effects, 0);
+        regroove_effects_set_compressor_enabled(effects, 0);
+        regroove_effects_set_delay_enabled(effects, 0);
+
+        // Reset all parameters to defaults from config
+        regroove_effects_set_distortion_drive(effects, common_state->device_config.fx_distortion_drive);
+        regroove_effects_set_distortion_mix(effects, common_state->device_config.fx_distortion_mix);
+        regroove_effects_set_filter_cutoff(effects, common_state->device_config.fx_filter_cutoff);
+        regroove_effects_set_filter_resonance(effects, common_state->device_config.fx_filter_resonance);
+        regroove_effects_set_eq_low(effects, common_state->device_config.fx_eq_low);
+        regroove_effects_set_eq_mid(effects, common_state->device_config.fx_eq_mid);
+        regroove_effects_set_eq_high(effects, common_state->device_config.fx_eq_high);
+        regroove_effects_set_compressor_threshold(effects, common_state->device_config.fx_compressor_threshold);
+        regroove_effects_set_compressor_ratio(effects, common_state->device_config.fx_compressor_ratio);
+        regroove_effects_set_compressor_attack(effects, common_state->device_config.fx_compressor_attack);
+        regroove_effects_set_compressor_release(effects, common_state->device_config.fx_compressor_release);
+        regroove_effects_set_compressor_makeup(effects, common_state->device_config.fx_compressor_makeup);
+        regroove_effects_set_delay_time(effects, common_state->device_config.fx_delay_time);
+        regroove_effects_set_delay_feedback(effects, common_state->device_config.fx_delay_feedback);
+        regroove_effects_set_delay_mix(effects, common_state->device_config.fx_delay_mix);
     }
 
     if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 1);
@@ -2288,7 +2315,7 @@ static void ShowMainUI() {
             ImGui::Dummy(ImVec2(0, 12.0f));
 
             // Event list
-            ImGui::Text("Event List");
+            ImGui::TextColored(COLOR_SECTION_HEADING, "EVENT LIST");
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -2477,7 +2504,7 @@ static void ShowMainUI() {
             ImGui::Dummy(ImVec2(0, 12.0f));
 
             // Add new event UI
-            ImGui::Text("Add New Event");
+            ImGui::TextColored(COLOR_SECTION_HEADING, "ADD NEW EVENT");
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -2554,7 +2581,7 @@ static void ShowMainUI() {
 
             // Phrase Editor Section
             ImGui::Dummy(ImVec2(0, 20.0f));
-            ImGui::Text("Phrase Editor");
+            ImGui::TextColored(COLOR_SECTION_HEADING, "PHRASE EDITOR");
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -2789,26 +2816,28 @@ static void ShowMainUI() {
 
         Regroove *mod = common_state ? common_state->player : NULL;
 
+        // File Browser Section - always visible (independent of loaded module)
+        ImGui::TextColored(COLOR_SECTION_HEADING, "FILE BROWSER");
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 8.0f));
+
+        // Selected file (from browser, not necessarily loaded)
+        if (common_state->file_list && common_state->file_list->count > 0) {
+            const char* current_file = common_state->file_list->filenames[common_state->file_list->current_index];
+            ImGui::Text("Selected File:");
+            ImGui::SameLine(150.0f);
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", current_file);
+        } else {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No directory loaded");
+        }
+
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
         if (!mod) {
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No module loaded");
         } else {
-            // File Browser Section
-            ImGui::Text("File Browser");
-            ImGui::Separator();
-            ImGui::Dummy(ImVec2(0, 8.0f));
-
-            // Selected file (from browser, not necessarily loaded)
-            if (common_state->file_list && common_state->file_list->count > 0) {
-                const char* current_file = common_state->file_list->filenames[common_state->file_list->current_index];
-                ImGui::Text("Selected File:");
-                ImGui::SameLine(150.0f);
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", current_file);
-            }
-
-            ImGui::Dummy(ImVec2(0, 12.0f));
-
             // Loaded Module Information Section
-            ImGui::Text("Module Information");
+            ImGui::TextColored(COLOR_SECTION_HEADING, "MODULE INFORMATION");
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -2847,7 +2876,7 @@ static void ShowMainUI() {
             int current_row = regroove_get_current_row(mod);
 
             ImGui::Dummy(ImVec2(0, 12.0f));
-            ImGui::Text("Playback Information");
+            ImGui::TextColored(COLOR_SECTION_HEADING, "PLAYBACK INFORMATION");
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -2914,7 +2943,7 @@ static void ShowMainUI() {
 
             // Channel status overview
             ImGui::Dummy(ImVec2(0, 12.0f));
-            ImGui::Text("Channel Status");
+            ImGui::TextColored(COLOR_SECTION_HEADING, "CHANNEL STATUS");
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -2944,7 +2973,7 @@ static void ShowMainUI() {
 
             // Order/Pattern table
             ImGui::Dummy(ImVec2(0, 12.0f));
-            ImGui::Text("Order List");
+            ImGui::TextColored(COLOR_SECTION_HEADING, "ORDER LIST");
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -3000,7 +3029,7 @@ static void ShowMainUI() {
 
             // Pattern Descriptions Section
             ImGui::Dummy(ImVec2(0, 20.0f));
-            ImGui::Text("Pattern Descriptions");
+            ImGui::TextColored(COLOR_SECTION_HEADING, "PATTERN DESCRIPTIONS");
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -3073,7 +3102,7 @@ static void ShowMainUI() {
         // =====================================================================
         // SECTION 1: MIDI DEVICES
         // =====================================================================
-        ImGui::Text("MIDI Device Configuration");
+        ImGui::TextColored(COLOR_SECTION_HEADING, "MIDI DEVICE CONFIGURATION");
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 12.0f));
 
@@ -3294,7 +3323,7 @@ static void ShowMainUI() {
         // =====================================================================
         // SECTION 2: MIDI MONITOR
         // =====================================================================
-        ImGui::Text("MIDI Monitor");
+        ImGui::TextColored(COLOR_SECTION_HEADING, "MIDI MONITOR");
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -3651,7 +3680,7 @@ static void ShowMainUI() {
         // =====================================================================
         // SECTION 5: MIDI CC MAPPINGS
         // =====================================================================
-        ImGui::Text("MIDI CC Mappings");
+        ImGui::TextColored(COLOR_SECTION_HEADING, "MIDI CC MAPPINGS");
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 12.0f));
 
@@ -4318,7 +4347,7 @@ static void ShowMainUI() {
 
         ImGui::BeginGroup();
 
-        ImGui::Text("Audio Device Configuration");
+        ImGui::TextColored(COLOR_SECTION_HEADING, "AUDIO DEVICE CONFIGURATION");
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 12.0f));
 
@@ -4374,7 +4403,7 @@ static void ShowMainUI() {
         ImGui::Dummy(ImVec2(0, 20.0f));
 
         // Keyboard Mappings Section
-        ImGui::Text("Keyboard Mappings");
+        ImGui::TextColored(COLOR_SECTION_HEADING, "KEYBOARD MAPPINGS");
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 12.0f));
 
@@ -4562,6 +4591,145 @@ static void ShowMainUI() {
                     fprintf(stderr, "Failed to save settings to %s\n", current_config_file);
                 }
             }
+        }
+
+        ImGui::Dummy(ImVec2(0, 20.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
+        // Effect Default Parameters Section
+        ImGui::TextColored(COLOR_SECTION_HEADING, "EFFECT DEFAULT PARAMETERS");
+        ImGui::Separator();
+        ImGui::TextWrapped("(Applied when loading songs)");
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
+        if (common_state) {
+            bool config_changed = false;
+
+            // Distortion parameters
+            ImGui::TextColored(COLOR_SECTION_HEADING, "DISTORTION");
+            ImGui::Separator();
+
+            ImGui::Text("Distortion Drive:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##dist_drive", &common_state->device_config.fx_distortion_drive, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Text("Distortion Mix:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##dist_mix", &common_state->device_config.fx_distortion_mix, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+
+            // Filter parameters
+            ImGui::TextColored(COLOR_SECTION_HEADING, "FILTER");
+            ImGui::Separator();
+
+            ImGui::Text("Filter Cutoff:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##filt_cutoff", &common_state->device_config.fx_filter_cutoff, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Text("Filter Resonance:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##filt_res", &common_state->device_config.fx_filter_resonance, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+
+            // EQ parameters
+            ImGui::TextColored(COLOR_SECTION_HEADING, "EQUALIZER");
+            ImGui::Separator();
+
+            ImGui::Text("EQ Low:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##eq_low", &common_state->device_config.fx_eq_low, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Text("EQ Mid:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##eq_mid", &common_state->device_config.fx_eq_mid, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Text("EQ High:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##eq_high", &common_state->device_config.fx_eq_high, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+
+            // Compressor parameters
+            ImGui::TextColored(COLOR_SECTION_HEADING, "COMPRESSOR");
+            ImGui::Separator();
+
+            ImGui::Text("Compressor Threshold:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##comp_thresh", &common_state->device_config.fx_compressor_threshold, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Text("Compressor Ratio:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##comp_ratio", &common_state->device_config.fx_compressor_ratio, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Text("Compressor Attack:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##comp_attack", &common_state->device_config.fx_compressor_attack, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Text("Compressor Release:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##comp_release", &common_state->device_config.fx_compressor_release, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Text("Compressor Makeup:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##comp_makeup", &common_state->device_config.fx_compressor_makeup, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+
+            // Delay parameters
+            ImGui::TextColored(COLOR_SECTION_HEADING, "DELAY");
+            ImGui::Separator();
+
+            ImGui::Text("Delay Time:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##delay_time", &common_state->device_config.fx_delay_time, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Text("Delay Feedback:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##delay_fb", &common_state->device_config.fx_delay_feedback, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            ImGui::Text("Delay Mix:");
+            ImGui::SameLine(200.0f);
+            if (ImGui::SliderFloat("##delay_mix", &common_state->device_config.fx_delay_mix, 0.0f, 1.0f, "%.2f")) {
+                config_changed = true;
+            }
+
+            if (config_changed) {
+                regroove_common_save_device_config(common_state, current_config_file);
+            }
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+            ImGui::TextWrapped("These parameters will be applied to all effects when a new song is loaded. Current effect settings are not affected.");
         }
 
         ImGui::EndGroup();
