@@ -22,7 +22,8 @@ static int is_module_file(const char *filename) {
         strcmp(ext, ".med") == 0  || strcmp(ext, ".mmd") == 0  ||
         strcmp(ext, ".mmd0") == 0 || strcmp(ext, ".mmd1") == 0 ||
         strcmp(ext, ".mmd2") == 0 || strcmp(ext, ".mmd3") == 0 ||
-        strcmp(ext, ".mmdc") == 0 || strcmp(ext, ".rgx") == 0
+        strcmp(ext, ".mmdc") == 0 || strcmp(ext, ".rgx") == 0  ||
+        strcmp(ext, ".mptm") == 0
     );
 }
 
