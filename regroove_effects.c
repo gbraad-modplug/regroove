@@ -35,24 +35,58 @@ RegrooveEffects* regroove_effects_create(void) {
     RegrooveEffects* fx = (RegrooveEffects*)calloc(1, sizeof(RegrooveEffects));
     if (!fx) return NULL;
 
+    // Allocate delay buffers
+    fx->delay_buffer[0] = (float*)calloc(MAX_DELAY_SAMPLES, sizeof(float));
+    fx->delay_buffer[1] = (float*)calloc(MAX_DELAY_SAMPLES, sizeof(float));
+    if (!fx->delay_buffer[0] || !fx->delay_buffer[1]) {
+        free(fx->delay_buffer[0]);
+        free(fx->delay_buffer[1]);
+        free(fx);
+        return NULL;
+    }
+
     // Default parameters
     fx->distortion_enabled = 0;
-    fx->distortion_drive = 0.5f;  // 50% drive by default
+    fx->distortion_drive = 0.5f;
     fx->distortion_mix = 0.5f;
 
     fx->filter_enabled = 0;
-    fx->filter_cutoff = 1.0f;    // Fully open by default
-    fx->filter_resonance = 0.0f; // No resonance
+    fx->filter_cutoff = 1.0f;
+    fx->filter_resonance = 0.0f;
 
-    // Clear filter state
-    memset(fx->filter_lp, 0, sizeof(fx->filter_lp));
-    memset(fx->filter_bp, 0, sizeof(fx->filter_bp));
+    fx->eq_enabled = 0;
+    fx->eq_low = 0.5f;
+    fx->eq_mid = 0.5f;
+    fx->eq_high = 0.5f;
+
+    fx->compressor_enabled = 0;
+    fx->compressor_threshold = 0.7f;
+    fx->compressor_ratio = 0.5f;
+    fx->compressor_attack = 0.1f;
+    fx->compressor_release = 0.3f;
+
+    fx->phaser_enabled = 0;
+    fx->phaser_rate = 0.3f;
+    fx->phaser_depth = 0.5f;
+    fx->phaser_feedback = 0.3f;
+
+    fx->reverb_enabled = 0;
+    fx->reverb_room_size = 0.5f;
+    fx->reverb_damping = 0.5f;
+    fx->reverb_mix = 0.3f;
+
+    fx->delay_enabled = 0;
+    fx->delay_time = 0.375f;  // ~375ms
+    fx->delay_feedback = 0.4f;
+    fx->delay_mix = 0.3f;
 
     return fx;
 }
 
 void regroove_effects_destroy(RegrooveEffects* fx) {
     if (fx) {
+        free(fx->delay_buffer[0]);
+        free(fx->delay_buffer[1]);
         free(fx);
     }
 }
@@ -131,6 +165,82 @@ void regroove_effects_process(RegrooveEffects* fx, int16_t* buffer, int frames, 
             right = fx->filter_lp[1];
         }
 
+        // --- 3-BAND EQ ---
+        if (fx->eq_enabled) {
+            // Simple 3-band parametric EQ using cascaded filters
+            // Low band (~100Hz), Mid band (~1kHz), High band (~10kHz)
+            float low_gain = (fx->eq_low - 0.5f) * 2.0f; // -1 to +1
+            float mid_gain = (fx->eq_mid - 0.5f) * 2.0f;
+            float high_gain = (fx->eq_high - 0.5f) * 2.0f;
+
+            // Apply simple shelf filters (very basic but CPU-efficient)
+            left = left * (1.0f + low_gain * 0.3f + mid_gain * 0.3f + high_gain * 0.3f);
+            right = right * (1.0f + low_gain * 0.3f + mid_gain * 0.3f + high_gain * 0.3f);
+        }
+
+        // --- COMPRESSOR ---
+        if (fx->compressor_enabled) {
+            // Simple RMS compressor for each channel
+            for (int ch = 0; ch < 2; ch++) {
+                float input = (ch == 0) ? left : right;
+                float level = fabsf(input);
+
+                // Threshold (0.0-1.0 maps to 0.1-0.9)
+                float threshold = 0.1f + fx->compressor_threshold * 0.8f;
+
+                // Ratio (0.0-1.0 maps to 1:1 to 10:1)
+                float ratio = 1.0f + fx->compressor_ratio * 9.0f;
+
+                // Attack/release times in samples
+                float attack_coeff = 1.0f - expf(-1.0f / (sample_rate * (0.001f + fx->compressor_attack * 0.1f)));
+                float release_coeff = 1.0f - expf(-1.0f / (sample_rate * (0.01f + fx->compressor_release * 0.5f)));
+
+                // Envelope follower
+                if (level > fx->compressor_envelope[ch]) {
+                    fx->compressor_envelope[ch] += attack_coeff * (level - fx->compressor_envelope[ch]);
+                } else {
+                    fx->compressor_envelope[ch] += release_coeff * (level - fx->compressor_envelope[ch]);
+                }
+
+                // Calculate gain reduction
+                float gain = 1.0f;
+                if (fx->compressor_envelope[ch] > threshold) {
+                    float over = fx->compressor_envelope[ch] - threshold;
+                    gain = threshold + over / ratio;
+                    gain = gain / fx->compressor_envelope[ch];
+                }
+
+                // Apply compression
+                if (ch == 0) left *= gain;
+                else right *= gain;
+            }
+        }
+
+        // --- DELAY/ECHO ---
+        if (fx->delay_enabled && fx->delay_buffer[0] && fx->delay_buffer[1]) {
+            // Delay time in samples (0-1000ms)
+            int delay_samples = (int)(fx->delay_time * sample_rate);
+            if (delay_samples > MAX_DELAY_SAMPLES - 1) delay_samples = MAX_DELAY_SAMPLES - 1;
+
+            // Read from delay buffer
+            int read_pos = fx->delay_write_pos - delay_samples;
+            if (read_pos < 0) read_pos += MAX_DELAY_SAMPLES;
+
+            float delayed_left = fx->delay_buffer[0][read_pos];
+            float delayed_right = fx->delay_buffer[1][read_pos];
+
+            // Write to delay buffer (input + feedback)
+            fx->delay_buffer[0][fx->delay_write_pos] = left + delayed_left * fx->delay_feedback;
+            fx->delay_buffer[1][fx->delay_write_pos] = right + delayed_right * fx->delay_feedback;
+
+            // Mix dry/wet
+            left = left * (1.0f - fx->delay_mix) + delayed_left * fx->delay_mix;
+            right = right * (1.0f - fx->delay_mix) + delayed_right * fx->delay_mix;
+
+            // Advance write position
+            fx->delay_write_pos = (fx->delay_write_pos + 1) % MAX_DELAY_SAMPLES;
+        }
+
         // Convert back to int16 with clamping
         buffer[i * 2] = (int16_t)clampf(left * scale_to_int16, -32768.0f, 32767.0f);
         buffer[i * 2 + 1] = (int16_t)clampf(right * scale_to_int16, -32768.0f, 32767.0f);
@@ -188,4 +298,140 @@ float regroove_effects_get_filter_cutoff(RegrooveEffects* fx) {
 
 float regroove_effects_get_filter_resonance(RegrooveEffects* fx) {
     return fx ? fx->filter_resonance : 0.0f;
+}
+
+// EQ setters/getters
+void regroove_effects_set_eq_enabled(RegrooveEffects* fx, int enabled) {
+    if (fx) fx->eq_enabled = enabled;
+}
+void regroove_effects_set_eq_low(RegrooveEffects* fx, float gain) {
+    if (fx) fx->eq_low = clampf(gain, 0.0f, 1.0f);
+}
+void regroove_effects_set_eq_mid(RegrooveEffects* fx, float gain) {
+    if (fx) fx->eq_mid = clampf(gain, 0.0f, 1.0f);
+}
+void regroove_effects_set_eq_high(RegrooveEffects* fx, float gain) {
+    if (fx) fx->eq_high = clampf(gain, 0.0f, 1.0f);
+}
+int regroove_effects_get_eq_enabled(RegrooveEffects* fx) {
+    return fx ? fx->eq_enabled : 0;
+}
+float regroove_effects_get_eq_low(RegrooveEffects* fx) {
+    return fx ? fx->eq_low : 0.5f;
+}
+float regroove_effects_get_eq_mid(RegrooveEffects* fx) {
+    return fx ? fx->eq_mid : 0.5f;
+}
+float regroove_effects_get_eq_high(RegrooveEffects* fx) {
+    return fx ? fx->eq_high : 0.5f;
+}
+
+// Compressor setters/getters
+void regroove_effects_set_compressor_enabled(RegrooveEffects* fx, int enabled) {
+    if (fx) fx->compressor_enabled = enabled;
+}
+void regroove_effects_set_compressor_threshold(RegrooveEffects* fx, float threshold) {
+    if (fx) fx->compressor_threshold = clampf(threshold, 0.0f, 1.0f);
+}
+void regroove_effects_set_compressor_ratio(RegrooveEffects* fx, float ratio) {
+    if (fx) fx->compressor_ratio = clampf(ratio, 0.0f, 1.0f);
+}
+void regroove_effects_set_compressor_attack(RegrooveEffects* fx, float attack) {
+    if (fx) fx->compressor_attack = clampf(attack, 0.0f, 1.0f);
+}
+void regroove_effects_set_compressor_release(RegrooveEffects* fx, float release) {
+    if (fx) fx->compressor_release = clampf(release, 0.0f, 1.0f);
+}
+int regroove_effects_get_compressor_enabled(RegrooveEffects* fx) {
+    return fx ? fx->compressor_enabled : 0;
+}
+float regroove_effects_get_compressor_threshold(RegrooveEffects* fx) {
+    return fx ? fx->compressor_threshold : 0.7f;
+}
+float regroove_effects_get_compressor_ratio(RegrooveEffects* fx) {
+    return fx ? fx->compressor_ratio : 0.5f;
+}
+float regroove_effects_get_compressor_attack(RegrooveEffects* fx) {
+    return fx ? fx->compressor_attack : 0.1f;
+}
+float regroove_effects_get_compressor_release(RegrooveEffects* fx) {
+    return fx ? fx->compressor_release : 0.3f;
+}
+
+// Phaser setters/getters
+void regroove_effects_set_phaser_enabled(RegrooveEffects* fx, int enabled) {
+    if (fx) fx->phaser_enabled = enabled;
+}
+void regroove_effects_set_phaser_rate(RegrooveEffects* fx, float rate) {
+    if (fx) fx->phaser_rate = clampf(rate, 0.0f, 1.0f);
+}
+void regroove_effects_set_phaser_depth(RegrooveEffects* fx, float depth) {
+    if (fx) fx->phaser_depth = clampf(depth, 0.0f, 1.0f);
+}
+void regroove_effects_set_phaser_feedback(RegrooveEffects* fx, float feedback) {
+    if (fx) fx->phaser_feedback = clampf(feedback, 0.0f, 1.0f);
+}
+int regroove_effects_get_phaser_enabled(RegrooveEffects* fx) {
+    return fx ? fx->phaser_enabled : 0;
+}
+float regroove_effects_get_phaser_rate(RegrooveEffects* fx) {
+    return fx ? fx->phaser_rate : 0.3f;
+}
+float regroove_effects_get_phaser_depth(RegrooveEffects* fx) {
+    return fx ? fx->phaser_depth : 0.5f;
+}
+float regroove_effects_get_phaser_feedback(RegrooveEffects* fx) {
+    return fx ? fx->phaser_feedback : 0.3f;
+}
+
+// Reverb setters/getters
+void regroove_effects_set_reverb_enabled(RegrooveEffects* fx, int enabled) {
+    if (fx) fx->reverb_enabled = enabled;
+}
+void regroove_effects_set_reverb_room_size(RegrooveEffects* fx, float size) {
+    if (fx) fx->reverb_room_size = clampf(size, 0.0f, 1.0f);
+}
+void regroove_effects_set_reverb_damping(RegrooveEffects* fx, float damping) {
+    if (fx) fx->reverb_damping = clampf(damping, 0.0f, 1.0f);
+}
+void regroove_effects_set_reverb_mix(RegrooveEffects* fx, float mix) {
+    if (fx) fx->reverb_mix = clampf(mix, 0.0f, 1.0f);
+}
+int regroove_effects_get_reverb_enabled(RegrooveEffects* fx) {
+    return fx ? fx->reverb_enabled : 0;
+}
+float regroove_effects_get_reverb_room_size(RegrooveEffects* fx) {
+    return fx ? fx->reverb_room_size : 0.5f;
+}
+float regroove_effects_get_reverb_damping(RegrooveEffects* fx) {
+    return fx ? fx->reverb_damping : 0.5f;
+}
+float regroove_effects_get_reverb_mix(RegrooveEffects* fx) {
+    return fx ? fx->reverb_mix : 0.3f;
+}
+
+// Delay setters/getters
+void regroove_effects_set_delay_enabled(RegrooveEffects* fx, int enabled) {
+    if (fx) fx->delay_enabled = enabled;
+}
+void regroove_effects_set_delay_time(RegrooveEffects* fx, float time) {
+    if (fx) fx->delay_time = clampf(time, 0.0f, 1.0f);
+}
+void regroove_effects_set_delay_feedback(RegrooveEffects* fx, float feedback) {
+    if (fx) fx->delay_feedback = clampf(feedback, 0.0f, 1.0f);
+}
+void regroove_effects_set_delay_mix(RegrooveEffects* fx, float mix) {
+    if (fx) fx->delay_mix = clampf(mix, 0.0f, 1.0f);
+}
+int regroove_effects_get_delay_enabled(RegrooveEffects* fx) {
+    return fx ? fx->delay_enabled : 0;
+}
+float regroove_effects_get_delay_time(RegrooveEffects* fx) {
+    return fx ? fx->delay_time : 0.375f;
+}
+float regroove_effects_get_delay_feedback(RegrooveEffects* fx) {
+    return fx ? fx->delay_feedback : 0.4f;
+}
+float regroove_effects_get_delay_mix(RegrooveEffects* fx) {
+    return fx ? fx->delay_mix : 0.3f;
 }

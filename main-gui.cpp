@@ -3796,126 +3796,342 @@ static void ShowMainUI() {
         ImGui::EndChild(); // End midi_scroll child window
     }
     else if (ui_mode == UI_MODE_EFFECTS) {
-        // EFFECTS MODE: Audio effects configuration
-
-        ImGui::SetCursorPos(ImVec2(origin.x + 16.0f, origin.y + 16.0f));
-
-        // Make the entire effects area scrollable
-        ImGui::BeginChild("##effects_scroll", ImVec2(rightW - 32.0f, contentHeight - 32.0f), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-
-        ImGui::BeginGroup();
+        // EFFECTS MODE: Fader-style effects controls (like volume faders)
 
         if (!effects) {
+            ImGui::SetCursorPos(ImVec2(origin.x + 16.0f, origin.y + 16.0f));
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Effects system not initialized");
         } else {
-            // =====================================================================
-            // DISTORTION SECTION
-            // =====================================================================
-            ImGui::Text("Distortion");
-            ImGui::Separator();
-            ImGui::Dummy(ImVec2(0, 12.0f));
+            // Layout: Each effect group gets vertical faders like volume faders
+            // Enable button at top, fader(s) in middle
+            // fx_spacing: tight spacing within effect groups (between faders in same group)
+            // spacing: wider spacing between effect groups (same as volume panel fader spacing)
+            const float fx_spacing = 16.0f;
+            int col_index = 0;
 
-            // Enable checkbox
-            int distortion_enabled = regroove_effects_get_distortion_enabled(effects);
-            if (ImGui::Checkbox("Enable Distortion", (bool*)&distortion_enabled)) {
-                if (learn_mode_active && ImGui::IsItemActivated()) {
-                    start_learn_for_action(ACTION_FX_DISTORTION_TOGGLE);
-                } else {
-                    regroove_effects_set_distortion_enabled(effects, distortion_enabled);
+            // --- DISTORTION GROUP ---
+            ImGui::SetCursorPos(ImVec2(origin.x, origin.y + 8.0f));
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "DISTORTION");
+
+            // Drive (with enable)
+            {
+                float colX = origin.x + col_index * (sliderW + fx_spacing);
+                ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
+                ImGui::BeginGroup();
+                ImGui::Text("Drive");
+                ImGui::Dummy(ImVec2(0, 4.0f));
+
+                // Enable toggle
+                int dist_en = regroove_effects_get_distortion_enabled(effects);
+                ImVec4 enCol = dist_en ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, enCol);
+                if (ImGui::Button("E##dist_en", ImVec2(sliderW, SOLO_SIZE))) {
+                    if (learn_mode_active) start_learn_for_action(ACTION_FX_DISTORTION_TOGGLE);
+                    else regroove_effects_set_distortion_enabled(effects, !dist_en);
                 }
+                ImGui::PopStyleColor();
+                ImGui::Dummy(ImVec2(0, 6.0f));
+
+                // Drive fader
+                float drive = regroove_effects_get_distortion_drive(effects);
+                if (ImGui::VSliderFloat("##fx_drive", ImVec2(sliderW, sliderH), &drive, 0.0f, 1.0f, "")) {
+                    if (learn_mode_active && ImGui::IsItemActive()) {
+                        start_learn_for_action(ACTION_FX_DISTORTION_DRIVE);
+                    } else {
+                        regroove_effects_set_distortion_drive(effects, drive);
+                    }
+                }
+                ImGui::EndGroup();
+                col_index++;
             }
 
-            ImGui::Dummy(ImVec2(0, 8.0f));
+            // Mix (no enable - invisible spacer)
+            {
+                float colX = origin.x + col_index * (sliderW + fx_spacing);
+                ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
+                ImGui::BeginGroup();
+                ImGui::Text("Mix");
+                ImGui::Dummy(ImVec2(0, 4.0f));
 
-            // Drive slider
-            ImGui::Text("Drive:");
-            ImGui::SameLine(150.0f);
-            float drive = regroove_effects_get_distortion_drive(effects);
-            ImGui::SetNextItemWidth(300.0f);
-            if (ImGui::SliderFloat("##dist_drive", &drive, 0.0f, 1.0f, "%.2f")) {
-                if (learn_mode_active && ImGui::IsItemActive()) {
-                    start_learn_for_action(ACTION_FX_DISTORTION_DRIVE);
-                } else {
-                    regroove_effects_set_distortion_drive(effects, drive);
+                // Invisible spacer to align with faders that have enable buttons
+                ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
+                ImGui::Dummy(ImVec2(0, 6.0f));
+
+                float mix = regroove_effects_get_distortion_mix(effects);
+                if (ImGui::VSliderFloat("##fx_dist_mix", ImVec2(sliderW, sliderH), &mix, 0.0f, 1.0f, "")) {
+                    if (learn_mode_active && ImGui::IsItemActive()) {
+                        start_learn_for_action(ACTION_FX_DISTORTION_MIX);
+                    } else {
+                        regroove_effects_set_distortion_mix(effects, mix);
+                    }
                 }
+                ImGui::EndGroup();
+                col_index++;
             }
 
-            // Mix slider
-            ImGui::Text("Mix:");
-            ImGui::SameLine(150.0f);
-            float mix = regroove_effects_get_distortion_mix(effects);
-            ImGui::SetNextItemWidth(300.0f);
-            if (ImGui::SliderFloat("##dist_mix", &mix, 0.0f, 1.0f, "%.2f")) {
-                if (learn_mode_active && ImGui::IsItemActive()) {
-                    start_learn_for_action(ACTION_FX_DISTORTION_MIX);
-                } else {
-                    regroove_effects_set_distortion_mix(effects, mix);
+            // Add group spacing (wider gap between effect groups)
+            // Add extra spacing equal to volume panel spacing between faders
+            float group_gap_offset = (spacing - fx_spacing);
+
+            // --- FILTER GROUP ---
+            float filter_start_x = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+            ImGui::SetCursorPos(ImVec2(filter_start_x, origin.y + 8.0f));
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "FILTER");
+
+            // Cutoff (with enable)
+            {
+                float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+                ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
+                ImGui::BeginGroup();
+                ImGui::Text("Cutoff");
+                ImGui::Dummy(ImVec2(0, 4.0f));
+
+                // Enable toggle
+                int filt_en = regroove_effects_get_filter_enabled(effects);
+                ImVec4 enCol = filt_en ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, enCol);
+                if (ImGui::Button("E##filt_en", ImVec2(sliderW, SOLO_SIZE))) {
+                    if (learn_mode_active) start_learn_for_action(ACTION_FX_FILTER_TOGGLE);
+                    else regroove_effects_set_filter_enabled(effects, !filt_en);
                 }
+                ImGui::PopStyleColor();
+                ImGui::Dummy(ImVec2(0, 6.0f));
+
+                float cutoff = regroove_effects_get_filter_cutoff(effects);
+                if (ImGui::VSliderFloat("##fx_cutoff", ImVec2(sliderW, sliderH), &cutoff, 0.0f, 1.0f, "")) {
+                    if (learn_mode_active && ImGui::IsItemActive()) {
+                        start_learn_for_action(ACTION_FX_FILTER_CUTOFF);
+                    } else {
+                        regroove_effects_set_filter_cutoff(effects, cutoff);
+                    }
+                }
+                ImGui::EndGroup();
+                col_index++;
             }
 
-            ImGui::Dummy(ImVec2(0, 20.0f));
-            ImGui::Separator();
-            ImGui::Dummy(ImVec2(0, 20.0f));
+            // Resonance (no enable - invisible spacer)
+            {
+                float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+                ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
+                ImGui::BeginGroup();
+                ImGui::Text("Resonance");
+                ImGui::Dummy(ImVec2(0, 4.0f));
 
-            // =====================================================================
-            // FILTER SECTION
-            // =====================================================================
-            ImGui::Text("Resonant Low-Pass Filter");
-            ImGui::Separator();
-            ImGui::Dummy(ImVec2(0, 12.0f));
+                // Invisible spacer
+                ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
+                ImGui::Dummy(ImVec2(0, 6.0f));
 
-            // Enable checkbox
-            int filter_enabled = regroove_effects_get_filter_enabled(effects);
-            if (ImGui::Checkbox("Enable Filter", (bool*)&filter_enabled)) {
-                if (learn_mode_active && ImGui::IsItemActivated()) {
-                    start_learn_for_action(ACTION_FX_FILTER_TOGGLE);
-                } else {
-                    regroove_effects_set_filter_enabled(effects, filter_enabled);
+                float reso = regroove_effects_get_filter_resonance(effects);
+                if (ImGui::VSliderFloat("##fx_reso", ImVec2(sliderW, sliderH), &reso, 0.0f, 1.0f, "")) {
+                    if (learn_mode_active && ImGui::IsItemActive()) {
+                        start_learn_for_action(ACTION_FX_FILTER_RESONANCE);
+                    } else {
+                        regroove_effects_set_filter_resonance(effects, reso);
+                    }
                 }
+                ImGui::EndGroup();
+                col_index++;
             }
 
-            ImGui::Dummy(ImVec2(0, 8.0f));
+            // Add group spacing (wider gap between effect groups)
+            group_gap_offset += (spacing - fx_spacing);
 
-            // Cutoff slider
-            ImGui::Text("Cutoff:");
-            ImGui::SameLine(150.0f);
-            float cutoff = regroove_effects_get_filter_cutoff(effects);
-            ImGui::SetNextItemWidth(300.0f);
-            if (ImGui::SliderFloat("##filter_cutoff", &cutoff, 0.0f, 1.0f, "%.2f")) {
-                if (learn_mode_active && ImGui::IsItemActive()) {
-                    start_learn_for_action(ACTION_FX_FILTER_CUTOFF);
-                } else {
-                    regroove_effects_set_filter_cutoff(effects, cutoff);
+            // --- EQ GROUP ---
+            float eq_start_x = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+            ImGui::SetCursorPos(ImVec2(eq_start_x, origin.y + 8.0f));
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "EQ");
+
+            // EQ Low (with enable)
+            {
+                float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+                ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
+                ImGui::BeginGroup();
+                ImGui::Text("Low");
+                ImGui::Dummy(ImVec2(0, 4.0f));
+
+                int eq_en = regroove_effects_get_eq_enabled(effects);
+                ImVec4 enCol = eq_en ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, enCol);
+                if (ImGui::Button("E##eq_en", ImVec2(sliderW, SOLO_SIZE))) {
+                    regroove_effects_set_eq_enabled(effects, !eq_en);
                 }
+                ImGui::PopStyleColor();
+                ImGui::Dummy(ImVec2(0, 6.0f));
+
+                float eq_low = regroove_effects_get_eq_low(effects);
+                if (ImGui::VSliderFloat("##fx_eq_low", ImVec2(sliderW, sliderH), &eq_low, 0.0f, 1.0f, "")) {
+                    regroove_effects_set_eq_low(effects, eq_low);
+                }
+                ImGui::EndGroup();
+                col_index++;
             }
 
-            // Resonance slider
-            ImGui::Text("Resonance:");
-            ImGui::SameLine(150.0f);
-            float resonance = regroove_effects_get_filter_resonance(effects);
-            ImGui::SetNextItemWidth(300.0f);
-            if (ImGui::SliderFloat("##filter_resonance", &resonance, 0.0f, 1.0f, "%.2f")) {
-                if (learn_mode_active && ImGui::IsItemActive()) {
-                    start_learn_for_action(ACTION_FX_FILTER_RESONANCE);
-                } else {
-                    regroove_effects_set_filter_resonance(effects, resonance);
+            // EQ Mid (no enable - invisible spacer)
+            {
+                float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+                ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
+                ImGui::BeginGroup();
+                ImGui::Text("Mid");
+                ImGui::Dummy(ImVec2(0, 4.0f));
+
+                // Invisible spacer
+                ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
+                ImGui::Dummy(ImVec2(0, 6.0f));
+
+                float eq_mid = regroove_effects_get_eq_mid(effects);
+                if (ImGui::VSliderFloat("##fx_eq_mid", ImVec2(sliderW, sliderH), &eq_mid, 0.0f, 1.0f, "")) {
+                    regroove_effects_set_eq_mid(effects, eq_mid);
                 }
+                ImGui::EndGroup();
+                col_index++;
             }
 
-            ImGui::Dummy(ImVec2(0, 20.0f));
-            ImGui::Separator();
-            ImGui::Dummy(ImVec2(0, 20.0f));
+            // EQ High (no enable - invisible spacer)
+            {
+                float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+                ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
+                ImGui::BeginGroup();
+                ImGui::Text("High");
+                ImGui::Dummy(ImVec2(0, 4.0f));
 
-            // =====================================================================
-            // INFORMATION
-            // =====================================================================
-            ImGui::TextWrapped("Tip: Use LEARN mode to bind MIDI controllers to these parameters. "
-                             "Click LEARN, then drag a slider, then move a knob or fader on your MIDI controller.");
+                // Invisible spacer
+                ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
+                ImGui::Dummy(ImVec2(0, 6.0f));
+
+                float eq_high = regroove_effects_get_eq_high(effects);
+                if (ImGui::VSliderFloat("##fx_eq_high", ImVec2(sliderW, sliderH), &eq_high, 0.0f, 1.0f, "")) {
+                    regroove_effects_set_eq_high(effects, eq_high);
+                }
+                ImGui::EndGroup();
+                col_index++;
+            }
+
+            // Add group spacing (wider gap between effect groups)
+            group_gap_offset += (spacing - fx_spacing);
+
+            // --- COMPRESSOR GROUP ---
+            float comp_start_x = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+            ImGui::SetCursorPos(ImVec2(comp_start_x, origin.y + 8.0f));
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "COMPRESSOR");
+
+            // Threshold (with enable)
+            {
+                float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+                ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
+                ImGui::BeginGroup();
+                ImGui::Text("Threshold");
+                ImGui::Dummy(ImVec2(0, 4.0f));
+
+                int comp_en = regroove_effects_get_compressor_enabled(effects);
+                ImVec4 enCol = comp_en ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, enCol);
+                if (ImGui::Button("E##comp_en", ImVec2(sliderW, SOLO_SIZE))) {
+                    regroove_effects_set_compressor_enabled(effects, !comp_en);
+                }
+                ImGui::PopStyleColor();
+                ImGui::Dummy(ImVec2(0, 6.0f));
+
+                float thresh = regroove_effects_get_compressor_threshold(effects);
+                if (ImGui::VSliderFloat("##fx_comp_thresh", ImVec2(sliderW, sliderH), &thresh, 0.0f, 1.0f, "")) {
+                    regroove_effects_set_compressor_threshold(effects, thresh);
+                }
+                ImGui::EndGroup();
+                col_index++;
+            }
+
+            // Ratio (no enable - invisible spacer)
+            {
+                float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+                ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
+                ImGui::BeginGroup();
+                ImGui::Text("Ratio");
+                ImGui::Dummy(ImVec2(0, 4.0f));
+
+                // Invisible spacer
+                ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
+                ImGui::Dummy(ImVec2(0, 6.0f));
+
+                float ratio = regroove_effects_get_compressor_ratio(effects);
+                if (ImGui::VSliderFloat("##fx_comp_ratio", ImVec2(sliderW, sliderH), &ratio, 0.0f, 1.0f, "")) {
+                    regroove_effects_set_compressor_ratio(effects, ratio);
+                }
+                ImGui::EndGroup();
+                col_index++;
+            }
+
+            // Add group spacing (wider gap between effect groups)
+            group_gap_offset += (spacing - fx_spacing);
+
+            // --- DELAY GROUP ---
+            float delay_start_x = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+            ImGui::SetCursorPos(ImVec2(delay_start_x, origin.y + 8.0f));
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "DELAY");
+
+            // Time (with enable)
+            {
+                float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+                ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
+                ImGui::BeginGroup();
+                ImGui::Text("Time");
+                ImGui::Dummy(ImVec2(0, 4.0f));
+
+                int delay_en = regroove_effects_get_delay_enabled(effects);
+                ImVec4 enCol = delay_en ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, enCol);
+                if (ImGui::Button("E##delay_en", ImVec2(sliderW, SOLO_SIZE))) {
+                    regroove_effects_set_delay_enabled(effects, !delay_en);
+                }
+                ImGui::PopStyleColor();
+                ImGui::Dummy(ImVec2(0, 6.0f));
+
+                float time = regroove_effects_get_delay_time(effects);
+                if (ImGui::VSliderFloat("##fx_delay_time", ImVec2(sliderW, sliderH), &time, 0.0f, 1.0f, "")) {
+                    regroove_effects_set_delay_time(effects, time);
+                }
+                ImGui::EndGroup();
+                col_index++;
+            }
+
+            // Feedback (no enable - invisible spacer)
+            {
+                float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+                ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
+                ImGui::BeginGroup();
+                ImGui::Text("Feedback");
+                ImGui::Dummy(ImVec2(0, 4.0f));
+
+                // Invisible spacer
+                ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
+                ImGui::Dummy(ImVec2(0, 6.0f));
+
+                float feedback = regroove_effects_get_delay_feedback(effects);
+                if (ImGui::VSliderFloat("##fx_delay_fb", ImVec2(sliderW, sliderH), &feedback, 0.0f, 1.0f, "")) {
+                    regroove_effects_set_delay_feedback(effects, feedback);
+                }
+                ImGui::EndGroup();
+                col_index++;
+            }
+
+            // Mix (no enable - invisible spacer)
+            {
+                float colX = origin.x + col_index * (sliderW + fx_spacing) + group_gap_offset;
+                ImGui::SetCursorPos(ImVec2(colX, origin.y + 24.0f));
+                ImGui::BeginGroup();
+                ImGui::Text("Mix");
+                ImGui::Dummy(ImVec2(0, 4.0f));
+
+                // Invisible spacer
+                ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
+                ImGui::Dummy(ImVec2(0, 6.0f));
+
+                float mix = regroove_effects_get_delay_mix(effects);
+                if (ImGui::VSliderFloat("##fx_delay_mix", ImVec2(sliderW, sliderH), &mix, 0.0f, 1.0f, "")) {
+                    regroove_effects_set_delay_mix(effects, mix);
+                }
+                ImGui::EndGroup();
+                col_index++;
+            }
         }
-
-        ImGui::EndGroup();
-
-        ImGui::EndChild(); // End effects_scroll child window
     }
     else if (ui_mode == UI_MODE_SETTINGS) {
         // SETTINGS MODE: Audio and keyboard configuration
