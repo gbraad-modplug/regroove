@@ -123,6 +123,33 @@ void regroove_effects_reset(RegrooveEffects* fx) {
     // Clear filter state
     memset(fx->filter_lp, 0, sizeof(fx->filter_lp));
     memset(fx->filter_bp, 0, sizeof(fx->filter_bp));
+
+    // Clear distortion state
+    memset(fx->distortion_hp, 0, sizeof(fx->distortion_hp));
+    memset(fx->distortion_bp_lp, 0, sizeof(fx->distortion_bp_lp));
+    memset(fx->distortion_bp_bp, 0, sizeof(fx->distortion_bp_bp));
+    memset(fx->distortion_env, 0, sizeof(fx->distortion_env));
+    memset(fx->distortion_lp, 0, sizeof(fx->distortion_lp));
+
+    // Clear EQ state
+    memset(fx->eq_lp1, 0, sizeof(fx->eq_lp1));
+    memset(fx->eq_lp2, 0, sizeof(fx->eq_lp2));
+    memset(fx->eq_bp1, 0, sizeof(fx->eq_bp1));
+    memset(fx->eq_bp2, 0, sizeof(fx->eq_bp2));
+    memset(fx->eq_hp1, 0, sizeof(fx->eq_hp1));
+    memset(fx->eq_hp2, 0, sizeof(fx->eq_hp2));
+
+    // Clear compressor state
+    memset(fx->compressor_envelope, 0, sizeof(fx->compressor_envelope));
+
+    // Clear delay buffers and reset write position
+    if (fx->delay_buffer[0]) {
+        memset(fx->delay_buffer[0], 0, MAX_DELAY_SAMPLES * sizeof(float));
+    }
+    if (fx->delay_buffer[1]) {
+        memset(fx->delay_buffer[1], 0, MAX_DELAY_SAMPLES * sizeof(float));
+    }
+    fx->delay_write_pos = 0;
 }
 
 void regroove_effects_process(RegrooveEffects* fx, int16_t* buffer, int frames, int sample_rate) {

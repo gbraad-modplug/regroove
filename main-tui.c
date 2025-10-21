@@ -70,6 +70,12 @@ static void update_phrases(void);
 // Trigger phrase playback
 static void trigger_phrase(int phrase_index) {
     printf("trigger_phrase called with index %d\n", phrase_index);
+
+    // Clear effect buffers to prevent clicks/pops from previous state
+    if (effects) {
+        regroove_effects_reset(effects);
+    }
+
     // Use common library function
     regroove_common_trigger_phrase(common_state, phrase_index);
 }

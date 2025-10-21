@@ -316,6 +316,11 @@ static int load_module(const char *path) {
     regroove_set_custom_loop_rows(mod, 0); // 0 disables custom loop
     regroove_set_pitch(mod, MapPitchFader(0.0f)); // Reset pitch
 
+    // Clear effects buffers to prevent artifacts from previous song
+    if (effects) {
+        regroove_effects_reset(effects);
+    }
+
     if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 1);
     playing = false;
     for (int i = 0; i < 16; i++) step_fade[i] = 0.0f;
@@ -612,6 +617,11 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
 // Phrase Playback System
 // -----------------------------------------------------------------------------
 static void trigger_phrase(int phrase_index) {
+    // Clear effect buffers to prevent clicks/pops from previous state
+    if (effects) {
+        regroove_effects_reset(effects);
+    }
+
     // Use common library function
     regroove_common_trigger_phrase(common_state, phrase_index);
 

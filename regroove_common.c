@@ -864,9 +864,18 @@ void regroove_common_trigger_phrase(RegrooveCommonState *state, int phrase_index
     // 3. Unmute all channels (engine state)
     regroove_unmute_all(state->player);
 
-    // Trigger the phrase via the engine
+    // 4. Trigger the phrase
     if (regroove_phrase_trigger(state->phrase, phrase_index) != 0) {
         return;  // Failed to trigger
+    }
+
+    // 5. Execute position 0 events immediately (before playback starts)
+    //    This ensures channel solo, pattern jumps, etc. happen BEFORE audio rendering begins
+    regroove_phrase_update(state->phrase);
+
+    // 6. Process all pending commands (like channel solo) before starting playback
+    if (state->player) {
+        regroove_process_commands(state->player);
     }
 
     // Start playback for the phrase
