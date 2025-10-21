@@ -1684,8 +1684,12 @@ static void ShowMainUI() {
             // Only show mode if a module is loaded
             if (common_state && common_state->player) {
                 mode_str = "SONG";
+                // Check if phrase is active (highest priority)
+                if (common_state->phrase && regroove_phrase_is_active(common_state->phrase)) {
+                    mode_str = "PHRS";
+                }
                 // Show PERF whenever performance events are loaded (regardless of playback state)
-                if (common_state->performance) {
+                else if (common_state->performance) {
                     int event_count = regroove_performance_get_event_count(common_state->performance);
                     if (event_count > 0) {
                         mode_str = "PERF";
@@ -2862,7 +2866,11 @@ static void ShowMainUI() {
             // Determine play mode display
             const char* play_mode_str = "Song Mode";
             bool has_performance = false;
-            if (common_state && common_state->performance) {
+            // Check if phrase is active (highest priority)
+            if (common_state && common_state->phrase && regroove_phrase_is_active(common_state->phrase)) {
+                play_mode_str = "Phrase Mode";
+            }
+            else if (common_state && common_state->performance) {
                 int event_count = regroove_performance_get_event_count(common_state->performance);
                 if (event_count > 0 || regroove_performance_is_playing(common_state->performance)) {
                     play_mode_str = "Performance Mode";
