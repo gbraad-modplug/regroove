@@ -39,6 +39,16 @@ static inline float highpass_tick(float input, float *state, float cutoff_norm) 
     return input - *state;
 }
 
+// Helper: Simple resonant bandpass bump (for punch at 120Hz)
+static inline float bandpass_bump(float input, float *lp_state, float *bp_state, float freq_norm, float q) {
+    // State-variable filter bandpass output
+    float f = 2.0f * sinf(3.14159f * freq_norm);
+    *lp_state += f * *bp_state;
+    float hp = input - *lp_state - q * *bp_state;
+    *bp_state += f * hp;
+    return *bp_state;
+}
+
 // Helper: Envelope follower for dynamic drive
 static inline float envelope_follower(float input, float *state, float attack, float release) {
     float level = fabsf(input);
@@ -132,25 +142,46 @@ void regroove_effects_process(RegrooveEffects* fx, int16_t* buffer, int frames, 
             float dry_left = left;
             float dry_right = right;
 
-            // Pre-emphasis: highpass at 80Hz to remove sub-rumble before distortion
+            // Pre-emphasis EQ chain:
+            // 1. Highpass at 80Hz to remove sub-rumble
             float hp_cutoff = 80.0f / sample_rate;
-            left = highpass_tick(left, &fx->distortion_hp[0], hp_cutoff);
-            right = highpass_tick(right, &fx->distortion_hp[1], hp_cutoff);
+            float emphasized_left = highpass_tick(left, &fx->distortion_hp[0], hp_cutoff);
+            float emphasized_right = highpass_tick(right, &fx->distortion_hp[1], hp_cutoff);
+
+            // 2. Add resonant bandpass bump at 120Hz for punch (909 kick fundamental)
+            float bp_freq = 120.0f / sample_rate;
+            float bp_q = 0.5f;  // Resonance for punch
+            float bp_left = bandpass_bump(emphasized_left, &fx->distortion_bp_lp[0],
+                                         &fx->distortion_bp_bp[0], bp_freq, bp_q);
+            float bp_right = bandpass_bump(emphasized_right, &fx->distortion_bp_lp[1],
+                                          &fx->distortion_bp_bp[1], bp_freq, bp_q);
+
+            // Mix in the punch bump
+            emphasized_left += bp_left * 0.5f;
+            emphasized_right += bp_right * 0.5f;
 
             // Dynamic envelope detection for transient emphasis
             float attack_coeff = 0.9f;   // Fast attack
             float release_coeff = 0.001f; // Slow release
-            float env_l = envelope_follower(left, &fx->distortion_env[0], attack_coeff, release_coeff);
-            float env_r = envelope_follower(right, &fx->distortion_env[1], attack_coeff, release_coeff);
+            float env_l = envelope_follower(emphasized_left, &fx->distortion_env[0], attack_coeff, release_coeff);
+            float env_r = envelope_follower(emphasized_right, &fx->distortion_env[1], attack_coeff, release_coeff);
 
             // Dynamic drive: more aggressive on transients (kicks, snares)
-            float base_drive = fx->distortion_drive;
+            // Drive amount: 0.0 = 1x, 1.0 = 8x
+            float base_drive = 1.0f + fx->distortion_drive * 7.0f;
             float dynamic_drive_l = base_drive * (0.7f + env_l * 0.6f);
             float dynamic_drive_r = base_drive * (0.7f + env_r * 0.6f);
 
-            // Apply RB338-style asymmetric waveshaping
-            float shaped_left = rb338_shaper(left * 2.0f, dynamic_drive_l);
-            float shaped_right = rb338_shaper(right * 2.0f, dynamic_drive_r);
+            // Apply drive gain
+            float driven_left = emphasized_left * dynamic_drive_l;
+            float driven_right = emphasized_right * dynamic_drive_r;
+
+            // Aggressive distortion chain: foldback -> rb338_shaper
+            float folded_left = foldback(driven_left);
+            float folded_right = foldback(driven_right);
+
+            float shaped_left = rb338_shaper(folded_left);
+            float shaped_right = rb338_shaper(folded_right);
 
             // Post-EQ: lowpass at 8kHz to tame harshness, add warmth
             float lp_cutoff = 8000.0f / sample_rate;
