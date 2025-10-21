@@ -44,8 +44,19 @@ InputAction parse_action(const char *str) {
     if (strcmp(str, "fx_distortion_mix") == 0) return ACTION_FX_DISTORTION_MIX;
     if (strcmp(str, "fx_filter_cutoff") == 0) return ACTION_FX_FILTER_CUTOFF;
     if (strcmp(str, "fx_filter_resonance") == 0) return ACTION_FX_FILTER_RESONANCE;
+    if (strcmp(str, "fx_eq_low") == 0) return ACTION_FX_EQ_LOW;
+    if (strcmp(str, "fx_eq_mid") == 0) return ACTION_FX_EQ_MID;
+    if (strcmp(str, "fx_eq_high") == 0) return ACTION_FX_EQ_HIGH;
+    if (strcmp(str, "fx_compressor_threshold") == 0) return ACTION_FX_COMPRESSOR_THRESHOLD;
+    if (strcmp(str, "fx_compressor_ratio") == 0) return ACTION_FX_COMPRESSOR_RATIO;
+    if (strcmp(str, "fx_delay_time") == 0) return ACTION_FX_DELAY_TIME;
+    if (strcmp(str, "fx_delay_feedback") == 0) return ACTION_FX_DELAY_FEEDBACK;
+    if (strcmp(str, "fx_delay_mix") == 0) return ACTION_FX_DELAY_MIX;
     if (strcmp(str, "fx_distortion_toggle") == 0) return ACTION_FX_DISTORTION_TOGGLE;
     if (strcmp(str, "fx_filter_toggle") == 0) return ACTION_FX_FILTER_TOGGLE;
+    if (strcmp(str, "fx_eq_toggle") == 0) return ACTION_FX_EQ_TOGGLE;
+    if (strcmp(str, "fx_compressor_toggle") == 0) return ACTION_FX_COMPRESSOR_TOGGLE;
+    if (strcmp(str, "fx_delay_toggle") == 0) return ACTION_FX_DELAY_TOGGLE;
     return ACTION_NONE;
 }
 
@@ -87,8 +98,19 @@ const char* input_action_name(InputAction action) {
         case ACTION_FX_DISTORTION_MIX: return "fx_distortion_mix";
         case ACTION_FX_FILTER_CUTOFF: return "fx_filter_cutoff";
         case ACTION_FX_FILTER_RESONANCE: return "fx_filter_resonance";
+        case ACTION_FX_EQ_LOW: return "fx_eq_low";
+        case ACTION_FX_EQ_MID: return "fx_eq_mid";
+        case ACTION_FX_EQ_HIGH: return "fx_eq_high";
+        case ACTION_FX_COMPRESSOR_THRESHOLD: return "fx_compressor_threshold";
+        case ACTION_FX_COMPRESSOR_RATIO: return "fx_compressor_ratio";
+        case ACTION_FX_DELAY_TIME: return "fx_delay_time";
+        case ACTION_FX_DELAY_FEEDBACK: return "fx_delay_feedback";
+        case ACTION_FX_DELAY_MIX: return "fx_delay_mix";
         case ACTION_FX_DISTORTION_TOGGLE: return "fx_distortion_toggle";
         case ACTION_FX_FILTER_TOGGLE: return "fx_filter_toggle";
+        case ACTION_FX_EQ_TOGGLE: return "fx_eq_toggle";
+        case ACTION_FX_COMPRESSOR_TOGGLE: return "fx_compressor_toggle";
+        case ACTION_FX_DELAY_TOGGLE: return "fx_delay_toggle";
         default: return "none";
     }
 }

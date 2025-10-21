@@ -857,6 +857,46 @@ static void execute_action(InputAction action, int parameter, float value, void*
                 regroove_effects_set_filter_resonance(effects, value / 127.0f);
             }
             break;
+        case ACTION_FX_EQ_LOW:
+            if (effects) {
+                regroove_effects_set_eq_low(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_EQ_MID:
+            if (effects) {
+                regroove_effects_set_eq_mid(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_EQ_HIGH:
+            if (effects) {
+                regroove_effects_set_eq_high(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_COMPRESSOR_THRESHOLD:
+            if (effects) {
+                regroove_effects_set_compressor_threshold(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_COMPRESSOR_RATIO:
+            if (effects) {
+                regroove_effects_set_compressor_ratio(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_DELAY_TIME:
+            if (effects) {
+                regroove_effects_set_delay_time(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_DELAY_FEEDBACK:
+            if (effects) {
+                regroove_effects_set_delay_feedback(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_DELAY_MIX:
+            if (effects) {
+                regroove_effects_set_delay_mix(effects, value / 127.0f);
+            }
+            break;
         case ACTION_FX_DISTORTION_TOGGLE:
             if (effects) {
                 int enabled = regroove_effects_get_distortion_enabled(effects);
@@ -867,6 +907,24 @@ static void execute_action(InputAction action, int parameter, float value, void*
             if (effects) {
                 int enabled = regroove_effects_get_filter_enabled(effects);
                 regroove_effects_set_filter_enabled(effects, !enabled);
+            }
+            break;
+        case ACTION_FX_EQ_TOGGLE:
+            if (effects) {
+                int enabled = regroove_effects_get_eq_enabled(effects);
+                regroove_effects_set_eq_enabled(effects, !enabled);
+            }
+            break;
+        case ACTION_FX_COMPRESSOR_TOGGLE:
+            if (effects) {
+                int enabled = regroove_effects_get_compressor_enabled(effects);
+                regroove_effects_set_compressor_enabled(effects, !enabled);
+            }
+            break;
+        case ACTION_FX_DELAY_TOGGLE:
+            if (effects) {
+                int enabled = regroove_effects_get_delay_enabled(effects);
+                regroove_effects_set_delay_enabled(effects, !enabled);
             }
             break;
         default:
@@ -1242,7 +1300,15 @@ static void learn_midi_mapping(int device_id, int cc_or_note, bool is_note) {
                  learn_target_action == ACTION_FX_DISTORTION_DRIVE ||
                  learn_target_action == ACTION_FX_DISTORTION_MIX ||
                  learn_target_action == ACTION_FX_FILTER_CUTOFF ||
-                 learn_target_action == ACTION_FX_FILTER_RESONANCE)) {
+                 learn_target_action == ACTION_FX_FILTER_RESONANCE ||
+                 learn_target_action == ACTION_FX_EQ_LOW ||
+                 learn_target_action == ACTION_FX_EQ_MID ||
+                 learn_target_action == ACTION_FX_EQ_HIGH ||
+                 learn_target_action == ACTION_FX_COMPRESSOR_THRESHOLD ||
+                 learn_target_action == ACTION_FX_COMPRESSOR_RATIO ||
+                 learn_target_action == ACTION_FX_DELAY_TIME ||
+                 learn_target_action == ACTION_FX_DELAY_FEEDBACK ||
+                 learn_target_action == ACTION_FX_DELAY_MIX)) {
                 new_mapping.threshold = 0;
                 new_mapping.continuous = 1; // Continuous fader mode
             } else {
@@ -3702,7 +3768,15 @@ static void ShowMainUI() {
                             act == ACTION_FX_DISTORTION_DRIVE ||
                             act == ACTION_FX_DISTORTION_MIX ||
                             act == ACTION_FX_FILTER_CUTOFF ||
-                            act == ACTION_FX_FILTER_RESONANCE) {
+                            act == ACTION_FX_FILTER_RESONANCE ||
+                            act == ACTION_FX_EQ_LOW ||
+                            act == ACTION_FX_EQ_MID ||
+                            act == ACTION_FX_EQ_HIGH ||
+                            act == ACTION_FX_COMPRESSOR_THRESHOLD ||
+                            act == ACTION_FX_COMPRESSOR_RATIO ||
+                            act == ACTION_FX_DELAY_TIME ||
+                            act == ACTION_FX_DELAY_FEEDBACK ||
+                            act == ACTION_FX_DELAY_MIX) {
                             new_midi_continuous = 1;
                             new_midi_threshold = 0;
                         } else {
@@ -3953,14 +4027,19 @@ static void ShowMainUI() {
                 ImVec4 enCol = eq_en ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
                 ImGui::PushStyleColor(ImGuiCol_Button, enCol);
                 if (ImGui::Button("E##eq_en", ImVec2(sliderW, SOLO_SIZE))) {
-                    regroove_effects_set_eq_enabled(effects, !eq_en);
+                    if (learn_mode_active) start_learn_for_action(ACTION_FX_EQ_TOGGLE);
+                    else regroove_effects_set_eq_enabled(effects, !eq_en);
                 }
                 ImGui::PopStyleColor();
                 ImGui::Dummy(ImVec2(0, 6.0f));
 
                 float eq_low = regroove_effects_get_eq_low(effects);
                 if (ImGui::VSliderFloat("##fx_eq_low", ImVec2(sliderW, sliderH), &eq_low, 0.0f, 1.0f, "")) {
-                    regroove_effects_set_eq_low(effects, eq_low);
+                    if (learn_mode_active && ImGui::IsItemActive()) {
+                        start_learn_for_action(ACTION_FX_EQ_LOW);
+                    } else {
+                        regroove_effects_set_eq_low(effects, eq_low);
+                    }
                 }
                 ImGui::EndGroup();
                 col_index++;
@@ -3980,7 +4059,11 @@ static void ShowMainUI() {
 
                 float eq_mid = regroove_effects_get_eq_mid(effects);
                 if (ImGui::VSliderFloat("##fx_eq_mid", ImVec2(sliderW, sliderH), &eq_mid, 0.0f, 1.0f, "")) {
-                    regroove_effects_set_eq_mid(effects, eq_mid);
+                    if (learn_mode_active && ImGui::IsItemActive()) {
+                        start_learn_for_action(ACTION_FX_EQ_MID);
+                    } else {
+                        regroove_effects_set_eq_mid(effects, eq_mid);
+                    }
                 }
                 ImGui::EndGroup();
                 col_index++;
@@ -4000,7 +4083,11 @@ static void ShowMainUI() {
 
                 float eq_high = regroove_effects_get_eq_high(effects);
                 if (ImGui::VSliderFloat("##fx_eq_high", ImVec2(sliderW, sliderH), &eq_high, 0.0f, 1.0f, "")) {
-                    regroove_effects_set_eq_high(effects, eq_high);
+                    if (learn_mode_active && ImGui::IsItemActive()) {
+                        start_learn_for_action(ACTION_FX_EQ_HIGH);
+                    } else {
+                        regroove_effects_set_eq_high(effects, eq_high);
+                    }
                 }
                 ImGui::EndGroup();
                 col_index++;
@@ -4026,14 +4113,19 @@ static void ShowMainUI() {
                 ImVec4 enCol = comp_en ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
                 ImGui::PushStyleColor(ImGuiCol_Button, enCol);
                 if (ImGui::Button("E##comp_en", ImVec2(sliderW, SOLO_SIZE))) {
-                    regroove_effects_set_compressor_enabled(effects, !comp_en);
+                    if (learn_mode_active) start_learn_for_action(ACTION_FX_COMPRESSOR_TOGGLE);
+                    else regroove_effects_set_compressor_enabled(effects, !comp_en);
                 }
                 ImGui::PopStyleColor();
                 ImGui::Dummy(ImVec2(0, 6.0f));
 
                 float thresh = regroove_effects_get_compressor_threshold(effects);
                 if (ImGui::VSliderFloat("##fx_comp_thresh", ImVec2(sliderW, sliderH), &thresh, 0.0f, 1.0f, "")) {
-                    regroove_effects_set_compressor_threshold(effects, thresh);
+                    if (learn_mode_active && ImGui::IsItemActive()) {
+                        start_learn_for_action(ACTION_FX_COMPRESSOR_THRESHOLD);
+                    } else {
+                        regroove_effects_set_compressor_threshold(effects, thresh);
+                    }
                 }
                 ImGui::EndGroup();
                 col_index++;
@@ -4053,7 +4145,11 @@ static void ShowMainUI() {
 
                 float ratio = regroove_effects_get_compressor_ratio(effects);
                 if (ImGui::VSliderFloat("##fx_comp_ratio", ImVec2(sliderW, sliderH), &ratio, 0.0f, 1.0f, "")) {
-                    regroove_effects_set_compressor_ratio(effects, ratio);
+                    if (learn_mode_active && ImGui::IsItemActive()) {
+                        start_learn_for_action(ACTION_FX_COMPRESSOR_RATIO);
+                    } else {
+                        regroove_effects_set_compressor_ratio(effects, ratio);
+                    }
                 }
                 ImGui::EndGroup();
                 col_index++;
@@ -4079,14 +4175,19 @@ static void ShowMainUI() {
                 ImVec4 enCol = delay_en ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
                 ImGui::PushStyleColor(ImGuiCol_Button, enCol);
                 if (ImGui::Button("E##delay_en", ImVec2(sliderW, SOLO_SIZE))) {
-                    regroove_effects_set_delay_enabled(effects, !delay_en);
+                    if (learn_mode_active) start_learn_for_action(ACTION_FX_DELAY_TOGGLE);
+                    else regroove_effects_set_delay_enabled(effects, !delay_en);
                 }
                 ImGui::PopStyleColor();
                 ImGui::Dummy(ImVec2(0, 6.0f));
 
                 float time = regroove_effects_get_delay_time(effects);
                 if (ImGui::VSliderFloat("##fx_delay_time", ImVec2(sliderW, sliderH), &time, 0.0f, 1.0f, "")) {
-                    regroove_effects_set_delay_time(effects, time);
+                    if (learn_mode_active && ImGui::IsItemActive()) {
+                        start_learn_for_action(ACTION_FX_DELAY_TIME);
+                    } else {
+                        regroove_effects_set_delay_time(effects, time);
+                    }
                 }
                 ImGui::EndGroup();
                 col_index++;
@@ -4106,7 +4207,11 @@ static void ShowMainUI() {
 
                 float feedback = regroove_effects_get_delay_feedback(effects);
                 if (ImGui::VSliderFloat("##fx_delay_fb", ImVec2(sliderW, sliderH), &feedback, 0.0f, 1.0f, "")) {
-                    regroove_effects_set_delay_feedback(effects, feedback);
+                    if (learn_mode_active && ImGui::IsItemActive()) {
+                        start_learn_for_action(ACTION_FX_DELAY_FEEDBACK);
+                    } else {
+                        regroove_effects_set_delay_feedback(effects, feedback);
+                    }
                 }
                 ImGui::EndGroup();
                 col_index++;
@@ -4126,7 +4231,11 @@ static void ShowMainUI() {
 
                 float mix = regroove_effects_get_delay_mix(effects);
                 if (ImGui::VSliderFloat("##fx_delay_mix", ImVec2(sliderW, sliderH), &mix, 0.0f, 1.0f, "")) {
-                    regroove_effects_set_delay_mix(effects, mix);
+                    if (learn_mode_active && ImGui::IsItemActive()) {
+                        start_learn_for_action(ACTION_FX_DELAY_MIX);
+                    } else {
+                        regroove_effects_set_delay_mix(effects, mix);
+                    }
                 }
                 ImGui::EndGroup();
                 col_index++;

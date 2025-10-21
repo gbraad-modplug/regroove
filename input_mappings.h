@@ -41,9 +41,20 @@ typedef enum {
     ACTION_FX_DISTORTION_MIX,      // distortion dry/wet mix
     ACTION_FX_FILTER_CUTOFF,       // filter cutoff frequency
     ACTION_FX_FILTER_RESONANCE,    // filter resonance/Q
+    ACTION_FX_EQ_LOW,              // EQ low band gain
+    ACTION_FX_EQ_MID,              // EQ mid band gain
+    ACTION_FX_EQ_HIGH,             // EQ high band gain
+    ACTION_FX_COMPRESSOR_THRESHOLD, // compressor threshold
+    ACTION_FX_COMPRESSOR_RATIO,    // compressor ratio
+    ACTION_FX_DELAY_TIME,          // delay time
+    ACTION_FX_DELAY_FEEDBACK,      // delay feedback
+    ACTION_FX_DELAY_MIX,           // delay dry/wet mix
     // Effects toggles (button/trigger)
     ACTION_FX_DISTORTION_TOGGLE,   // toggle distortion on/off
     ACTION_FX_FILTER_TOGGLE,       // toggle filter on/off
+    ACTION_FX_EQ_TOGGLE,           // toggle EQ on/off
+    ACTION_FX_COMPRESSOR_TOGGLE,   // toggle compressor on/off
+    ACTION_FX_DELAY_TOGGLE,        // toggle delay on/off
     ACTION_MAX
 } InputAction;
 

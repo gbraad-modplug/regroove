@@ -492,6 +492,46 @@ static void execute_action(InputAction action, int parameter, float value, void*
                 regroove_effects_set_filter_resonance(effects, value / 127.0f);
             }
             break;
+        case ACTION_FX_EQ_LOW:
+            if (effects) {
+                regroove_effects_set_eq_low(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_EQ_MID:
+            if (effects) {
+                regroove_effects_set_eq_mid(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_EQ_HIGH:
+            if (effects) {
+                regroove_effects_set_eq_high(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_COMPRESSOR_THRESHOLD:
+            if (effects) {
+                regroove_effects_set_compressor_threshold(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_COMPRESSOR_RATIO:
+            if (effects) {
+                regroove_effects_set_compressor_ratio(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_DELAY_TIME:
+            if (effects) {
+                regroove_effects_set_delay_time(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_DELAY_FEEDBACK:
+            if (effects) {
+                regroove_effects_set_delay_feedback(effects, value / 127.0f);
+            }
+            break;
+        case ACTION_FX_DELAY_MIX:
+            if (effects) {
+                regroove_effects_set_delay_mix(effects, value / 127.0f);
+            }
+            break;
         case ACTION_FX_DISTORTION_TOGGLE:
             if (effects) {
                 int enabled = regroove_effects_get_distortion_enabled(effects);
@@ -504,6 +544,27 @@ static void execute_action(InputAction action, int parameter, float value, void*
                 int enabled = regroove_effects_get_filter_enabled(effects);
                 regroove_effects_set_filter_enabled(effects, !enabled);
                 printf("Filter: %s\n", enabled ? "OFF" : "ON");
+            }
+            break;
+        case ACTION_FX_EQ_TOGGLE:
+            if (effects) {
+                int enabled = regroove_effects_get_eq_enabled(effects);
+                regroove_effects_set_eq_enabled(effects, !enabled);
+                printf("EQ: %s\n", enabled ? "OFF" : "ON");
+            }
+            break;
+        case ACTION_FX_COMPRESSOR_TOGGLE:
+            if (effects) {
+                int enabled = regroove_effects_get_compressor_enabled(effects);
+                regroove_effects_set_compressor_enabled(effects, !enabled);
+                printf("Compressor: %s\n", enabled ? "OFF" : "ON");
+            }
+            break;
+        case ACTION_FX_DELAY_TOGGLE:
+            if (effects) {
+                int enabled = regroove_effects_get_delay_enabled(effects);
+                regroove_effects_set_delay_enabled(effects, !enabled);
+                printf("Delay: %s\n", enabled ? "OFF" : "ON");
             }
             break;
         default:
