@@ -22,23 +22,3 @@ cmake --build . --target regroove-tui
 cmake --build . --target regroove-gui
 ```
 
-### Manual compilation
-
-#### Console version with MIDI
-
-```sh
-gcc -o regroove-tui main-tui.c regroove.c midi.c \
-    $(pkg-config --cflags --libs sdl2 libopenmpt rtmidi)
-```
-
-#### GUI version
-
-```sh
-g++ -o regroove-gui main-gui.cpp \
-    regroove.c midi.c \
-    imgui/*.cpp imgui/backends/imgui_impl_sdl2.cpp imgui/backends/imgui_impl_opengl2.cpp \
-    -I. -Iimgui -Iimgui/backends \
-    -lGL -ldl -lpthread \
-    $(pkg-config --cflags --libs sdl2 libopenmpt rtmidi)
-```
-
