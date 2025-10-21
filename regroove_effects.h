@@ -34,6 +34,7 @@ typedef struct {
     float compressor_ratio;     // 0.0 - 1.0 (maps to 1:1 to 10:1)
     float compressor_attack;    // 0.0 - 1.0 (fast to slow)
     float compressor_release;   // 0.0 - 1.0 (fast to slow)
+    float compressor_makeup;    // 0.0 - 1.0 (makeup gain)
 
     // Phaser parameters
     int phaser_enabled;
@@ -68,6 +69,7 @@ typedef struct {
     float eq_hp1[2], eq_hp2[2];
 
     float compressor_envelope[2]; // Compressor envelope followers
+    float compressor_rms[2];      // RMS state for smoother detection
 
     float phaser_lfo_phase;    // Phaser LFO phase
     float phaser_ap[4][2];     // Phaser all-pass filter states (4 stages, stereo)
@@ -113,6 +115,7 @@ void regroove_effects_set_compressor_threshold(RegrooveEffects* fx, float thresh
 void regroove_effects_set_compressor_ratio(RegrooveEffects* fx, float ratio);
 void regroove_effects_set_compressor_attack(RegrooveEffects* fx, float attack);
 void regroove_effects_set_compressor_release(RegrooveEffects* fx, float release);
+void regroove_effects_set_compressor_makeup(RegrooveEffects* fx, float makeup);
 
 void regroove_effects_set_phaser_enabled(RegrooveEffects* fx, int enabled);
 void regroove_effects_set_phaser_rate(RegrooveEffects* fx, float rate);
@@ -148,6 +151,7 @@ float regroove_effects_get_compressor_threshold(RegrooveEffects* fx);
 float regroove_effects_get_compressor_ratio(RegrooveEffects* fx);
 float regroove_effects_get_compressor_attack(RegrooveEffects* fx);
 float regroove_effects_get_compressor_release(RegrooveEffects* fx);
+float regroove_effects_get_compressor_makeup(RegrooveEffects* fx);
 
 int regroove_effects_get_phaser_enabled(RegrooveEffects* fx);
 float regroove_effects_get_phaser_rate(RegrooveEffects* fx);

@@ -86,10 +86,11 @@ RegrooveEffects* regroove_effects_create(void) {
     fx->eq_high = 0.5f;
 
     fx->compressor_enabled = 0;
-    fx->compressor_threshold = 0.7f;
-    fx->compressor_ratio = 0.5f;
-    fx->compressor_attack = 0.1f;
-    fx->compressor_release = 0.3f;
+    fx->compressor_threshold = 0.4f;  // ~0.20 linear = ~-14dB (moderate)
+    fx->compressor_ratio = 0.4f;      // ~8:1 (noticeable but not crazy)
+    fx->compressor_attack = 0.05f;    // Fast attack for transients
+    fx->compressor_release = 0.5f;    // Slower release to prevent pumping
+    fx->compressor_makeup = 0.65f;    // ~2x gain (gentle boost)
 
     fx->phaser_enabled = 0;
     fx->phaser_rate = 0.3f;
@@ -141,6 +142,7 @@ void regroove_effects_reset(RegrooveEffects* fx) {
 
     // Clear compressor state
     memset(fx->compressor_envelope, 0, sizeof(fx->compressor_envelope));
+    memset(fx->compressor_rms, 0, sizeof(fx->compressor_rms));
 
     // Clear delay buffers and reset write position
     if (fx->delay_buffer[0]) {
@@ -290,41 +292,67 @@ void regroove_effects_process(RegrooveEffects* fx, int16_t* buffer, int frames, 
             }
         }
 
-        // --- COMPRESSOR ---
+        // --- COMPRESSOR (Professional RMS with soft knee and makeup gain) ---
         if (fx->compressor_enabled) {
-            // Simple RMS compressor for each channel
             for (int ch = 0; ch < 2; ch++) {
                 float input = (ch == 0) ? left : right;
-                float level = fabsf(input);
 
-                // Threshold (0.0-1.0 maps to 0.1-0.9)
-                float threshold = 0.1f + fx->compressor_threshold * 0.8f;
+                // 1. Compute RMS level (smoother than peak for musical compression)
+                float squared = input * input;
+                float rms_alpha = 0.01f;  // Smoothing coefficient for RMS
+                fx->compressor_rms[ch] += rms_alpha * (squared - fx->compressor_rms[ch]);
+                float rms_level = sqrtf(fmaxf(fx->compressor_rms[ch], 0.0f));
 
-                // Ratio (0.0-1.0 maps to 1:1 to 10:1)
-                float ratio = 1.0f + fx->compressor_ratio * 9.0f;
+                // 2. Attack/release envelope follower
+                // Attack: 0.5ms to 50ms (0.0-1.0 maps to fast to slow)
+                // Release: 10ms to 500ms (0.0-1.0 maps to fast to slow)
+                float attack_time = 0.0005f + fx->compressor_attack * 0.0495f;
+                float release_time = 0.01f + fx->compressor_release * 0.49f;
+                float attack_coeff = 1.0f - expf(-1.0f / (sample_rate * attack_time));
+                float release_coeff = 1.0f - expf(-1.0f / (sample_rate * release_time));
 
-                // Attack/release times in samples
-                float attack_coeff = 1.0f - expf(-1.0f / (sample_rate * (0.001f + fx->compressor_attack * 0.1f)));
-                float release_coeff = 1.0f - expf(-1.0f / (sample_rate * (0.01f + fx->compressor_release * 0.5f)));
-
-                // Envelope follower
-                if (level > fx->compressor_envelope[ch]) {
-                    fx->compressor_envelope[ch] += attack_coeff * (level - fx->compressor_envelope[ch]);
+                if (rms_level > fx->compressor_envelope[ch]) {
+                    fx->compressor_envelope[ch] += attack_coeff * (rms_level - fx->compressor_envelope[ch]);
                 } else {
-                    fx->compressor_envelope[ch] += release_coeff * (level - fx->compressor_envelope[ch]);
+                    fx->compressor_envelope[ch] += release_coeff * (rms_level - fx->compressor_envelope[ch]);
                 }
 
-                // Calculate gain reduction
+                // 3. Threshold (0.0-1.0 maps to -40dB to -6dB, linear domain: 0.01 to 0.5)
+                float threshold = 0.01f + fx->compressor_threshold * 0.49f;
+
+                // 4. Ratio (0.0-1.0 maps to 1:1 to 20:1)
+                float ratio = 1.0f + fx->compressor_ratio * 19.0f;
+
+                // 5. Soft knee (0.1 = ±10% threshold for smooth transition)
+                float knee_width = 0.1f;
                 float gain = 1.0f;
-                if (fx->compressor_envelope[ch] > threshold) {
-                    float over = fx->compressor_envelope[ch] - threshold;
-                    gain = threshold + over / ratio;
-                    gain = gain / fx->compressor_envelope[ch];
+                float envelope = fx->compressor_envelope[ch];
+
+                if (envelope > threshold) {
+                    float delta = envelope - threshold;
+                    float knee_range = threshold * knee_width;
+
+                    if (delta < knee_range) {
+                        // Soft knee: smooth polynomial transition
+                        float x = delta / knee_range;  // 0.0 to 1.0
+                        float curve = x * x * (3.0f - 2.0f * x);  // Smoothstep
+                        float hard_gain = (threshold + delta / ratio) / envelope;
+                        gain = 1.0f - curve * (1.0f - hard_gain);
+                    } else {
+                        // Hard compression above knee
+                        gain = (threshold + delta / ratio) / envelope;
+                    }
                 }
 
-                // Apply compression
-                if (ch == 0) left *= gain;
-                else right *= gain;
+                // 6. Makeup gain (0.0-1.0 maps to 1x to 8x, compensates for level loss)
+                // At 0.5 (neutral), makeup is 1x. At 1.0, makeup is 8x.
+                float makeup = powf(8.0f, (fx->compressor_makeup - 0.5f) * 2.0f);
+
+                // 7. Apply compression and makeup gain
+                float compressed = input * gain * makeup;
+
+                if (ch == 0) left = compressed;
+                else right = compressed;
             }
         }
 
@@ -454,6 +482,9 @@ void regroove_effects_set_compressor_attack(RegrooveEffects* fx, float attack) {
 void regroove_effects_set_compressor_release(RegrooveEffects* fx, float release) {
     if (fx) fx->compressor_release = clampf(release, 0.0f, 1.0f);
 }
+void regroove_effects_set_compressor_makeup(RegrooveEffects* fx, float makeup) {
+    if (fx) fx->compressor_makeup = clampf(makeup, 0.0f, 1.0f);
+}
 int regroove_effects_get_compressor_enabled(RegrooveEffects* fx) {
     return fx ? fx->compressor_enabled : 0;
 }
@@ -468,6 +499,9 @@ float regroove_effects_get_compressor_attack(RegrooveEffects* fx) {
 }
 float regroove_effects_get_compressor_release(RegrooveEffects* fx) {
     return fx ? fx->compressor_release : 0.3f;
+}
+float regroove_effects_get_compressor_makeup(RegrooveEffects* fx) {
+    return fx ? fx->compressor_makeup : 0.5f;
 }
 
 // Phaser setters/getters
