@@ -57,6 +57,10 @@ typedef struct {
     float filter_lp[2];        // Low-pass state (L, R)
     float filter_bp[2];        // Band-pass state (L, R)
 
+    float distortion_hp[2];    // Distortion pre-emphasis highpass state
+    float distortion_env[2];   // Distortion envelope follower state
+    float distortion_lp[2];    // Distortion post-filter state
+
     float eq_lp1[2], eq_lp2[2]; // EQ filter states
     float eq_bp1[2], eq_bp2[2];
     float eq_hp1[2], eq_hp2[2];

@@ -10,25 +10,41 @@ static inline float clampf(float v, float min, float max) {
     return v;
 }
 
-// Helper: RB338-style overdrive with tube-like saturation
-static inline float overdrive_saturate(float x) {
-    // Smooth saturation curve (similar to tube overdrive)
-    // Uses a cubic soft-clip that transitions to hard limit
-    float ax = fabsf(x);
-
-    if (ax < 0.33f) {
-        // Clean zone - linear
-        return x;
-    } else if (ax < 1.0f) {
-        // Soft saturation zone (tube-like)
-        float sign = (x > 0.0f) ? 1.0f : -1.0f;
-        float t = ax - 0.33f;
-        // Smooth compression curve
-        return sign * (0.33f + t * (1.0f - t * 0.5f));
-    } else {
-        // Hard clipping at ±1
-        return (x > 0.0f) ? 1.0f : -1.0f;
+// Helper: Foldback distortion for aggressive harmonics
+static inline float foldback(float x) {
+    const float threshold = 1.0f;
+    if (x > threshold) {
+        x = threshold - fmodf(x - threshold, threshold * 2.0f);
+    } else if (x < -threshold) {
+        x = -threshold + fmodf(-threshold - x, threshold * 2.0f);
     }
+    return x;
+}
+
+// Helper: RB338-style aggressive asymmetric distortion for 909 kicks
+static inline float rb338_shaper(float x) {
+    // Asymmetric waveshaping - emphasizes attack on positive side
+    // More aggressive on positive (kick transients), softer on negative
+    if (x > 0.0f) {
+        return tanhf(x * 1.5f);  // Aggressive positive
+    } else {
+        return tanhf(x * 0.5f);  // Softer negative
+    }
+}
+
+// Helper: Simple one-pole highpass filter for pre-emphasis
+static inline float highpass_tick(float input, float *state, float cutoff_norm) {
+    float alpha = 1.0f - expf(-2.0f * 3.14159f * cutoff_norm);
+    *state += alpha * (input - *state);
+    return input - *state;
+}
+
+// Helper: Envelope follower for dynamic drive
+static inline float envelope_follower(float input, float *state, float attack, float release) {
+    float level = fabsf(input);
+    float coeff = (level > *state) ? attack : release;
+    *state += coeff * (level - *state);
+    return *state;
 }
 
 RegrooveEffects* regroove_effects_create(void) {
@@ -111,27 +127,39 @@ void regroove_effects_process(RegrooveEffects* fx, int16_t* buffer, int frames, 
         float left = (float)buffer[i * 2] * scale_to_float;
         float right = (float)buffer[i * 2 + 1] * scale_to_float;
 
-        // --- DISTORTION (RB338-style overdrive) ---
+        // --- DISTORTION (RB338-style aggressive overdrive for 909 kicks) ---
         if (fx->distortion_enabled) {
             float dry_left = left;
             float dry_right = right;
 
-            // Drive amount: 0.0 = 1x (clean), 1.0 = 10x (heavy overdrive)
-            float drive_amount = 1.0f + fx->distortion_drive * 9.0f;
+            // Pre-emphasis: highpass at 80Hz to remove sub-rumble before distortion
+            float hp_cutoff = 80.0f / sample_rate;
+            left = highpass_tick(left, &fx->distortion_hp[0], hp_cutoff);
+            right = highpass_tick(right, &fx->distortion_hp[1], hp_cutoff);
 
-            // Apply pre-gain
-            float driven_left = left * drive_amount;
-            float driven_right = right * drive_amount;
+            // Dynamic envelope detection for transient emphasis
+            float attack_coeff = 0.9f;   // Fast attack
+            float release_coeff = 0.001f; // Slow release
+            float env_l = envelope_follower(left, &fx->distortion_env[0], attack_coeff, release_coeff);
+            float env_r = envelope_follower(right, &fx->distortion_env[1], attack_coeff, release_coeff);
 
-            // Apply saturation/clipping
-            float saturated_left = overdrive_saturate(driven_left);
-            float saturated_right = overdrive_saturate(driven_right);
+            // Dynamic drive: more aggressive on transients (kicks, snares)
+            float base_drive = fx->distortion_drive;
+            float dynamic_drive_l = base_drive * (0.7f + env_l * 0.6f);
+            float dynamic_drive_r = base_drive * (0.7f + env_r * 0.6f);
 
-            // Makeup gain to compensate for drive (prevents output from getting quieter)
-            // Higher drive needs less makeup (signal is compressed/clipped)
-            float makeup = 1.0f / (1.0f + fx->distortion_drive * 0.5f);
-            float wet_left = saturated_left * makeup;
-            float wet_right = saturated_right * makeup;
+            // Apply RB338-style asymmetric waveshaping
+            float shaped_left = rb338_shaper(left * 2.0f, dynamic_drive_l);
+            float shaped_right = rb338_shaper(right * 2.0f, dynamic_drive_r);
+
+            // Post-EQ: lowpass at 8kHz to tame harshness, add warmth
+            float lp_cutoff = 8000.0f / sample_rate;
+            float lp_alpha = 1.0f - expf(-2.0f * 3.14159f * lp_cutoff);
+            fx->distortion_lp[0] += lp_alpha * (shaped_left - fx->distortion_lp[0]);
+            fx->distortion_lp[1] += lp_alpha * (shaped_right - fx->distortion_lp[1]);
+
+            float wet_left = fx->distortion_lp[0];
+            float wet_right = fx->distortion_lp[1];
 
             // Mix dry/wet
             left = dry_left * (1.0f - fx->distortion_mix) + wet_left * fx->distortion_mix;
