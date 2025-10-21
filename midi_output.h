@@ -1,6 +1,8 @@
 #ifndef MIDI_OUTPUT_H
 #define MIDI_OUTPUT_H
 
+#include "regroove_metadata.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -39,6 +41,9 @@ void midi_output_stop_channel(int tracker_channel);
 
 // Reset all MIDI output state (stop all notes)
 void midi_output_reset(void);
+
+// Set metadata for MIDI channel mapping (can be NULL to use default mapping)
+void midi_output_set_metadata(RegrooveMetadata *metadata);
 
 #ifdef __cplusplus
 }

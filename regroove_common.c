@@ -138,6 +138,7 @@ RegrooveCommonState* regroove_common_create(void) {
     state->device_config.midi_device_1 = -1;      // Not configured
     state->device_config.audio_device = -1;       // Default device
     state->device_config.midi_output_device = -1; // Disabled
+    state->device_config.midi_output_note_duration = 1; // Hold notes (default)
 
     // Initialize default effect parameters (same as regroove_effects_create)
     state->device_config.fx_distortion_drive = 0.5f;
@@ -233,6 +234,8 @@ int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_pa
                     state->device_config.audio_device = atoi(value);
                 } else if (strcmp(key, "midi_output_device") == 0) {
                     state->device_config.midi_output_device = atoi(value);
+                } else if (strcmp(key, "midi_output_note_duration") == 0) {
+                    state->device_config.midi_output_note_duration = atoi(value);
                 } else if (strcmp(key, "fx_distortion_drive") == 0) {
                     state->device_config.fx_distortion_drive = atof(value);
                 } else if (strcmp(key, "fx_distortion_mix") == 0) {
@@ -631,6 +634,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_device_1 = %d\n", state->device_config.midi_device_1);
         fprintf(f, "audio_device = %d\n", state->device_config.audio_device);
         fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
+        fprintf(f, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
         fprintf(f, "fx_distortion_drive = %.2f\n", state->device_config.fx_distortion_drive);
         fprintf(f, "fx_distortion_mix = %.2f\n", state->device_config.fx_distortion_mix);
         fprintf(f, "fx_filter_cutoff = %.2f\n", state->device_config.fx_filter_cutoff);
@@ -662,6 +666,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_device_1 = %d\n", state->device_config.midi_device_1);
         fprintf(f, "audio_device = %d\n", state->device_config.audio_device);
         fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
+        fprintf(f, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
         fprintf(f, "fx_distortion_drive = %.2f\n", state->device_config.fx_distortion_drive);
         fprintf(f, "fx_distortion_mix = %.2f\n", state->device_config.fx_distortion_mix);
         fprintf(f, "fx_filter_cutoff = %.2f\n", state->device_config.fx_filter_cutoff);

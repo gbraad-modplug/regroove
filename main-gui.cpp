@@ -65,6 +65,7 @@ static float trigger_pad_fade[MAX_TOTAL_TRIGGER_PADS] = {0.0f};
 
 // Channel note highlighting (for tracker view and volume faders)
 static float channel_note_fade[MAX_CHANNELS] = {0.0f};
+static float instrument_note_fade[256] = {0.0f};  // For highlighting active instruments/samples
 
 // Shared state
 static RegrooveCommonState *common_state = NULL;
@@ -243,6 +244,11 @@ static void my_note_callback(int channel, int note, int instrument, int volume,
         channel_note_fade[channel] = 1.0f;
     }
 
+    // Trigger instrument highlighting for visual feedback
+    if (instrument >= 0 && instrument < 256 && note >= 0) {
+        instrument_note_fade[instrument] = 1.0f;
+    }
+
     if (!midi_output_enabled) return;
 
     // Check for note-off effect commands (0FFF or EC0)
@@ -351,6 +357,11 @@ static int load_module(const char *path) {
     if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 1);
     playing = false;
     for (int i = 0; i < 16; i++) step_fade[i] = 0.0f;
+
+    // Set metadata for MIDI output (for channel mapping)
+    if (common_state && common_state->metadata) {
+        midi_output_set_metadata(common_state->metadata);
+    }
 
     // Auto-switch to PERF mode if performance events were loaded, otherwise VOL mode
     if (common_state && common_state->performance) {
@@ -1631,6 +1642,11 @@ static void ShowMainUI() {
     // Fade the channel note highlights
     for (int i = 0; i < MAX_CHANNELS; i++) {
         channel_note_fade[i] = fmaxf(channel_note_fade[i] - 0.05f, 0.0f);
+    }
+
+    // Fade the instrument note highlights
+    for (int i = 0; i < 256; i++) {
+        instrument_note_fade[i] = fmaxf(instrument_note_fade[i] - 0.05f, 0.0f);
     }
 
     ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_Always);
@@ -3319,6 +3335,260 @@ static void ShowMainUI() {
         ImGui::Dummy(ImVec2(0, 20.0f));
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 20.0f));
+
+        // =====================================================================
+        // MIDI OUTPUT MAPPING VISUALIZATION
+        // =====================================================================
+        if (midi_output_enabled && common_state && common_state->player && rightW > 100.0f) {
+            ImGui::TextColored(COLOR_SECTION_HEADING, "MIDI OUTPUT MAPPING");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Get instrument/sample information from the module
+            Regroove* mod = common_state->player;
+            int num_instruments = regroove_get_num_instruments(mod);
+            int num_samples = regroove_get_num_samples(mod);
+
+            ImGui::TextWrapped("Instrument/Sample to MIDI Channel mapping (index maps to MIDI channels 0-15 with wraparound):");
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Note duration mode toggle
+            bool hold_notes = (common_state->device_config.midi_output_note_duration == 1);
+            if (ImGui::Checkbox("Hold notes until next note/off", &hold_notes)) {
+                common_state->device_config.midi_output_note_duration = hold_notes ? 1 : 0;
+                save_mappings_to_config();
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, MIDI notes are held until the next note or note-off command.\nWhen disabled, notes are immediately released after being triggered.");
+            }
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            if (num_instruments > 0 || num_samples > 0) {
+                float child_width = rightW - 64.0f;
+                if (child_width < 200.0f) child_width = 200.0f; // Ensure minimum width for columns
+
+                ImGui::BeginChild("##midi_mapping", ImVec2(child_width, 250.0f), true);
+
+                ImGui::Columns(4, "midi_mapping_columns");
+                ImGui::SetColumnWidth(0, 60.0f);   // Index
+                ImGui::SetColumnWidth(1, 80.0f);   // Type
+                ImGui::SetColumnWidth(2, 100.0f);  // MIDI Channel
+                // Column 3 auto-sized (remaining width)
+
+                ImGui::Text("Index"); ImGui::NextColumn();
+                ImGui::Text("Type"); ImGui::NextColumn();
+                ImGui::Text("MIDI Ch"); ImGui::NextColumn();
+                ImGui::Text("Name"); ImGui::NextColumn();
+                ImGui::Separator();
+
+                // Show all instruments first (if any)
+                for (int i = 0; i < num_instruments && i < 64; i++) {
+                    const char* module_name = regroove_get_instrument_name(mod, i);
+                    const char* custom_name = regroove_metadata_get_instrument_name(common_state->metadata, i);
+                    const char* display_name = custom_name ? custom_name : module_name;
+                    int midi_channel = regroove_metadata_get_midi_channel(common_state->metadata, i);
+
+                    // Highlight row if instrument is currently playing
+                    if (instrument_note_fade[i] > 0.0f) {
+                        ImVec2 row_min = ImGui::GetCursorScreenPos();
+                        ImVec2 row_max = ImVec2(row_min.x + ImGui::GetContentRegionAvail().x, row_min.y + ImGui::GetTextLineHeight());
+                        ImGui::GetWindowDrawList()->AddRectFilled(row_min, row_max,
+                            ImGui::GetColorU32(ImVec4(0.2f, 0.5f, 0.2f, instrument_note_fade[i] * 0.4f)));
+                    }
+
+                    ImGui::Text("%d", i);
+                    ImGui::NextColumn();
+
+                    ImGui::TextColored(ImVec4(0.8f, 1.0f, 0.8f, 1.0f), "Instr");
+                    ImGui::NextColumn();
+
+                    // MIDI channel selector
+                    char combo_id[32];
+                    snprintf(combo_id, sizeof(combo_id), "##midi_ch_i%d", i);
+                    char channel_label[32];
+                    if (common_state->metadata->instrument_midi_channels[i] == -2) {
+                        snprintf(channel_label, sizeof(channel_label), "None");
+                    } else if (common_state->metadata->instrument_midi_channels[i] == -1) {
+                        snprintf(channel_label, sizeof(channel_label), "Auto (Ch %d)", i % 16);
+                    } else {
+                        snprintf(channel_label, sizeof(channel_label), "Ch %d", midi_channel);
+                    }
+
+                    if (ImGui::BeginCombo(combo_id, channel_label)) {
+                        // Option for disabled (no MIDI output)
+                        if (ImGui::Selectable("None (disabled)", common_state->metadata->instrument_midi_channels[i] == -2)) {
+                            regroove_metadata_set_midi_channel(common_state->metadata, i, -2);
+                            save_rgx_metadata();
+                        }
+
+                        // Option for automatic mapping
+                        if (ImGui::Selectable("Auto", common_state->metadata->instrument_midi_channels[i] == -1)) {
+                            regroove_metadata_set_midi_channel(common_state->metadata, i, -1);
+                            save_rgx_metadata();
+                        }
+
+                        // Options for channels 0-15
+                        for (int ch = 0; ch < 16; ch++) {
+                            char ch_label[16];
+                            snprintf(ch_label, sizeof(ch_label), "Ch %d", ch);
+                            if (ImGui::Selectable(ch_label, midi_channel == ch && common_state->metadata->instrument_midi_channels[i] >= 0)) {
+                                regroove_metadata_set_midi_channel(common_state->metadata, i, ch);
+                                save_rgx_metadata();
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::NextColumn();
+
+                    // Name column - editable text field with custom override
+                    char name_input_id[32];
+                    snprintf(name_input_id, sizeof(name_input_id), "##name_i%d", i);
+
+                    // Use a static buffer for the input text (one per instrument)
+                    static char name_buffers[64][RGX_MAX_INSTRUMENT_NAME];
+
+                    // Initialize buffer with current value (custom or module name)
+                    if (custom_name && custom_name[0] != '\0') {
+                        snprintf(name_buffers[i], RGX_MAX_INSTRUMENT_NAME, "%s", custom_name);
+                    } else if (module_name && module_name[0] != '\0') {
+                        snprintf(name_buffers[i], RGX_MAX_INSTRUMENT_NAME, "%s", module_name);
+                    } else {
+                        name_buffers[i][0] = '\0';
+                    }
+
+                    ImGui::PushItemWidth(-1.0f);  // Use full column width
+                    if (ImGui::InputText(name_input_id, name_buffers[i], RGX_MAX_INSTRUMENT_NAME)) {
+                        // Save the custom name (empty string to clear override)
+                        if (name_buffers[i][0] != '\0' && module_name && strcmp(name_buffers[i], module_name) != 0) {
+                            // Only save if different from module name
+                            regroove_metadata_set_instrument_name(common_state->metadata, i, name_buffers[i]);
+                        } else if (name_buffers[i][0] == '\0' || (module_name && strcmp(name_buffers[i], module_name) == 0)) {
+                            // Clear override if empty or same as module name
+                            regroove_metadata_set_instrument_name(common_state->metadata, i, "");
+                        }
+                        save_rgx_metadata();
+                    }
+                    ImGui::PopItemWidth();
+
+                    // Show hint text if using module's original name
+                    if ((!custom_name || custom_name[0] == '\0') && module_name && module_name[0] != '\0') {
+                        ImGui::SameLine();
+                        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 0.8f), "(module default)");
+                    }
+
+                    ImGui::NextColumn();
+                }
+
+                // Show all samples (if any)
+                for (int i = 0; i < num_samples && i < 64; i++) {
+                    const char* module_name = regroove_get_sample_name(mod, i);
+                    const char* custom_name = regroove_metadata_get_instrument_name(common_state->metadata, i);
+                    const char* display_name = custom_name ? custom_name : module_name;
+                    int midi_channel = regroove_metadata_get_midi_channel(common_state->metadata, i);
+
+                    // Highlight row if sample is currently playing
+                    if (instrument_note_fade[i] > 0.0f) {
+                        ImVec2 row_min = ImGui::GetCursorScreenPos();
+                        ImVec2 row_max = ImVec2(row_min.x + ImGui::GetContentRegionAvail().x, row_min.y + ImGui::GetTextLineHeight());
+                        ImGui::GetWindowDrawList()->AddRectFilled(row_min, row_max,
+                            ImGui::GetColorU32(ImVec4(0.5f, 0.4f, 0.2f, instrument_note_fade[i] * 0.4f)));
+                    }
+
+                    ImGui::Text("%d", i);
+                    ImGui::NextColumn();
+
+                    ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.6f, 1.0f), "Sample");
+                    ImGui::NextColumn();
+
+                    // MIDI channel selector
+                    char combo_id[32];
+                    snprintf(combo_id, sizeof(combo_id), "##midi_ch_s%d", i);
+                    char channel_label[32];
+                    if (common_state->metadata->instrument_midi_channels[i] == -2) {
+                        snprintf(channel_label, sizeof(channel_label), "None");
+                    } else if (common_state->metadata->instrument_midi_channels[i] == -1) {
+                        snprintf(channel_label, sizeof(channel_label), "Auto (Ch %d)", i % 16);
+                    } else {
+                        snprintf(channel_label, sizeof(channel_label), "Ch %d", midi_channel);
+                    }
+
+                    if (ImGui::BeginCombo(combo_id, channel_label)) {
+                        // Option for disabled (no MIDI output)
+                        if (ImGui::Selectable("None (disabled)", common_state->metadata->instrument_midi_channels[i] == -2)) {
+                            regroove_metadata_set_midi_channel(common_state->metadata, i, -2);
+                            save_rgx_metadata();
+                        }
+
+                        // Option for automatic mapping
+                        if (ImGui::Selectable("Auto", common_state->metadata->instrument_midi_channels[i] == -1)) {
+                            regroove_metadata_set_midi_channel(common_state->metadata, i, -1);
+                            save_rgx_metadata();
+                        }
+
+                        // Options for channels 0-15
+                        for (int ch = 0; ch < 16; ch++) {
+                            char ch_label[16];
+                            snprintf(ch_label, sizeof(ch_label), "Ch %d", ch);
+                            if (ImGui::Selectable(ch_label, midi_channel == ch && common_state->metadata->instrument_midi_channels[i] >= 0)) {
+                                regroove_metadata_set_midi_channel(common_state->metadata, i, ch);
+                                save_rgx_metadata();
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::NextColumn();
+
+                    // Name column - editable text field with custom override
+                    char name_input_id[32];
+                    snprintf(name_input_id, sizeof(name_input_id), "##name_s%d", i);
+
+                    // Use a static buffer for the input text (one per sample)
+                    static char sample_name_buffers[64][RGX_MAX_INSTRUMENT_NAME];
+
+                    // Initialize buffer with current value (custom or module name)
+                    if (custom_name && custom_name[0] != '\0') {
+                        snprintf(sample_name_buffers[i], RGX_MAX_INSTRUMENT_NAME, "%s", custom_name);
+                    } else if (module_name && module_name[0] != '\0') {
+                        snprintf(sample_name_buffers[i], RGX_MAX_INSTRUMENT_NAME, "%s", module_name);
+                    } else {
+                        sample_name_buffers[i][0] = '\0';
+                    }
+
+                    ImGui::PushItemWidth(-1.0f);  // Use full column width
+                    if (ImGui::InputText(name_input_id, sample_name_buffers[i], RGX_MAX_INSTRUMENT_NAME)) {
+                        // Save the custom name (empty string to clear override)
+                        if (sample_name_buffers[i][0] != '\0' && module_name && strcmp(sample_name_buffers[i], module_name) != 0) {
+                            // Only save if different from module name
+                            regroove_metadata_set_instrument_name(common_state->metadata, i, sample_name_buffers[i]);
+                        } else if (sample_name_buffers[i][0] == '\0' || (module_name && strcmp(sample_name_buffers[i], module_name) == 0)) {
+                            // Clear override if empty or same as module name
+                            regroove_metadata_set_instrument_name(common_state->metadata, i, "");
+                        }
+                        save_rgx_metadata();
+                    }
+                    ImGui::PopItemWidth();
+
+                    // Show hint text if using module's original name
+                    if ((!custom_name || custom_name[0] == '\0') && module_name && module_name[0] != '\0') {
+                        ImGui::SameLine();
+                        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 0.8f), "(module default)");
+                    }
+
+                    ImGui::NextColumn();
+                }
+
+                ImGui::Columns(1);
+                ImGui::EndChild();
+            } else {
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No instruments or samples found");
+            }
+
+            ImGui::Dummy(ImVec2(0, 20.0f));
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 20.0f));
+        }
 
         // =====================================================================
         // SECTION 2: MIDI MONITOR

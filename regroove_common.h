@@ -46,6 +46,7 @@ typedef struct {
     int midi_device_1;      // MIDI device 1 port (-1 = not configured)
     int audio_device;       // Audio device index (-1 = default)
     int midi_output_device; // MIDI output device port (-1 = disabled)
+    int midi_output_note_duration; // 0 = immediate off, 1 = hold until next note/off command
 
     // Default effect parameters (applied on song load)
     float fx_distortion_drive;      // 0.0 - 1.0

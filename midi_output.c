@@ -1,4 +1,5 @@
 #include "midi_output.h"
+#include "regroove_metadata.h"
 #include <stdio.h>
 #include <string.h>
 #include <rtmidi/rtmidi_c.h>
@@ -6,6 +7,7 @@
 // MIDI output state
 static RtMidiOutPtr midi_out = NULL;
 static int midi_out_device_id = -1;
+static RegrooveMetadata *current_metadata = NULL;  // For channel mapping
 
 // Maximum tracker channels (matches regroove engine)
 #define MAX_TRACKER_CHANNELS 64
@@ -19,11 +21,14 @@ typedef struct {
 
 static ActiveNote active_notes[MAX_TRACKER_CHANNELS];
 
-// Default instrument-to-MIDI-channel mapping
-// For now, simple 1:1 mapping with wraparound
+// Get MIDI channel for instrument (using metadata if available)
 static int get_midi_channel_for_instrument(int instrument) {
-    // Simple wraparound: instruments 0-15 map to MIDI channels 0-15
-    // instruments 16-31 also map to 0-15, etc.
+    if (current_metadata) {
+        // Use custom mapping from metadata
+        return regroove_metadata_get_midi_channel(current_metadata, instrument);
+    }
+
+    // Default fallback: simple wraparound
     return instrument % 16;
 }
 
@@ -146,6 +151,11 @@ int midi_output_handle_note(int tracker_channel, int note, int instrument, int v
     // Get MIDI channel for this instrument
     int midi_channel = get_midi_channel_for_instrument(instrument);
 
+    // Skip if MIDI output is disabled for this instrument (-2)
+    if (midi_channel == -2) {
+        return 0;  // No MIDI output for this instrument
+    }
+
     // Convert tracker note to MIDI note
     int midi_note = tracker_note_to_midi(note);
 
@@ -203,4 +213,8 @@ void midi_output_reset(void) {
     for (int ch = 0; ch < 16; ch++) {
         midi_output_all_notes_off(ch);
     }
+}
+
+void midi_output_set_metadata(RegrooveMetadata *metadata) {
+    current_metadata = metadata;
 }

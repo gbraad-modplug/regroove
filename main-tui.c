@@ -228,6 +228,11 @@ static int load_module(const char *path, struct RegrooveCallbacks *cbs) {
         regroove_effects_set_delay_mix(effects, common_state->device_config.fx_delay_mix);
     }
 
+    // Set metadata for MIDI output (for channel mapping)
+    if (common_state && common_state->metadata) {
+        midi_output_set_metadata(common_state->metadata);
+    }
+
     printf("\nPlayback paused (press SPACE or MIDI Play to start)\n");
     return 0;
 }

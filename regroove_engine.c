@@ -681,3 +681,23 @@ int regroove_get_pattern_cell(const Regroove *g, int pattern, int row, int chann
     openmpt_free_string(cell_text);
     return 0;
 }
+
+int regroove_get_num_instruments(const Regroove *g) {
+    if (!g || !g->mod) return 0;
+    return openmpt_module_get_num_instruments(g->mod);
+}
+
+const char* regroove_get_instrument_name(const Regroove *g, int index) {
+    if (!g || !g->mod) return NULL;
+    return openmpt_module_get_instrument_name(g->mod, index);
+}
+
+int regroove_get_num_samples(const Regroove *g) {
+    if (!g || !g->mod) return 0;
+    return openmpt_module_get_num_samples(g->mod);
+}
+
+const char* regroove_get_sample_name(const Regroove *g, int index) {
+    if (!g || !g->mod) return NULL;
+    return openmpt_module_get_sample_name(g->mod, index);
+}

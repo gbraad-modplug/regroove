@@ -83,6 +83,20 @@ double regroove_get_current_bpm(const Regroove *g);
 // buffer should be at least 32 bytes
 int regroove_get_pattern_cell(const Regroove *g, int pattern, int row, int channel, char *buffer, size_t buffer_size);
 
+// Get number of instruments in module
+int regroove_get_num_instruments(const Regroove *g);
+
+// Get instrument name by index
+// Returns NULL if instrument doesn't exist or has no name
+const char* regroove_get_instrument_name(const Regroove *g, int index);
+
+// Get number of samples in module
+int regroove_get_num_samples(const Regroove *g);
+
+// Get sample name by index
+// Returns NULL if sample doesn't exist or has no name
+const char* regroove_get_sample_name(const Regroove *g, int index);
+
 #ifdef __cplusplus
 }
 #endif

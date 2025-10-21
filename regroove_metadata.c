@@ -34,6 +34,13 @@ RegrooveMetadata* regroove_metadata_create(void) {
         meta->phrases[i].step_count = 0;
     }
 
+    // Initialize MIDI channel mappings to disabled (-2) by default
+    meta->has_midi_mapping = 0;
+    for (int i = 0; i < RGX_MAX_INSTRUMENTS; i++) {
+        meta->instrument_midi_channels[i] = -2;  // Disabled (no MIDI output)
+        meta->instrument_names[i][0] = '\0';  // Empty = use module's name
+    }
+
     return meta;
 }
 
@@ -199,6 +206,25 @@ int regroove_metadata_load(RegrooveMetadata *meta, const char *rgx_path) {
                     }
                 }
             }
+        } else if (strcmp(section, "MIDIMapping") == 0) {
+            // MIDI mapping configuration: instrument_X_channel, instrument_X_name
+            if (strncmp(key, "instrument_", 11) == 0) {
+                int inst_idx = atoi(key + 11);
+                if (inst_idx >= 0 && inst_idx < RGX_MAX_INSTRUMENTS) {
+                    if (strstr(key, "_channel")) {
+                        int channel = atoi(value);
+                        if (channel >= -2 && channel <= 15) {
+                            meta->instrument_midi_channels[inst_idx] = channel;
+                            if (channel != -2) {
+                                meta->has_midi_mapping = 1;
+                            }
+                        }
+                    } else if (strstr(key, "_name")) {
+                        strncpy(meta->instrument_names[inst_idx], value, RGX_MAX_INSTRUMENT_NAME - 1);
+                        meta->instrument_names[inst_idx][RGX_MAX_INSTRUMENT_NAME - 1] = '\0';
+                    }
+                }
+            }
         }
     }
 
@@ -281,6 +307,43 @@ int regroove_metadata_save(const RegrooveMetadata *meta, const char *rgx_path) {
         fprintf(f, "\n");
     }
 
+    // Write MIDI Mapping section if any custom mappings exist
+    int has_midi_mapping = 0;
+    int has_name_overrides = 0;
+    for (int i = 0; i < RGX_MAX_INSTRUMENTS; i++) {
+        if (meta->instrument_midi_channels[i] != -2) {
+            has_midi_mapping = 1;
+        }
+        if (meta->instrument_names[i][0] != '\0') {
+            has_name_overrides = 1;
+        }
+        if (has_midi_mapping && has_name_overrides) break;
+    }
+
+    if (has_midi_mapping || has_name_overrides) {
+        fprintf(f, "[MIDIMapping]\n");
+
+        // Write MIDI channel mappings (skip -2 = disabled/default)
+        if (has_midi_mapping) {
+            for (int i = 0; i < RGX_MAX_INSTRUMENTS; i++) {
+                if (meta->instrument_midi_channels[i] != -2) {
+                    fprintf(f, "instrument_%d_channel=%d\n", i, meta->instrument_midi_channels[i]);
+                }
+            }
+        }
+
+        // Write instrument name overrides
+        if (has_name_overrides) {
+            for (int i = 0; i < RGX_MAX_INSTRUMENTS; i++) {
+                if (meta->instrument_names[i][0] != '\0') {
+                    fprintf(f, "instrument_%d_name=\"%s\"\n", i, meta->instrument_names[i]);
+                }
+            }
+        }
+
+        fprintf(f, "\n");
+    }
+
     // Note: [performance] section is appended by regroove_performance_save()
     // if there are performance events to save
 
@@ -357,5 +420,68 @@ void regroove_metadata_get_rgx_path(const char *module_path, char *rgx_path, siz
         if (len + 4 < rgx_path_size) {
             strcpy(rgx_path + len, ".rgx");
         }
+    }
+}
+
+int regroove_metadata_get_midi_channel(const RegrooveMetadata *meta, int instrument_index) {
+    if (!meta || instrument_index < 0 || instrument_index >= RGX_MAX_INSTRUMENTS) {
+        return -2;  // Default fallback: disabled
+    }
+
+    int channel = meta->instrument_midi_channels[instrument_index];
+    if (channel == -2) {
+        // Disabled: no MIDI output
+        return -2;
+    } else if (channel == -1) {
+        // Auto: use wraparound mapping
+        return instrument_index % 16;
+    }
+
+    // Use custom mapping (0-15)
+    return channel;
+}
+
+void regroove_metadata_set_midi_channel(RegrooveMetadata *meta, int instrument_index, int midi_channel) {
+    if (!meta || instrument_index < 0 || instrument_index >= RGX_MAX_INSTRUMENTS) {
+        return;
+    }
+
+    // Validate MIDI channel (-2 = disabled, -1 = auto, 0-15 = specific channel)
+    if (midi_channel < -2 || midi_channel > 15) {
+        return;
+    }
+
+    meta->instrument_midi_channels[instrument_index] = midi_channel;
+
+    // Set flag to indicate we have custom mappings
+    if (midi_channel != -2) {
+        meta->has_midi_mapping = 1;
+    }
+}
+
+const char* regroove_metadata_get_instrument_name(const RegrooveMetadata *meta, int instrument_index) {
+    if (!meta || instrument_index < 0 || instrument_index >= RGX_MAX_INSTRUMENTS) {
+        return NULL;
+    }
+
+    // Return NULL if empty (use module's name)
+    if (meta->instrument_names[instrument_index][0] == '\0') {
+        return NULL;
+    }
+
+    return meta->instrument_names[instrument_index];
+}
+
+void regroove_metadata_set_instrument_name(RegrooveMetadata *meta, int instrument_index, const char *name) {
+    if (!meta || instrument_index < 0 || instrument_index >= RGX_MAX_INSTRUMENTS) {
+        return;
+    }
+
+    if (!name || name[0] == '\0') {
+        // Clear custom name (use module's name)
+        meta->instrument_names[instrument_index][0] = '\0';
+    } else {
+        // Set custom name
+        snprintf(meta->instrument_names[instrument_index], RGX_MAX_INSTRUMENT_NAME, "%s", name);
     }
 }
