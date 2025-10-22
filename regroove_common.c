@@ -138,6 +138,7 @@ RegrooveCommonState* regroove_common_create(void) {
     state->device_config.midi_device_0 = -1;      // Not configured
     state->device_config.midi_device_1 = -1;      // Not configured
     state->device_config.audio_device = -1;       // Default device
+    state->device_config.audio_input_device = -1; // Disabled
     state->device_config.midi_output_device = -1; // Disabled
     state->device_config.midi_output_note_duration = 1; // Hold notes (default)
 
@@ -233,6 +234,8 @@ int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_pa
                     state->device_config.midi_device_1 = atoi(value);
                 } else if (strcmp(key, "audio_device") == 0) {
                     state->device_config.audio_device = atoi(value);
+                } else if (strcmp(key, "audio_input_device") == 0) {
+                    state->device_config.audio_input_device = atoi(value);
                 } else if (strcmp(key, "midi_output_device") == 0) {
                     state->device_config.midi_output_device = atoi(value);
                 } else if (strcmp(key, "midi_output_note_duration") == 0) {
@@ -434,10 +437,9 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
         regroove_set_callbacks(mod, callbacks);
     }
 
-    // Pause audio
-    if (state->audio_device_id) {
-        SDL_PauseAudioDevice(state->audio_device_id, 1);
-    }
+    // Note: Audio device is NOT paused here anymore
+    // GUI needs audio always active for input passthrough
+    // TUI can pause/unpause as needed via regroove_common_play_pause()
 
     return 0;
 }
@@ -634,6 +636,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_device_0 = %d\n", state->device_config.midi_device_0);
         fprintf(f, "midi_device_1 = %d\n", state->device_config.midi_device_1);
         fprintf(f, "audio_device = %d\n", state->device_config.audio_device);
+        fprintf(f, "audio_input_device = %d\n", state->device_config.audio_input_device);
         fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
         fprintf(f, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
         fprintf(f, "fx_distortion_drive = %.2f\n", state->device_config.fx_distortion_drive);
@@ -666,6 +669,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_device_0 = %d\n", state->device_config.midi_device_0);
         fprintf(f, "midi_device_1 = %d\n", state->device_config.midi_device_1);
         fprintf(f, "audio_device = %d\n", state->device_config.audio_device);
+        fprintf(f, "audio_input_device = %d\n", state->device_config.audio_input_device);
         fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
         fprintf(f, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
         fprintf(f, "fx_distortion_drive = %.2f\n", state->device_config.fx_distortion_drive);
@@ -714,6 +718,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
                 fprintf(f_write, "midi_device_0 = %d\n", state->device_config.midi_device_0);
                 fprintf(f_write, "midi_device_1 = %d\n", state->device_config.midi_device_1);
                 fprintf(f_write, "audio_device = %d\n", state->device_config.audio_device);
+                fprintf(f_write, "audio_input_device = %d\n", state->device_config.audio_input_device);
                 fprintf(f_write, "midi_output_device = %d\n", state->device_config.midi_output_device);
                 fprintf(f_write, "fx_distortion_drive = %.2f\n", state->device_config.fx_distortion_drive);
                 fprintf(f_write, "fx_distortion_mix = %.2f\n", state->device_config.fx_distortion_mix);
@@ -745,6 +750,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
                 fprintf(f_write, "midi_device_0 = %d\n", state->device_config.midi_device_0);
                 fprintf(f_write, "midi_device_1 = %d\n", state->device_config.midi_device_1);
                 fprintf(f_write, "audio_device = %d\n", state->device_config.audio_device);
+                fprintf(f_write, "audio_input_device = %d\n", state->device_config.audio_input_device);
                 fprintf(f_write, "midi_output_device = %d\n", state->device_config.midi_output_device);
                 fprintf(f_write, "fx_distortion_drive = %.2f\n", state->device_config.fx_distortion_drive);
                 fprintf(f_write, "fx_distortion_mix = %.2f\n", state->device_config.fx_distortion_mix);
@@ -796,8 +802,9 @@ int regroove_common_save_default_config(const char *filepath) {
     fprintf(f, "# MIDI device ports (-1 = not configured)\n");
     fprintf(f, "midi_device_0 = -1\n");
     fprintf(f, "midi_device_1 = -1\n");
-    fprintf(f, "# Audio device (-1 = default)\n");
+    fprintf(f, "# Audio devices (-1 = default for output, -1 = disabled for input)\n");
     fprintf(f, "audio_device = -1\n");
+    fprintf(f, "audio_input_device = -1\n");
     fprintf(f, "midi_output_device = -1\n\n");
     fprintf(f, "# Default effect parameters (applied when loading songs)\n");
     fprintf(f, "fx_distortion_drive = 0.50\n");

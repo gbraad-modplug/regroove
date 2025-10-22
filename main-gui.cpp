@@ -55,8 +55,9 @@ enum UIMode {
     UI_MODE_INFO = 4,
     UI_MODE_MIDI = 5,
     UI_MODE_TRACKER = 6,
-    UI_MODE_EFFECTS = 7,
-    UI_MODE_SETTINGS = 8
+    UI_MODE_MIX = 7,
+    UI_MODE_EFFECTS = 8,
+    UI_MODE_SETTINGS = 9
 };
 static UIMode ui_mode = UI_MODE_VOLUME;
 
@@ -76,12 +77,38 @@ static std::vector<std::string> audio_device_names;
 static int selected_audio_device = -1;
 static SDL_AudioDeviceID audio_device_id = 0;
 
+// Audio input device state
+static std::vector<std::string> audio_input_device_names;
+static int selected_audio_input_device = -1;
+static SDL_AudioDeviceID audio_input_device_id = 0;
+static int16_t *input_buffer = NULL;  // Temporary buffer for input audio
+static int input_buffer_size = 0;
+
 // MIDI device cache (refreshed only when settings panel is shown or on refresh button)
 static int cached_midi_port_count = -1;
 static UIMode last_ui_mode = UI_MODE_VOLUME;
 
 // LCD display (initialized in main)
 static LCD* lcd_display = NULL;
+
+// Mixer state (MIX panel)
+static float master_volume = 1.0f;      // Master output volume (0.0 - 1.0)
+static bool master_mute = false;
+
+static float playback_volume = 1.0f;    // Playback engine volume (0.0 - 1.0)
+static bool playback_mute = false;
+
+static float input_volume = 0.0f;       // Audio input volume (0.0 - 1.0, default muted)
+static bool input_mute = true;          // Input muted by default
+
+// Effects routing (mutually exclusive - only one can be selected)
+enum FXRoute {
+    FX_ROUTE_NONE = 0,
+    FX_ROUTE_MASTER = 1,
+    FX_ROUTE_PLAYBACK = 2,
+    FX_ROUTE_INPUT = 3
+};
+static FXRoute fx_route = FX_ROUTE_PLAYBACK;  // Default: effects on playback
 
 // MIDI output state
 static int midi_output_device = -1;  // -1 = disabled
@@ -132,6 +159,14 @@ void refresh_audio_devices() {
     int n = SDL_GetNumAudioDevices(0); // 0 = output devices
     for (int i = 0; i < n; i++) {
         audio_device_names.push_back(SDL_GetAudioDeviceName(i, 0));
+    }
+}
+
+void refresh_audio_input_devices() {
+    audio_input_device_names.clear();
+    int n = SDL_GetNumAudioDevices(1); // 1 = input devices (capture)
+    for (int i = 0; i < n; i++) {
+        audio_input_device_names.push_back(SDL_GetAudioDeviceName(i, 1));
     }
 }
 
@@ -354,7 +389,7 @@ static int load_module(const char *path) {
         regroove_effects_set_delay_mix(effects, common_state->device_config.fx_delay_mix);
     }
 
-    if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 1);
+    // Audio device stays running for input passthrough - just stop playback
     playing = false;
     for (int i = 0; i < 16; i++) step_fade[i] = 0.0f;
 
@@ -467,14 +502,16 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                         regroove_performance_set_playback(common_state->performance, 1);
                     }
                 }
-                if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 0);
+                // Audio device is always running for input passthrough - just set playing flag
                 playing = true;
+                printf("ACT_PLAY: playing flag set to true\n");
             }
             break;
         case ACT_STOP:
             if (mod) {
-                if (audio_device_id) SDL_PauseAudioDevice(audio_device_id, 1);
+                // Audio device stays running for input passthrough - just stop playback
                 playing = false;
+                printf("ACT_STOP: playing flag set to false\n");
                 // Notify performance system that playback stopped AND reset to beginning
                 if (common_state && common_state->performance) {
                     regroove_performance_set_playback(common_state->performance, 0);
@@ -706,11 +743,8 @@ static void phrase_completion_callback(int phrase_index, void* userdata) {
     Regroove* mod = common_state ? common_state->player : NULL;
     if (!mod) return;
 
-    // Stop playback
+    // Stop playback (audio device stays running for input passthrough)
     playing = false;
-    if (common_state->audio_device_id) {
-        SDL_PauseAudioDevice(common_state->audio_device_id, 1);
-    }
     common_state->paused = 1;
 
     // Reset to order 0
@@ -974,6 +1008,25 @@ static void execute_action(InputAction action, int parameter, float value, void*
                 int enabled = regroove_effects_get_delay_enabled(effects);
                 regroove_effects_set_delay_enabled(effects, !enabled);
             }
+            break;
+        case ACTION_MASTER_VOLUME:
+            // Map MIDI value (0-127) to volume range (0.0-1.0)
+            master_volume = value / 127.0f;
+            break;
+        case ACTION_PLAYBACK_VOLUME:
+            playback_volume = value / 127.0f;
+            break;
+        case ACTION_INPUT_VOLUME:
+            input_volume = value / 127.0f;
+            break;
+        case ACTION_MASTER_MUTE:
+            master_mute = !master_mute;
+            break;
+        case ACTION_PLAYBACK_MUTE:
+            playback_mute = !playback_mute;
+            break;
+        case ACTION_INPUT_MUTE:
+            input_mute = !input_mute;
             break;
         default:
             break;
@@ -1558,17 +1611,141 @@ void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned ch
 // Audio Callback
 // -----------------------------------------------------------------------------
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
-    if (!common_state || !common_state->player) {
-        memset(stream, 0, len);
-        return;
-    }
+    static unsigned long callback_count = 0;
+    callback_count++;
+
     int16_t *buffer = (int16_t *)stream;
     int frames = len / (2 * sizeof(int16_t));
-    regroove_render_audio(common_state->player, buffer, frames);
 
-    // Apply effects if available
-    if (effects) {
+    // Clear buffer first
+    memset(buffer, 0, len);
+
+    // Debug: Log audio callback state (first time and every 1000 callbacks)
+    static bool first_callback = true;
+    if (first_callback || (callback_count % 1000) == 0) {
+        printf("[CALLBACK #%lu] playing=%d, player=%p, playback_mute=%d\n",
+               callback_count, playing, (void*)(common_state ? common_state->player : NULL), playback_mute);
+        first_callback = false;
+    }
+
+    // Render playback audio (if playing, player exists, and not muted)
+    if (playing && common_state && common_state->player && !playback_mute) {
+        static bool first_render = true;
+        if (first_render) {
+            printf("Starting playback render (playing=%d)\n", playing);
+            first_render = false;
+        }
+        regroove_render_audio(common_state->player, buffer, frames);
+
+        // Apply effects if routed to playback
+        if (effects && fx_route == FX_ROUTE_PLAYBACK) {
+            regroove_effects_process(effects, buffer, frames, 48000);
+        }
+
+        // Apply playback volume
+        float pb_vol = playback_volume;
+        for (int i = 0; i < frames * 2; i++) {
+            buffer[i] = (int16_t)(buffer[i] * pb_vol);
+        }
+    }
+
+    // Mix in audio input when not muted and buffer is available
+    if (!input_mute && input_volume > 0.0f && input_buffer && input_buffer_size >= frames * 2) {
+        // Debug: Log first time input is being mixed
+        static bool first_mix = true;
+        if (first_mix) {
+            printf("Audio input mixing active (volume: %.2f, buffer_size: %d, frames*2: %d)\n",
+                   input_volume, input_buffer_size, frames * 2);
+            first_mix = false;
+        }
+
+        // Create a temporary buffer for input processing
+        int16_t *input_temp = (int16_t*)malloc(frames * 2 * sizeof(int16_t));
+        if (input_temp) {
+            memcpy(input_temp, input_buffer, frames * 2 * sizeof(int16_t));
+
+            // Apply effects if routed to input
+            if (effects && fx_route == FX_ROUTE_INPUT) {
+                regroove_effects_process(effects, input_temp, frames, 48000);
+            }
+
+            // Apply input volume and mix with playback
+            for (int i = 0; i < frames * 2; i++) {
+                int32_t mixed = buffer[i] + (int32_t)(input_temp[i] * input_volume);
+                // Clamp to prevent overflow
+                if (mixed > 32767) mixed = 32767;
+                if (mixed < -32768) mixed = -32768;
+                buffer[i] = (int16_t)mixed;
+            }
+
+            free(input_temp);
+        }
+    }
+
+    // Apply effects if routed to master (after mixing)
+    if (effects && fx_route == FX_ROUTE_MASTER) {
         regroove_effects_process(effects, buffer, frames, 48000);
+    }
+
+    // Apply master volume and mute
+    if (!master_mute) {
+        for (int i = 0; i < frames * 2; i++) {
+            buffer[i] = (int16_t)(buffer[i] * master_volume);
+        }
+    } else {
+        // Master mute - silence everything
+        memset(buffer, 0, len);
+    }
+
+    // Debug: Check if we're outputting any signal (and verify callback is running)
+    static int check_counter = 0;
+    check_counter++;
+    if (check_counter == 48) { // Check every 48 callbacks (~1 second at 256 frames/callback, 48000 Hz)
+        int max_sample = 0;
+        for (int i = 0; i < frames * 2; i++) {
+            int abs_val = abs(buffer[i]);
+            if (abs_val > max_sample) max_sample = abs_val;
+        }
+        printf("[AUDIO] counter=%d, playing=%d, player=%p, playback_mute=%d, input_mute=%d, max_sample=%d\n",
+               check_counter, playing, (void*)(common_state ? common_state->player : NULL),
+               playback_mute, input_mute, max_sample);
+        check_counter = 0;
+    }
+}
+
+// Audio input callback - captures audio from input device
+static void audio_input_callback(void *userdata, Uint8 *stream, int len) {
+    (void)userdata;
+
+    // Allocate input buffer if needed
+    int frames = len / (2 * sizeof(int16_t));
+    int needed_size = frames * 2; // stereo
+
+    if (input_buffer_size < needed_size) {
+        if (input_buffer) free(input_buffer);
+        input_buffer = (int16_t*)malloc(needed_size * sizeof(int16_t));
+        input_buffer_size = needed_size;
+        printf("Audio input buffer allocated: %d frames (%d samples)\n", frames, needed_size);
+    }
+
+    if (input_buffer) {
+        // Copy captured audio to our buffer
+        memcpy(input_buffer, stream, len);
+
+        // Debug: Check if we're getting any signal (first time only)
+        static bool first_signal_check = true;
+        if (first_signal_check) {
+            int16_t *samples = (int16_t*)stream;
+            int max_sample = 0;
+            for (int i = 0; i < frames * 2; i++) {
+                int abs_val = abs(samples[i]);
+                if (abs_val > max_sample) max_sample = abs_val;
+            }
+            if (max_sample > 100) {
+                printf("Audio input receiving signal (max amplitude: %d)\n", max_sample);
+                first_signal_check = false;
+            }
+        }
     }
 }
 
@@ -1916,6 +2093,15 @@ static void ShowMainUI() {
     ImGui::PushStyleColor(ImGuiCol_Button, fxCol);
     if (ImGui::Button("FX", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
         ui_mode = UI_MODE_EFFECTS;
+    }
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+
+    // MIX button with active state highlighting
+    ImVec4 mixCol = (ui_mode == UI_MODE_MIX) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, mixCol);
+    if (ImGui::Button("MIX", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        ui_mode = UI_MODE_MIX;
     }
     ImGui::PopStyleColor();
 
@@ -4186,6 +4372,144 @@ static void ShowMainUI() {
 
         ImGui::EndChild(); // End midi_scroll child window
     }
+    else if (ui_mode == UI_MODE_MIX) {
+        // MIX MODE: Master output, playback, and input mixing with FX routing
+
+        // Use the same spacing as VOL panel (already calculated above)
+        int col_index = 0;
+
+        // --- MASTER CHANNEL ---
+        {
+            float colX = origin.x + col_index * (sliderW + spacing);
+            ImGui::SetCursorPos(ImVec2(colX, origin.y + 8.0f));
+            ImGui::BeginGroup();
+            ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.2f, 1.0f), "MASTER");
+            ImGui::Dummy(ImVec2(0, 4.0f));
+
+            // FX button (mutually exclusive routing)
+            ImVec4 fxCol = (fx_route == FX_ROUTE_MASTER) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, fxCol);
+            if (ImGui::Button("FX##master_fx", ImVec2(sliderW, SOLO_SIZE))) {
+                fx_route = (fx_route == FX_ROUTE_MASTER) ? FX_ROUTE_NONE : FX_ROUTE_MASTER;
+            }
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0, 6.0f));
+
+            // Volume fader
+            float prev_master_vol = master_volume;
+            if (ImGui::VSliderFloat("##master_vol", ImVec2(sliderW, sliderH), &master_volume, 0.0f, 1.0f, "")) {
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    start_learn_for_action(ACTION_MASTER_VOLUME);
+                } else if (prev_master_vol != master_volume) {
+                    // Volume updated
+                }
+            }
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // MUTE button
+            ImVec4 muteCol = master_mute ? ImVec4(0.80f, 0.20f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, muteCol);
+            if (ImGui::Button("M##master_mute", ImVec2(sliderW, MUTE_SIZE))) {
+                if (learn_mode_active) {
+                    start_learn_for_action(ACTION_MASTER_MUTE);
+                } else {
+                    master_mute = !master_mute;
+                }
+            }
+            ImGui::PopStyleColor();
+
+            ImGui::EndGroup();
+            col_index++;
+        }
+
+        // --- PLAYBACK CHANNEL ---
+        {
+            float colX = origin.x + col_index * (sliderW + spacing);
+            ImGui::SetCursorPos(ImVec2(colX, origin.y + 8.0f));
+            ImGui::BeginGroup();
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "PLAYBACK");
+            ImGui::Dummy(ImVec2(0, 4.0f));
+
+            // FX button (mutually exclusive routing)
+            ImVec4 fxCol = (fx_route == FX_ROUTE_PLAYBACK) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, fxCol);
+            if (ImGui::Button("FX##playback_fx", ImVec2(sliderW, SOLO_SIZE))) {
+                fx_route = (fx_route == FX_ROUTE_PLAYBACK) ? FX_ROUTE_NONE : FX_ROUTE_PLAYBACK;
+            }
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0, 6.0f));
+
+            // Volume fader
+            float prev_playback_vol = playback_volume;
+            if (ImGui::VSliderFloat("##playback_vol", ImVec2(sliderW, sliderH), &playback_volume, 0.0f, 1.0f, "")) {
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    start_learn_for_action(ACTION_PLAYBACK_VOLUME);
+                } else if (prev_playback_vol != playback_volume) {
+                    // Volume updated
+                }
+            }
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // MUTE button
+            ImVec4 muteCol = playback_mute ? ImVec4(0.80f, 0.20f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, muteCol);
+            if (ImGui::Button("M##playback_mute", ImVec2(sliderW, MUTE_SIZE))) {
+                if (learn_mode_active) {
+                    start_learn_for_action(ACTION_PLAYBACK_MUTE);
+                } else {
+                    playback_mute = !playback_mute;
+                }
+            }
+            ImGui::PopStyleColor();
+
+            ImGui::EndGroup();
+            col_index++;
+        }
+
+        // --- INPUT CHANNEL ---
+        {
+            float colX = origin.x + col_index * (sliderW + spacing);
+            ImGui::SetCursorPos(ImVec2(colX, origin.y + 8.0f));
+            ImGui::BeginGroup();
+            ImGui::TextColored(ImVec4(0.8f, 1.0f, 0.6f, 1.0f), "INPUT");
+            ImGui::Dummy(ImVec2(0, 4.0f));
+
+            // FX button (mutually exclusive routing)
+            ImVec4 fxCol = (fx_route == FX_ROUTE_INPUT) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, fxCol);
+            if (ImGui::Button("FX##input_fx", ImVec2(sliderW, SOLO_SIZE))) {
+                fx_route = (fx_route == FX_ROUTE_INPUT) ? FX_ROUTE_NONE : FX_ROUTE_INPUT;
+            }
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0, 6.0f));
+
+            // Volume fader
+            float prev_input_vol = input_volume;
+            if (ImGui::VSliderFloat("##input_vol", ImVec2(sliderW, sliderH), &input_volume, 0.0f, 1.0f, "")) {
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    start_learn_for_action(ACTION_INPUT_VOLUME);
+                } else if (prev_input_vol != input_volume) {
+                    // Volume updated
+                }
+            }
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // MUTE button
+            ImVec4 muteCol = input_mute ? ImVec4(0.80f, 0.20f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, muteCol);
+            if (ImGui::Button("M##input_mute", ImVec2(sliderW, MUTE_SIZE))) {
+                if (learn_mode_active) {
+                    start_learn_for_action(ACTION_INPUT_MUTE);
+                } else {
+                    input_mute = !input_mute;
+                }
+            }
+            ImGui::PopStyleColor();
+
+            ImGui::EndGroup();
+            col_index++;
+        }
+    }
     else if (ui_mode == UI_MODE_EFFECTS) {
         // EFFECTS MODE: Fader-style effects controls (like volume faders)
 
@@ -4636,27 +4960,71 @@ static void ShowMainUI() {
         if (ImGui::BeginCombo("##audio_device", current_audio_label)) {
             // Default device option
             if (ImGui::Selectable("Default", selected_audio_device == -1)) {
-                selected_audio_device = -1;
-                if (common_state) {
-                    common_state->device_config.audio_device = -1;
-                    regroove_common_save_device_config(common_state, current_config_file);
+                if (selected_audio_device != -1) { // Only if actually changing
+                    selected_audio_device = -1;
+                    if (common_state) {
+                        common_state->device_config.audio_device = -1;
+                        regroove_common_save_device_config(common_state, current_config_file);
+                    }
+
+                    // Hot-swap audio device
+                    if (audio_device_id) {
+                        SDL_CloseAudioDevice(audio_device_id);
+                    }
+
+                    SDL_AudioSpec spec;
+                    SDL_zero(spec);
+                    spec.freq = 48000;
+                    spec.format = AUDIO_S16SYS;
+                    spec.channels = 2;
+                    spec.samples = 256;
+                    spec.callback = audio_callback;
+                    spec.userdata = NULL;
+
+                    audio_device_id = SDL_OpenAudioDevice(NULL, 0, &spec, NULL, 0); // NULL = default device
+                    if (audio_device_id > 0) {
+                        common_state->audio_device_id = audio_device_id;
+                        SDL_PauseAudioDevice(audio_device_id, 0); // Start immediately
+                        printf("Audio output switched to: Default\n");
+                    } else {
+                        printf("Failed to open default audio device: %s\n", SDL_GetError());
+                    }
                 }
-                printf("Audio device set to: Default\n");
-                // Note: Audio device hot-swap would require SDL_CloseAudio() and SDL_OpenAudio()
-                // which is more complex than MIDI hot-swap. For now, just save the preference.
             }
 
             // List all available audio devices
             for (int i = 0; i < (int)audio_device_names.size(); i++) {
                 if (ImGui::Selectable(audio_device_names[i].c_str(), selected_audio_device == i)) {
-                    selected_audio_device = i;
-                    if (common_state) {
-                        common_state->device_config.audio_device = i;
-                        regroove_common_save_device_config(common_state, current_config_file);
+                    if (selected_audio_device != i) { // Only if actually changing
+                        selected_audio_device = i;
+                        if (common_state) {
+                            common_state->device_config.audio_device = i;
+                            regroove_common_save_device_config(common_state, current_config_file);
+                        }
+
+                        // Hot-swap audio device
+                        if (audio_device_id) {
+                            SDL_CloseAudioDevice(audio_device_id);
+                        }
+
+                        SDL_AudioSpec spec;
+                        SDL_zero(spec);
+                        spec.freq = 48000;
+                        spec.format = AUDIO_S16SYS;
+                        spec.channels = 2;
+                        spec.samples = 256;
+                        spec.callback = audio_callback;
+                        spec.userdata = NULL;
+
+                        audio_device_id = SDL_OpenAudioDevice(audio_device_names[i].c_str(), 0, &spec, NULL, 0);
+                        if (audio_device_id > 0) {
+                            common_state->audio_device_id = audio_device_id;
+                            SDL_PauseAudioDevice(audio_device_id, 0); // Start immediately
+                            printf("Audio output switched to: %s\n", audio_device_names[i].c_str());
+                        } else {
+                            printf("Failed to open audio device: %s\n", SDL_GetError());
+                        }
                     }
-                    printf("Audio device set to: %s\n", audio_device_names[i].c_str());
-                    // Note: Audio device hot-swap would require SDL_CloseAudio() and SDL_OpenAudio()
-                    // which is more complex than MIDI hot-swap. For now, just save the preference.
                 }
             }
             ImGui::EndCombo();
@@ -4666,6 +5034,85 @@ static void ShowMainUI() {
         if (ImGui::Button("Refresh##audio", ImVec2(80.0f, 0.0f))) {
             refresh_audio_devices();
             printf("Refreshed audio device list (%d devices found)\n", (int)audio_device_names.size());
+        }
+
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
+        // Audio Input Device Selection
+        if (audio_input_device_names.empty()) {
+            refresh_audio_input_devices();
+        }
+
+        ImGui::Text("Audio Input:");
+        ImGui::SameLine(150.0f);
+
+        const char* current_input_label = (selected_audio_input_device >= 0 && selected_audio_input_device < (int)audio_input_device_names.size())
+            ? audio_input_device_names[selected_audio_input_device].c_str()
+            : "Disabled";
+
+        if (ImGui::BeginCombo("##audio_input_device", current_input_label)) {
+            // Disabled option
+            if (ImGui::Selectable("Disabled", selected_audio_input_device == -1)) {
+                if (selected_audio_input_device != -1) { // Only if actually changing
+                    // Close existing input device
+                    if (audio_input_device_id) {
+                        SDL_CloseAudioDevice(audio_input_device_id);
+                        audio_input_device_id = 0;
+                    }
+                    selected_audio_input_device = -1;
+
+                    // Save to config
+                    if (common_state) {
+                        common_state->device_config.audio_input_device = -1;
+                        regroove_common_save_device_config(common_state, current_config_file);
+                    }
+                    printf("Audio input disabled\n");
+                }
+            }
+
+            // List all available audio input devices
+            for (int i = 0; i < (int)audio_input_device_names.size(); i++) {
+                if (ImGui::Selectable(audio_input_device_names[i].c_str(), selected_audio_input_device == i)) {
+                    // Close existing input device if open
+                    if (audio_input_device_id) {
+                        SDL_CloseAudioDevice(audio_input_device_id);
+                        audio_input_device_id = 0;
+                    }
+
+                    // Open new input device
+                    SDL_AudioSpec input_spec, obtained_spec;
+                    SDL_zero(input_spec);
+                    input_spec.freq = 48000;
+                    input_spec.format = AUDIO_S16SYS;
+                    input_spec.channels = 2;
+                    input_spec.samples = 256;
+                    input_spec.callback = audio_input_callback;
+                    input_spec.userdata = NULL;
+
+                    audio_input_device_id = SDL_OpenAudioDevice(audio_input_device_names[i].c_str(), 1, &input_spec, &obtained_spec, 0);
+                    if (audio_input_device_id > 0) {
+                        selected_audio_input_device = i;
+                        SDL_PauseAudioDevice(audio_input_device_id, 0); // Start capturing immediately
+
+                        // Save to config
+                        if (common_state) {
+                            common_state->device_config.audio_input_device = i;
+                            regroove_common_save_device_config(common_state, current_config_file);
+                        }
+                        printf("Audio input set to: %s\n", audio_input_device_names[i].c_str());
+                    } else {
+                        printf("Failed to open audio input device: %s\n", SDL_GetError());
+                        selected_audio_input_device = -1;
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Refresh##audio_input", ImVec2(80.0f, 0.0f))) {
+            refresh_audio_input_devices();
+            printf("Refreshed audio input device list (%d devices found)\n", (int)audio_input_device_names.size());
         }
 
         ImGui::Dummy(ImVec2(0, 20.0f));
@@ -5325,6 +5772,10 @@ int main(int argc, char* argv[]) {
     }
     // Store audio device ID in common state for use by common functions
     common_state->audio_device_id = audio_device_id;
+
+    // Start audio device immediately (for input passthrough to work without playback)
+    SDL_PauseAudioDevice(audio_device_id, 0);
+    printf("Audio output device started (always active for input passthrough)\n");
     // Initialize LCD display
     lcd_display = lcd_init(LCD_COLS, LCD_ROWS);
     if (!lcd_display) {
@@ -5387,6 +5838,14 @@ int main(int argc, char* argv[]) {
     if (audio_device_id) {
         SDL_PauseAudioDevice(audio_device_id, 1);
         SDL_CloseAudioDevice(audio_device_id);
+    }
+    if (audio_input_device_id) {
+        SDL_PauseAudioDevice(audio_input_device_id, 1);
+        SDL_CloseAudioDevice(audio_input_device_id);
+    }
+    if (input_buffer) {
+        free(input_buffer);
+        input_buffer = NULL;
     }
 
     regroove_common_destroy(common_state);

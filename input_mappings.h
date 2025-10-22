@@ -55,6 +55,14 @@ typedef enum {
     ACTION_FX_EQ_TOGGLE,           // toggle EQ on/off
     ACTION_FX_COMPRESSOR_TOGGLE,   // toggle compressor on/off
     ACTION_FX_DELAY_TOGGLE,        // toggle delay on/off
+    // Mixer actions (continuous, use MIDI value 0-127)
+    ACTION_MASTER_VOLUME,          // master output volume
+    ACTION_PLAYBACK_VOLUME,        // playback engine volume
+    ACTION_INPUT_VOLUME,           // audio input volume
+    // Mixer toggles (button/trigger)
+    ACTION_MASTER_MUTE,            // toggle master mute
+    ACTION_PLAYBACK_MUTE,          // toggle playback mute
+    ACTION_INPUT_MUTE,             // toggle input mute
     ACTION_MAX
 } InputAction;
 

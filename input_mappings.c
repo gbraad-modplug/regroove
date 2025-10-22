@@ -57,6 +57,12 @@ InputAction parse_action(const char *str) {
     if (strcmp(str, "fx_eq_toggle") == 0) return ACTION_FX_EQ_TOGGLE;
     if (strcmp(str, "fx_compressor_toggle") == 0) return ACTION_FX_COMPRESSOR_TOGGLE;
     if (strcmp(str, "fx_delay_toggle") == 0) return ACTION_FX_DELAY_TOGGLE;
+    if (strcmp(str, "master_volume") == 0) return ACTION_MASTER_VOLUME;
+    if (strcmp(str, "playback_volume") == 0) return ACTION_PLAYBACK_VOLUME;
+    if (strcmp(str, "input_volume") == 0) return ACTION_INPUT_VOLUME;
+    if (strcmp(str, "master_mute") == 0) return ACTION_MASTER_MUTE;
+    if (strcmp(str, "playback_mute") == 0) return ACTION_PLAYBACK_MUTE;
+    if (strcmp(str, "input_mute") == 0) return ACTION_INPUT_MUTE;
     return ACTION_NONE;
 }
 
@@ -111,6 +117,12 @@ const char* input_action_name(InputAction action) {
         case ACTION_FX_EQ_TOGGLE: return "fx_eq_toggle";
         case ACTION_FX_COMPRESSOR_TOGGLE: return "fx_compressor_toggle";
         case ACTION_FX_DELAY_TOGGLE: return "fx_delay_toggle";
+        case ACTION_MASTER_VOLUME: return "master_volume";
+        case ACTION_PLAYBACK_VOLUME: return "playback_volume";
+        case ACTION_INPUT_VOLUME: return "input_volume";
+        case ACTION_MASTER_MUTE: return "master_mute";
+        case ACTION_PLAYBACK_MUTE: return "playback_mute";
+        case ACTION_INPUT_MUTE: return "input_mute";
         default: return "none";
     }
 }
