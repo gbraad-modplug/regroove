@@ -60,6 +60,8 @@ void regroove_unmute_all(Regroove *g);
 void regroove_toggle_channel_solo(Regroove *g, int ch);
 void regroove_set_channel_volume(Regroove *g, int ch, double vol);
 double regroove_get_channel_volume(const Regroove* g, int ch);
+void regroove_set_channel_panning(Regroove *g, int ch, double pan);
+double regroove_get_channel_panning(const Regroove* g, int ch);
 
 void regroove_set_pitch(Regroove *g, double pitch);
 

@@ -32,6 +32,7 @@ static const char* appname = "MP-1210: Direct Interaction Groove Interface";
 
 struct Channel {
     float volume = 1.0f;
+    float pan = 0.5f;  // 0.0 = full left, 0.5 = center, 1.0 = full right
     bool mute = false;
     bool solo = false;
 };
@@ -94,12 +95,15 @@ static LCD* lcd_display = NULL;
 // Mixer state (MIX panel)
 static float master_volume = 1.0f;      // Master output volume (0.0 - 1.0)
 static bool master_mute = false;
+static float master_pan = 0.5f;         // Master pan (0.0 = left, 0.5 = center, 1.0 = right)
 
 static float playback_volume = 1.0f;    // Playback engine volume (0.0 - 1.0)
 static bool playback_mute = false;
+static float playback_pan = 0.5f;       // Playback pan (0.0 = left, 0.5 = center, 1.0 = right)
 
 static float input_volume = 0.0f;       // Audio input volume (0.0 - 1.0, default muted)
 static bool input_mute = true;          // Input muted by default
+static float input_pan = 0.5f;          // Input pan (0.0 = left, 0.5 = center, 1.0 = right)
 
 // Effects routing (mutually exclusive - only one can be selected)
 enum FXRoute {
@@ -343,6 +347,7 @@ static int load_module(const char *path) {
 
     for (int i = 0; i < common_state->num_channels; i++) {
         channels[i].volume = 1.0f;
+        channels[i].pan = 0.5f;  // Initialize to center
         channels[i].mute = false;
         channels[i].solo = false;
     }
@@ -435,6 +440,7 @@ enum GuiAction {
     ACT_MUTE_CHANNEL,
     ACT_SOLO_CHANNEL,
     ACT_VOLUME_CHANNEL,
+    ACT_PAN_CHANNEL,
     ACT_MUTE_ALL,
     ACT_UNMUTE_ALL,
     ACT_JUMP_TO_ORDER,
@@ -645,6 +651,12 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
             if (mod && arg1 >= 0 && arg1 < common_state->num_channels) {
                 regroove_set_channel_volume(mod, arg1, (double)arg2);
                 channels[arg1].volume = arg2;
+            }
+            break;
+        case ACT_PAN_CHANNEL:
+            if (mod && arg1 >= 0 && arg1 < common_state->num_channels) {
+                regroove_set_channel_panning(mod, arg1, (double)arg2);
+                channels[arg1].pan = arg2;
             }
             break;
         case ACT_MUTE_ALL:
@@ -1018,6 +1030,24 @@ static void execute_action(InputAction action, int parameter, float value, void*
             break;
         case ACTION_INPUT_VOLUME:
             input_volume = value / 127.0f;
+            break;
+        case ACTION_MASTER_PAN:
+            // Map MIDI value (0-127) to pan range (0.0-1.0)
+            master_pan = value / 127.0f;
+            break;
+        case ACTION_PLAYBACK_PAN:
+            playback_pan = value / 127.0f;
+            break;
+        case ACTION_INPUT_PAN:
+            input_pan = value / 127.0f;
+            break;
+        case ACTION_CHANNEL_PAN:
+            if (parameter >= 0 && parameter < 64) {
+                channels[parameter].pan = value / 127.0f;
+                if (common_state && common_state->player) {
+                    regroove_set_channel_panning(common_state->player, parameter, channels[parameter].pan);
+                }
+            }
             break;
         case ACTION_MASTER_MUTE:
             master_mute = !master_mute;
@@ -1642,10 +1672,16 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
             regroove_effects_process(effects, buffer, frames, 48000);
         }
 
-        // Apply playback volume
+        // Apply playback volume and pan
         float pb_vol = playback_volume;
-        for (int i = 0; i < frames * 2; i++) {
-            buffer[i] = (int16_t)(buffer[i] * pb_vol);
+        float pb_pan = playback_pan;
+        for (int i = 0; i < frames; i++) {
+            // Left channel (i*2)
+            float left_gain = pb_vol * (1.0f - pb_pan * 0.5f);
+            buffer[i * 2] = (int16_t)(buffer[i * 2] * left_gain);
+            // Right channel (i*2+1)
+            float right_gain = pb_vol * (0.5f + pb_pan * 0.5f);
+            buffer[i * 2 + 1] = (int16_t)(buffer[i * 2 + 1] * right_gain);
         }
     }
 
@@ -1669,13 +1705,23 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
                 regroove_effects_process(effects, input_temp, frames, 48000);
             }
 
-            // Apply input volume and mix with playback
-            for (int i = 0; i < frames * 2; i++) {
-                int32_t mixed = buffer[i] + (int32_t)(input_temp[i] * input_volume);
-                // Clamp to prevent overflow
-                if (mixed > 32767) mixed = 32767;
-                if (mixed < -32768) mixed = -32768;
-                buffer[i] = (int16_t)mixed;
+            // Apply input volume, pan, and mix with playback
+            float in_vol = input_volume;
+            float in_pan = input_pan;
+            for (int i = 0; i < frames; i++) {
+                // Left channel (i*2)
+                float left_gain = in_vol * (1.0f - in_pan * 0.5f);
+                int32_t mixed_left = buffer[i * 2] + (int32_t)(input_temp[i * 2] * left_gain);
+                if (mixed_left > 32767) mixed_left = 32767;
+                if (mixed_left < -32768) mixed_left = -32768;
+                buffer[i * 2] = (int16_t)mixed_left;
+
+                // Right channel (i*2+1)
+                float right_gain = in_vol * (0.5f + in_pan * 0.5f);
+                int32_t mixed_right = buffer[i * 2 + 1] + (int32_t)(input_temp[i * 2 + 1] * right_gain);
+                if (mixed_right > 32767) mixed_right = 32767;
+                if (mixed_right < -32768) mixed_right = -32768;
+                buffer[i * 2 + 1] = (int16_t)mixed_right;
             }
 
             free(input_temp);
@@ -1687,10 +1733,17 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
         regroove_effects_process(effects, buffer, frames, 48000);
     }
 
-    // Apply master volume and mute
+    // Apply master volume, pan, and mute
     if (!master_mute) {
-        for (int i = 0; i < frames * 2; i++) {
-            buffer[i] = (int16_t)(buffer[i] * master_volume);
+        float m_vol = master_volume;
+        float m_pan = master_pan;
+        for (int i = 0; i < frames; i++) {
+            // Left channel (i*2)
+            float left_gain = m_vol * (1.0f - m_pan * 0.5f);
+            buffer[i * 2] = (int16_t)(buffer[i * 2] * left_gain);
+            // Right channel (i*2+1)
+            float right_gain = m_vol * (0.5f + m_pan * 0.5f);
+            buffer[i * 2 + 1] = (int16_t)(buffer[i * 2 + 1] * right_gain);
         }
     } else {
         // Master mute - silence everything
@@ -2213,7 +2266,8 @@ static void ShowMainUI() {
 
     float labelH = ImGui::GetTextLineHeight();
     float contentHeight = channelAreaHeight - childPaddingY;
-    float sliderTop = 8.0f + labelH + 4.0f + SOLO_SIZE + 6.0f;
+    float panSliderH = 20.0f;  // Height for horizontal pan slider
+    float sliderTop = 8.0f + labelH + 4.0f + SOLO_SIZE + 2.0f + panSliderH + labelH + 2.0f;
     float bottomStack = 8.0f + MUTE_SIZE + 12.0f;
     float sliderH = contentHeight - sliderTop - bottomStack - IMGUI_LAYOUT_COMPENSATION;
     if (sliderH < MIN_SLIDER_HEIGHT) sliderH = MIN_SLIDER_HEIGHT;
@@ -2252,8 +2306,27 @@ static void ShowMainUI() {
                 else dispatch_action(ACT_SOLO_CHANNEL, i);
             }
             ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0, 2.0f));
 
-            ImGui::Dummy(ImVec2(0, 6.0f));
+            // PAN SLIDER (horizontal)
+            float prev_pan = channels[i].pan;
+            ImGui::PushItemWidth(sliderW);
+            if (ImGui::SliderFloat((std::string("##pan")+std::to_string(i)).c_str(),
+                                   &channels[i].pan, 0.0f, 1.0f, "")) {
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    start_learn_for_action(ACTION_CHANNEL_PAN, i);
+                } else if (prev_pan != channels[i].pan) {
+                    dispatch_action(ACT_PAN_CHANNEL, i, channels[i].pan);
+                }
+            }
+            ImGui::PopItemWidth();
+            // Label below pan slider
+            const char* pan_label = (channels[i].pan < 0.4f) ? "L" :
+                                   (channels[i].pan > 0.6f) ? "R" : "C";
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + sliderW/2.0f - 5.0f);
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", pan_label);
+
+            ImGui::Dummy(ImVec2(0, 2.0f));
 
             // Get slider position before drawing
             ImVec2 slider_pos = ImGui::GetCursorScreenPos();
@@ -4393,7 +4466,25 @@ static void ShowMainUI() {
                 fx_route = (fx_route == FX_ROUTE_MASTER) ? FX_ROUTE_NONE : FX_ROUTE_MASTER;
             }
             ImGui::PopStyleColor();
-            ImGui::Dummy(ImVec2(0, 6.0f));
+            ImGui::Dummy(ImVec2(0, 2.0f));
+
+            // PAN SLIDER (horizontal)
+            float prev_master_pan = master_pan;
+            ImGui::PushItemWidth(sliderW);
+            if (ImGui::SliderFloat("##master_pan", &master_pan, 0.0f, 1.0f, "")) {
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    start_learn_for_action(ACTION_MASTER_PAN);
+                } else if (prev_master_pan != master_pan) {
+                    // Pan updated
+                }
+            }
+            ImGui::PopItemWidth();
+            // Label below pan slider
+            const char* pan_label = (master_pan < 0.4f) ? "L" :
+                                   (master_pan > 0.6f) ? "R" : "C";
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + sliderW/2.0f - 5.0f);
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", pan_label);
+            ImGui::Dummy(ImVec2(0, 2.0f));
 
             // Volume fader
             float prev_master_vol = master_volume;
@@ -4437,7 +4528,25 @@ static void ShowMainUI() {
                 fx_route = (fx_route == FX_ROUTE_PLAYBACK) ? FX_ROUTE_NONE : FX_ROUTE_PLAYBACK;
             }
             ImGui::PopStyleColor();
-            ImGui::Dummy(ImVec2(0, 6.0f));
+            ImGui::Dummy(ImVec2(0, 2.0f));
+
+            // PAN SLIDER (horizontal)
+            float prev_playback_pan = playback_pan;
+            ImGui::PushItemWidth(sliderW);
+            if (ImGui::SliderFloat("##playback_pan", &playback_pan, 0.0f, 1.0f, "")) {
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    start_learn_for_action(ACTION_PLAYBACK_PAN);
+                } else if (prev_playback_pan != playback_pan) {
+                    // Pan updated
+                }
+            }
+            ImGui::PopItemWidth();
+            // Label below pan slider
+            const char* pan_label_pb = (playback_pan < 0.4f) ? "L" :
+                                      (playback_pan > 0.6f) ? "R" : "C";
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + sliderW/2.0f - 5.0f);
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", pan_label_pb);
+            ImGui::Dummy(ImVec2(0, 2.0f));
 
             // Volume fader
             float prev_playback_vol = playback_volume;
@@ -4481,7 +4590,25 @@ static void ShowMainUI() {
                 fx_route = (fx_route == FX_ROUTE_INPUT) ? FX_ROUTE_NONE : FX_ROUTE_INPUT;
             }
             ImGui::PopStyleColor();
-            ImGui::Dummy(ImVec2(0, 6.0f));
+            ImGui::Dummy(ImVec2(0, 2.0f));
+
+            // PAN SLIDER (horizontal)
+            float prev_input_pan = input_pan;
+            ImGui::PushItemWidth(sliderW);
+            if (ImGui::SliderFloat("##input_pan", &input_pan, 0.0f, 1.0f, "")) {
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    start_learn_for_action(ACTION_INPUT_PAN);
+                } else if (prev_input_pan != input_pan) {
+                    // Pan updated
+                }
+            }
+            ImGui::PopItemWidth();
+            // Label below pan slider
+            const char* pan_label_in = (input_pan < 0.4f) ? "L" :
+                                      (input_pan > 0.6f) ? "R" : "C";
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + sliderW/2.0f - 5.0f);
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", pan_label_in);
+            ImGui::Dummy(ImVec2(0, 2.0f));
 
             // Volume fader
             float prev_input_vol = input_volume;

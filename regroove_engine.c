@@ -22,7 +22,8 @@ typedef enum {
     RG_CMD_MUTE_ALL,
     RG_CMD_UNMUTE_ALL,
     RG_CMD_SET_PITCH,
-    RG_CMD_SET_CHANNEL_VOLUME       // NEW
+    RG_CMD_SET_CHANNEL_VOLUME,
+    RG_CMD_SET_CHANNEL_PANNING
 } RegrooveCommandType;
 
 typedef struct {
@@ -39,11 +40,14 @@ struct Regroove {
     openmpt_module* mod;
     openmpt_module_ext_interface_interactive interactive;
     int interactive_ok;
+    openmpt_module_ext_interface_interactive2 *interactive2;
+    int interactive2_ok;
     double samplerate;
     double pitch_factor;
     int num_channels;
     int* mute_states;
     double* channel_volumes;
+    double* channel_pannings;  // 0.0 = full left, 0.5 = center, 1.0 = full right
 
     int num_orders;
     int pattern_mode;
@@ -148,6 +152,19 @@ static void process_commands(struct Regroove* g) {
                     if (g->interactive_ok)
                         g->interactive.set_channel_volume(
                             g->modext, ch, g->mute_states[ch] ? 0.0 : vol);
+                }
+                break;
+            }
+            case RG_CMD_SET_CHANNEL_PANNING: {
+                int ch = cmd->arg1;
+                double pan = cmd->dval;
+                if (ch >= 0 && ch < g->num_channels) {
+                    if (pan < 0.0) pan = 0.0;
+                    if (pan > 1.0) pan = 1.0;
+                    g->channel_pannings[ch] = pan;
+                    if (g->interactive2_ok && g->interactive2)
+                        g->interactive2->set_channel_panning(
+                            g->modext, ch, pan);
                 }
                 break;
             }
@@ -307,7 +324,11 @@ Regroove *regroove_create(const char *filename, double samplerate) {
 
     g->mute_states = (int*)calloc(g->num_channels, sizeof(int));
     g->channel_volumes = (double*)calloc(g->num_channels, sizeof(double));
-    for (int i = 0; i < g->num_channels; ++i) g->channel_volumes[i] = 1.0;
+    g->channel_pannings = (double*)calloc(g->num_channels, sizeof(double));
+    for (int i = 0; i < g->num_channels; ++i) {
+        g->channel_volumes[i] = 1.0;
+        g->channel_pannings[i] = 0.5;  // Center
+    }
 
     g->interactive_ok = 0;
     if (openmpt_module_ext_get_interface(
@@ -315,6 +336,19 @@ Regroove *regroove_create(const char *filename, double samplerate) {
             &g->interactive, sizeof(g->interactive)) != 0) {
         g->interactive_ok = 1;
         reapply_mutes(g);
+    }
+
+    g->interactive2_ok = 0;
+    g->interactive2 = NULL;
+    openmpt_module_ext_interface_interactive2 interactive2_temp;
+    if (openmpt_module_ext_get_interface(
+            g->modext, "interactive2",
+            &interactive2_temp, sizeof(interactive2_temp)) != 0) {
+        g->interactive2 = (openmpt_module_ext_interface_interactive2*)malloc(sizeof(openmpt_module_ext_interface_interactive2));
+        if (g->interactive2) {
+            memcpy(g->interactive2, &interactive2_temp, sizeof(interactive2_temp));
+            g->interactive2_ok = 1;
+        }
     }
 
     g->loop_order = openmpt_module_get_current_order(g->mod);
@@ -345,6 +379,8 @@ void regroove_destroy(Regroove *g) {
     if (g->modext) openmpt_module_ext_destroy(g->modext);
     if (g->mute_states) free(g->mute_states);
     if (g->channel_volumes) free(g->channel_volumes);
+    if (g->channel_pannings) free(g->channel_pannings);
+    if (g->interactive2) free(g->interactive2);
     free(g);
 }
 
@@ -627,6 +663,15 @@ void regroove_set_channel_volume(Regroove *g, int ch, double vol) {
 double regroove_get_channel_volume(const Regroove* g, int ch) {
     if (!g || ch < 0 || ch >= g->num_channels) return 0.0;
     return g->channel_volumes[ch];
+}
+
+void regroove_set_channel_panning(Regroove *g, int ch, double pan) {
+    enqueue_command_d(g, RG_CMD_SET_CHANNEL_PANNING, ch, pan);
+}
+
+double regroove_get_channel_panning(const Regroove* g, int ch) {
+    if (!g || ch < 0 || ch >= g->num_channels) return 0.5;
+    return g->channel_pannings[ch];
 }
 
 void regroove_mute_all(Regroove* g) {

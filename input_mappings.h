@@ -59,6 +59,10 @@ typedef enum {
     ACTION_MASTER_VOLUME,          // master output volume
     ACTION_PLAYBACK_VOLUME,        // playback engine volume
     ACTION_INPUT_VOLUME,           // audio input volume
+    ACTION_MASTER_PAN,             // master pan (0=left, 64=center, 127=right)
+    ACTION_PLAYBACK_PAN,           // playback pan
+    ACTION_INPUT_PAN,              // input pan
+    ACTION_CHANNEL_PAN,            // channel pan (requires parameter = channel index)
     // Mixer toggles (button/trigger)
     ACTION_MASTER_MUTE,            // toggle master mute
     ACTION_PLAYBACK_MUTE,          // toggle playback mute
