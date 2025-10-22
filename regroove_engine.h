@@ -55,9 +55,11 @@ void regroove_loop_till_row(Regroove *g, int row);
 void regroove_retrigger_pattern(Regroove *g);
 void regroove_set_custom_loop_rows(Regroove *g, int rows);
 void regroove_toggle_channel_mute(Regroove *g, int ch);
+void regroove_queue_channel_mute(Regroove *g, int ch);       // Queued mute toggle
 void regroove_mute_all(Regroove *g);
 void regroove_unmute_all(Regroove *g);
 void regroove_toggle_channel_solo(Regroove *g, int ch);
+void regroove_queue_channel_solo(Regroove *g, int ch);       // Queued solo toggle
 void regroove_set_channel_volume(Regroove *g, int ch, double vol);
 double regroove_get_channel_volume(const Regroove* g, int ch);
 void regroove_set_channel_panning(Regroove *g, int ch, double pan);
@@ -80,6 +82,8 @@ int regroove_get_current_row(const Regroove *g);
 int regroove_get_num_channels(const Regroove *g);
 double regroove_get_pitch(const Regroove *g);
 int regroove_is_channel_muted(const Regroove *g, int ch);
+int regroove_has_pending_mute_changes(const Regroove *g);
+int regroove_get_pending_channel_mute(const Regroove *g, int ch);
 int regroove_get_pattern_mode(const Regroove *g);
 int regroove_get_custom_loop_rows(const Regroove *g);
 int regroove_get_full_pattern_rows(const Regroove *g);

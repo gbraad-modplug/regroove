@@ -23,7 +23,9 @@ typedef enum {
     RG_CMD_UNMUTE_ALL,
     RG_CMD_SET_PITCH,
     RG_CMD_SET_CHANNEL_VOLUME,
-    RG_CMD_SET_CHANNEL_PANNING
+    RG_CMD_SET_CHANNEL_PANNING,
+    RG_CMD_QUEUE_CHANNEL_MUTE,      // Queued mute toggle
+    RG_CMD_QUEUE_CHANNEL_SOLO       // Queued solo toggle
 } RegrooveCommandType;
 
 typedef struct {
@@ -74,6 +76,10 @@ struct Regroove {
     int prev_row;
     int prev_order;
 
+    // Pending mute/solo state (queued until pattern boundary)
+    int* pending_mute_states;      // NULL if no pending changes
+    int has_pending_mute_changes;  // Flag to indicate pending changes exist
+
     // --- UI callback hooks ---
     RegrooveOrderCallback        on_order_change;
     RegrooveRowCallback          on_row_change;
@@ -97,6 +103,23 @@ static void reapply_mutes(struct Regroove* g) {
         g->interactive.set_channel_volume(g->modext, ch,
             g->mute_states[ch] ? 0.0 : g->channel_volumes[ch]);
     }
+}
+
+static void apply_pending_mute_changes(struct Regroove* g) {
+    if (!g->has_pending_mute_changes || !g->pending_mute_states) return;
+
+    // Copy pending states to current states
+    memcpy(g->mute_states, g->pending_mute_states, g->num_channels * sizeof(int));
+
+    // Apply to engine
+    if (g->interactive_ok) {
+        reapply_mutes(g);
+    }
+
+    // Clear pending state
+    free(g->pending_mute_states);
+    g->pending_mute_states = NULL;
+    g->has_pending_mute_changes = 0;
 }
 
 static void enqueue_command(struct Regroove* g, RegrooveCommandType type, int arg1, int arg2) {
@@ -285,6 +308,53 @@ static void process_commands(struct Regroove* g) {
                 if (g->custom_loop_rows < 0) g->custom_loop_rows = 0;
                 g->prev_row = -1;
                 break;
+            case RG_CMD_QUEUE_CHANNEL_MUTE:
+                if (cmd->arg1 >= 0 && cmd->arg1 < g->num_channels) {
+                    // Allocate pending states if not yet allocated
+                    if (!g->pending_mute_states) {
+                        g->pending_mute_states = (int*)malloc(g->num_channels * sizeof(int));
+                        // Copy current mute states as starting point
+                        memcpy(g->pending_mute_states, g->mute_states, g->num_channels * sizeof(int));
+                    }
+                    // Toggle pending mute state for this channel
+                    g->pending_mute_states[cmd->arg1] = !g->pending_mute_states[cmd->arg1];
+                    g->has_pending_mute_changes = 1;
+                }
+                break;
+            case RG_CMD_QUEUE_CHANNEL_SOLO:
+                if (cmd->arg1 >= 0 && cmd->arg1 < g->num_channels) {
+                    // Allocate pending states if not yet allocated
+                    if (!g->pending_mute_states) {
+                        g->pending_mute_states = (int*)malloc(g->num_channels * sizeof(int));
+                        // Copy current mute states as starting point
+                        memcpy(g->pending_mute_states, g->mute_states, g->num_channels * sizeof(int));
+                    }
+                    // Check if this channel is currently pending solo (all others muted in pending)
+                    int is_pending_solo = g->pending_mute_states[cmd->arg1] == 0;
+                    if (is_pending_solo) {
+                        // Check if all other channels are muted in pending
+                        for (int i = 0; i < g->num_channels; i++) {
+                            if (i != cmd->arg1 && g->pending_mute_states[i] == 0) {
+                                is_pending_solo = 0;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!is_pending_solo) {
+                        // Set to solo: mute all, unmute this one
+                        for (int i = 0; i < g->num_channels; i++) {
+                            g->pending_mute_states[i] = (i != cmd->arg1) ? 1 : 0;
+                        }
+                    } else {
+                        // Un-solo: unmute all
+                        for (int i = 0; i < g->num_channels; i++) {
+                            g->pending_mute_states[i] = 0;
+                        }
+                    }
+                    g->has_pending_mute_changes = 1;
+                }
+                break;
             default: break;
         }
         g->command_queue_head = (g->command_queue_head + 1) % RG_MAX_COMMANDS;
@@ -363,6 +433,10 @@ Regroove *regroove_create(const char *filename, double samplerate) {
     g->prev_row = -1;
     g->prev_order = g->loop_order;
 
+    // Initialize pending mute/solo state
+    g->pending_mute_states = NULL;
+    g->has_pending_mute_changes = 0;
+
     g->on_order_change = NULL;
     g->on_row_change = NULL;
     g->on_loop_pattern = NULL;
@@ -386,6 +460,7 @@ void regroove_destroy(Regroove *g) {
     if (g->channel_volumes) free(g->channel_volumes);
     if (g->channel_pannings) free(g->channel_pannings);
     if (g->interactive2) free(g->interactive2);
+    if (g->pending_mute_states) free(g->pending_mute_states);
     free(g);
 }
 
@@ -404,6 +479,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
 
     if (g->has_queued_jump) {
         openmpt_module_set_position_order_row(g->mod, g->queued_order, g->queued_row);
+        apply_pending_mute_changes(g);
         if (g->interactive_ok) reapply_mutes(g);
         g->has_queued_jump = 0;
         g->prev_row = -1;
@@ -425,6 +501,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
                 g->prev_row = -1;
             } else if (g->prev_row == rows - 1 && cur_row == 0) {
                 openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
+                apply_pending_mute_changes(g);
                 if (g->interactive_ok) reapply_mutes(g);
                 if (g->on_loop_pattern)
                     g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
@@ -449,6 +526,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             g->custom_loop_rows = 0;
             g->pending_pattern_mode_order = -1;
             openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
+            apply_pending_mute_changes(g);
             if (g->interactive_ok) reapply_mutes(g);
             if (g->on_loop_pattern)
                 g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
@@ -460,6 +538,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         if (cur_order == g->loop_order) {
             if (at_custom_loop_end || at_full_pattern_end) {
                 openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
+                apply_pending_mute_changes(g);
                 if (g->interactive_ok)
                     reapply_mutes(g);
                 if (g->on_loop_pattern)
@@ -470,6 +549,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             }
         } else { // If escaped loop order, snap back
             openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
+            apply_pending_mute_changes(g);
             if (g->interactive_ok)
                 reapply_mutes(g);
             if (g->on_loop_pattern)
@@ -479,6 +559,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
     }
     else if (g->has_queued_jump) {
         openmpt_module_set_position_order_row(g->mod, g->queued_order, g->queued_row);
+        apply_pending_mute_changes(g);
         if (g->interactive_ok)
             reapply_mutes(g);
         g->has_queued_jump = 0;
@@ -657,8 +738,16 @@ void regroove_toggle_channel_mute(Regroove *g, int ch) {
     process_commands(g);
 }
 
+void regroove_queue_channel_mute(Regroove *g, int ch) {
+    enqueue_command(g, RG_CMD_QUEUE_CHANNEL_MUTE, ch, 0);
+}
+
 void regroove_toggle_channel_solo(Regroove* g, int ch) {
     enqueue_command(g, RG_CMD_TOGGLE_CHANNEL_SINGLE, ch, 0);
+}
+
+void regroove_queue_channel_solo(Regroove *g, int ch) {
+    enqueue_command(g, RG_CMD_QUEUE_CHANNEL_SOLO, ch, 0);
 }
 
 void regroove_set_channel_volume(Regroove *g, int ch, double vol) {
@@ -721,6 +810,14 @@ double regroove_get_pitch(const Regroove* g) { return g ? g->pitch_factor : 1.0;
 int regroove_is_channel_muted(const Regroove* g, int ch) {
     if (!g || ch < 0 || ch >= g->num_channels) return 0;
     return g->mute_states[ch];
+}
+int regroove_has_pending_mute_changes(const Regroove *g) {
+    return g ? g->has_pending_mute_changes : 0;
+}
+int regroove_get_pending_channel_mute(const Regroove *g, int ch) {
+    if (!g || ch < 0 || ch >= g->num_channels) return 0;
+    if (!g->pending_mute_states) return g->mute_states[ch];  // No pending changes, return current state
+    return g->pending_mute_states[ch];
 }
 int regroove_get_pattern_mode(const Regroove* g) { return g->pattern_mode; }
 int regroove_get_custom_loop_rows(const Regroove* g) { return g->custom_loop_rows; }

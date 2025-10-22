@@ -439,6 +439,8 @@ enum GuiAction {
     ACT_FULL_LOOP,
     ACT_MUTE_CHANNEL,
     ACT_SOLO_CHANNEL,
+    ACT_QUEUE_MUTE_CHANNEL,      // Queued mute toggle
+    ACT_QUEUE_SOLO_CHANNEL,      // Queued solo toggle
     ACT_VOLUME_CHANNEL,
     ACT_PAN_CHANNEL,
     ACT_MUTE_ALL,
@@ -647,6 +649,16 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
             }
             break;
         }
+        case ACT_QUEUE_MUTE_CHANNEL:
+            if (mod && arg1 >= 0 && arg1 < common_state->num_channels) {
+                regroove_queue_channel_mute(mod, arg1);
+            }
+            break;
+        case ACT_QUEUE_SOLO_CHANNEL:
+            if (mod && arg1 >= 0 && arg1 < common_state->num_channels) {
+                regroove_queue_channel_solo(mod, arg1);
+            }
+            break;
         case ACT_VOLUME_CHANNEL:
             if (mod && arg1 >= 0 && arg1 < common_state->num_channels) {
                 regroove_set_channel_volume(mod, arg1, (double)arg2);
@@ -854,6 +866,12 @@ static void execute_action(InputAction action, int parameter, float value, void*
             break;
         case ACTION_CHANNEL_SOLO:
             dispatch_action(ACT_SOLO_CHANNEL, parameter, 0.0f, false);
+            break;
+        case ACTION_QUEUE_CHANNEL_MUTE:
+            dispatch_action(ACT_QUEUE_MUTE_CHANNEL, parameter, 0.0f, false);
+            break;
+        case ACTION_QUEUE_CHANNEL_SOLO:
+            dispatch_action(ACT_QUEUE_SOLO_CHANNEL, parameter, 0.0f, false);
             break;
         case ACTION_CHANNEL_VOLUME:
             dispatch_action(ACT_VOLUME_CHANNEL, parameter, value / 127.0f, false);
@@ -2286,11 +2304,55 @@ static void ShowMainUI() {
             ImGui::Dummy(ImVec2(0, 4.0f));
 
             // SOLO BUTTON
-            ImVec4 soloCol = channels[i].solo ? ImVec4(0.80f,0.12f,0.14f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
+            Regroove* player = common_state ? common_state->player : NULL;
+
+            // Determine current solo state from engine's actual mute states
+            bool is_currently_solo = false;
+            if (player) {
+                // Solo = this channel unmuted AND all other channels muted
+                bool this_unmuted = !regroove_is_channel_muted(player, i);
+                bool all_others_muted = true;
+                for (int j = 0; j < num_channels; j++) {
+                    if (j != i && !regroove_is_channel_muted(player, j)) {
+                        all_others_muted = false;
+                        break;
+                    }
+                }
+                is_currently_solo = (this_unmuted && all_others_muted);
+                // Update GUI state to match engine
+                channels[i].solo = is_currently_solo;
+            }
+
+            // Determine pending solo state if there are pending changes
+            bool will_be_solo = is_currently_solo;
+            if (player && regroove_has_pending_mute_changes(player)) {
+                // Check if this channel will be solo in pending state
+                bool this_unmuted = !regroove_get_pending_channel_mute(player, i);
+                bool all_others_muted = true;
+                for (int j = 0; j < num_channels; j++) {
+                    if (j != i && !regroove_get_pending_channel_mute(player, j)) {
+                        all_others_muted = false;
+                        break;
+                    }
+                }
+                will_be_solo = (this_unmuted && all_others_muted);
+            }
+
+            ImVec4 soloCol;
+            if (player && regroove_has_pending_mute_changes(player) && will_be_solo != is_currently_solo) {
+                // Pending change - show yellow/amber to indicate queued
+                soloCol = ImVec4(0.90f, 0.70f, 0.20f, 1.0f);
+            } else {
+                soloCol = is_currently_solo ? ImVec4(0.80f,0.12f,0.14f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
+            }
             ImGui::PushStyleColor(ImGuiCol_Button, soloCol);
             if (ImGui::Button((std::string("S##solo")+std::to_string(i)).c_str(), ImVec2(sliderW, SOLO_SIZE))) {
                 if (learn_mode_active) start_learn_for_action(ACTION_CHANNEL_SOLO, i);
-                else dispatch_action(ACT_SOLO_CHANNEL, i);
+                else if (ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift)) {
+                    dispatch_action(ACT_QUEUE_SOLO_CHANNEL, i);
+                } else {
+                    dispatch_action(ACT_SOLO_CHANNEL, i);
+                }
             }
             ImGui::PopStyleColor();
             ImGui::Dummy(ImVec2(0, 2.0f));
@@ -2354,11 +2416,34 @@ static void ShowMainUI() {
             ImGui::Dummy(ImVec2(0, 8.0f));
 
             // MUTE BUTTON with color feedback
-            ImVec4 muteCol = channels[i].mute ? ImVec4(0.90f,0.16f,0.18f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
+            // Get current mute state from engine and sync GUI state
+            bool is_currently_muted = false;
+            if (player) {
+                is_currently_muted = regroove_is_channel_muted(player, i);
+                channels[i].mute = is_currently_muted;
+            }
+
+            // Get pending mute state
+            bool will_be_muted = is_currently_muted;
+            if (player && regroove_has_pending_mute_changes(player)) {
+                will_be_muted = regroove_get_pending_channel_mute(player, i);
+            }
+
+            ImVec4 muteCol;
+            if (player && regroove_has_pending_mute_changes(player) && will_be_muted != is_currently_muted) {
+                // Pending change - show yellow/amber to indicate queued
+                muteCol = ImVec4(0.90f, 0.70f, 0.20f, 1.0f);
+            } else {
+                muteCol = is_currently_muted ? ImVec4(0.90f,0.16f,0.18f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
+            }
             ImGui::PushStyleColor(ImGuiCol_Button, muteCol);
             if (ImGui::Button((std::string("M##mute")+std::to_string(i)).c_str(), ImVec2(sliderW, MUTE_SIZE))) {
                 if (learn_mode_active) start_learn_for_action(ACTION_CHANNEL_MUTE, i);
-                else dispatch_action(ACT_MUTE_CHANNEL, i);
+                else if (ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift)) {
+                    dispatch_action(ACT_QUEUE_MUTE_CHANNEL, i);
+                } else {
+                    dispatch_action(ACT_MUTE_CHANNEL, i);
+                }
             }
             ImGui::PopStyleColor();
 
@@ -2434,14 +2519,36 @@ static void ShowMainUI() {
 
                 ImGui::SetCursorPos(ImVec2(posX, posY));
 
-                // Pad color with fade effect
+                // Check if this pad has a pending queued action
+                bool has_pending = false;
+                Regroove* player = common_state ? common_state->player : NULL;
+                if (player && common_state && common_state->input_mappings) {
+                    TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[idx];
+                    if ((pad->action == ACTION_QUEUE_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_SOLO) &&
+                        regroove_has_pending_mute_changes(player)) {
+                        int ch = pad->parameter;
+                        if (ch >= 0 && ch < common_state->num_channels) {
+                            has_pending = (regroove_get_pending_channel_mute(player, ch) !=
+                                         regroove_is_channel_muted(player, ch));
+                        }
+                    }
+                }
+
+                // Pad color with fade effect or pending state
                 float brightness = trigger_pad_fade[idx];
-                ImVec4 padCol = ImVec4(
-                    0.18f + brightness * 0.50f,
-                    0.27f + brightness * 0.40f,
-                    0.18f + brightness * 0.24f,
-                    1.0f
-                );
+                ImVec4 padCol;
+                if (has_pending) {
+                    // Yellow/amber for pending queued action
+                    padCol = ImVec4(0.90f, 0.70f, 0.20f, 1.0f);
+                } else {
+                    // Normal green with brightness fade
+                    padCol = ImVec4(
+                        0.18f + brightness * 0.50f,
+                        0.27f + brightness * 0.40f,
+                        0.18f + brightness * 0.24f,
+                        1.0f
+                    );
+                }
 
                 ImGui::PushStyleColor(ImGuiCol_Button, padCol);
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.48f, 0.32f, 1.0f));
@@ -2509,14 +2616,36 @@ static void ShowMainUI() {
 
                 ImGui::SetCursorPos(ImVec2(posX, posY));
 
-                // Different color for song pads (bluish tint)
+                // Check if this song pad has a pending queued action
+                bool has_pending = false;
+                Regroove* player = common_state ? common_state->player : NULL;
+                if (player && common_state && common_state->metadata) {
+                    TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[idx];
+                    if ((pad->action == ACTION_QUEUE_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_SOLO) &&
+                        regroove_has_pending_mute_changes(player)) {
+                        int ch = pad->parameter;
+                        if (ch >= 0 && ch < common_state->num_channels) {
+                            has_pending = (regroove_get_pending_channel_mute(player, ch) !=
+                                         regroove_is_channel_muted(player, ch));
+                        }
+                    }
+                }
+
+                // Pad color with fade effect or pending state
                 float brightness = trigger_pad_fade[global_idx];
-                ImVec4 padCol = ImVec4(
-                    0.18f + brightness * 0.30f,
-                    0.27f + brightness * 0.40f,
-                    0.28f + brightness * 0.50f,  // More blue
-                    1.0f
-                );
+                ImVec4 padCol;
+                if (has_pending) {
+                    // Yellow/amber for pending queued action
+                    padCol = ImVec4(0.90f, 0.70f, 0.20f, 1.0f);
+                } else {
+                    // Different color for song pads (bluish tint)
+                    padCol = ImVec4(
+                        0.18f + brightness * 0.30f,
+                        0.27f + brightness * 0.40f,
+                        0.28f + brightness * 0.50f,  // More blue
+                        1.0f
+                    );
+                }
 
                 ImGui::PushStyleColor(ImGuiCol_Button, padCol);
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.38f, 0.52f, 1.0f));
@@ -3959,6 +4088,7 @@ static void ShowMainUI() {
 
                 // Parameter with +/- buttons (conditional based on action)
                 if (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_CHANNEL_SOLO ||
+                    pad->action == ACTION_QUEUE_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_SOLO ||
                     pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_TRIGGER_PAD ||
                     pad->action == ACTION_JUMP_TO_ORDER || pad->action == ACTION_JUMP_TO_PATTERN ||
                     pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN ||
@@ -4101,6 +4231,7 @@ static void ShowMainUI() {
 
                 // Parameter with +/- buttons (conditional based on action)
                 if (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_CHANNEL_SOLO ||
+                    pad->action == ACTION_QUEUE_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_SOLO ||
                     pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_TRIGGER_PAD ||
                     pad->action == ACTION_JUMP_TO_ORDER || pad->action == ACTION_JUMP_TO_PATTERN ||
                     pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN ||
