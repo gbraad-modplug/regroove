@@ -2385,8 +2385,14 @@ static void ShowMainUI() {
             ImGui::BeginGroup();
             ImGui::Text("Pitch");
             ImGui::Dummy(ImVec2(0, 4.0f));
+
+            // Match channel spacing: SOLO button + pan slider + label
             ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
-            ImGui::Dummy(ImVec2(0, 6.0f));
+            ImGui::Dummy(ImVec2(0, 2.0f));
+            ImGui::Dummy(ImVec2(sliderW, panSliderH));  // Pan slider height
+            ImGui::Dummy(ImVec2(0, labelH));             // Pan label height
+            ImGui::Dummy(ImVec2(0, 2.0f));
+
             float prev_pitch = pitch_slider;
             if (ImGui::VSliderFloat("##pitch", ImVec2(sliderW, sliderH),
                                     &pitch_slider, -1.0f, 1.0f, "")) {
