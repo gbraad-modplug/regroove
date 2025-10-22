@@ -1424,9 +1424,16 @@ static void learn_midi_mapping(int device_id, int cc_or_note, bool is_note) {
             new_mapping.device_id = device_id;
             new_mapping.cc_number = cc_or_note;
 
-            // Set continuous mode for volume, pitch, and effects controls
+            // Set continuous mode for volume, pitch, pan, and effects controls
             if (learn_target_type == LEARN_ACTION &&
                 (learn_target_action == ACTION_CHANNEL_VOLUME ||
+                 learn_target_action == ACTION_CHANNEL_PAN ||
+                 learn_target_action == ACTION_MASTER_VOLUME ||
+                 learn_target_action == ACTION_MASTER_PAN ||
+                 learn_target_action == ACTION_PLAYBACK_VOLUME ||
+                 learn_target_action == ACTION_PLAYBACK_PAN ||
+                 learn_target_action == ACTION_INPUT_VOLUME ||
+                 learn_target_action == ACTION_INPUT_PAN ||
                  learn_target_action == ACTION_PITCH_SET ||
                  learn_target_action == ACTION_FX_DISTORTION_DRIVE ||
                  learn_target_action == ACTION_FX_DISTORTION_MIX ||
@@ -1641,30 +1648,14 @@ void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned ch
 // Audio Callback
 // -----------------------------------------------------------------------------
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
-    static unsigned long callback_count = 0;
-    callback_count++;
-
     int16_t *buffer = (int16_t *)stream;
     int frames = len / (2 * sizeof(int16_t));
 
     // Clear buffer first
     memset(buffer, 0, len);
 
-    // Debug: Log audio callback state (first time and every 1000 callbacks)
-    static bool first_callback = true;
-    if (first_callback || (callback_count % 1000) == 0) {
-        printf("[CALLBACK #%lu] playing=%d, player=%p, playback_mute=%d\n",
-               callback_count, playing, (void*)(common_state ? common_state->player : NULL), playback_mute);
-        first_callback = false;
-    }
-
     // Render playback audio (if playing, player exists, and not muted)
     if (playing && common_state && common_state->player && !playback_mute) {
-        static bool first_render = true;
-        if (first_render) {
-            printf("Starting playback render (playing=%d)\n", playing);
-            first_render = false;
-        }
         regroove_render_audio(common_state->player, buffer, frames);
 
         // Apply effects if routed to playback
@@ -1687,14 +1678,6 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
 
     // Mix in audio input when not muted and buffer is available
     if (!input_mute && input_volume > 0.0f && input_buffer && input_buffer_size >= frames * 2) {
-        // Debug: Log first time input is being mixed
-        static bool first_mix = true;
-        if (first_mix) {
-            printf("Audio input mixing active (volume: %.2f, buffer_size: %d, frames*2: %d)\n",
-                   input_volume, input_buffer_size, frames * 2);
-            first_mix = false;
-        }
-
         // Create a temporary buffer for input processing
         int16_t *input_temp = (int16_t*)malloc(frames * 2 * sizeof(int16_t));
         if (input_temp) {
@@ -1750,20 +1733,6 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
         memset(buffer, 0, len);
     }
 
-    // Debug: Check if we're outputting any signal (and verify callback is running)
-    static int check_counter = 0;
-    check_counter++;
-    if (check_counter == 48) { // Check every 48 callbacks (~1 second at 256 frames/callback, 48000 Hz)
-        int max_sample = 0;
-        for (int i = 0; i < frames * 2; i++) {
-            int abs_val = abs(buffer[i]);
-            if (abs_val > max_sample) max_sample = abs_val;
-        }
-        printf("[AUDIO] counter=%d, playing=%d, player=%p, playback_mute=%d, input_mute=%d, max_sample=%d\n",
-               check_counter, playing, (void*)(common_state ? common_state->player : NULL),
-               playback_mute, input_mute, max_sample);
-        check_counter = 0;
-    }
 }
 
 // Audio input callback - captures audio from input device
@@ -1778,7 +1747,6 @@ static void audio_input_callback(void *userdata, Uint8 *stream, int len) {
         if (input_buffer) free(input_buffer);
         input_buffer = (int16_t*)malloc(needed_size * sizeof(int16_t));
         input_buffer_size = needed_size;
-        printf("Audio input buffer allocated: %d frames (%d samples)\n", frames, needed_size);
     }
 
     if (input_buffer) {
@@ -4344,8 +4312,15 @@ static void ShowMainUI() {
                     if (ImGui::Selectable(input_action_name(act), new_midi_action == act)) {
                         new_midi_action = act;
                         new_midi_parameter = 0;
-                        // Auto-set continuous mode for volume, pitch, and effects controls
+                        // Auto-set continuous mode for volume, pitch, pan, and effects controls
                         if (act == ACTION_CHANNEL_VOLUME ||
+                            act == ACTION_CHANNEL_PAN ||
+                            act == ACTION_MASTER_VOLUME ||
+                            act == ACTION_MASTER_PAN ||
+                            act == ACTION_PLAYBACK_VOLUME ||
+                            act == ACTION_PLAYBACK_PAN ||
+                            act == ACTION_INPUT_VOLUME ||
+                            act == ACTION_INPUT_PAN ||
                             act == ACTION_PITCH_SET ||
                             act == ACTION_FX_DISTORTION_DRIVE ||
                             act == ACTION_FX_DISTORTION_MIX ||
@@ -5247,6 +5222,46 @@ static void ShowMainUI() {
             refresh_audio_input_devices();
             printf("Refreshed audio input device list (%d devices found)\n", (int)audio_input_device_names.size());
         }
+
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
+        // Interpolation Filter Section
+        ImGui::Text("Interpolation Filter:");
+        ImGui::SameLine(150.0f);
+
+        if (common_state && common_state->player) {
+            int current_filter = regroove_get_interpolation_filter(common_state->player);
+            const char* filter_names[] = { "None", "Linear", "Cubic", "FIR (High Quality)" };
+            const int filter_values[] = { 0, 1, 2, 4 };
+            const char* current_filter_name = "Linear";  // Default
+            for (int i = 0; i < 4; i++) {
+                if (filter_values[i] == current_filter) {
+                    current_filter_name = filter_names[i];
+                    break;
+                }
+            }
+
+            if (ImGui::BeginCombo("##interp_filter", current_filter_name)) {
+                for (int i = 0; i < 4; i++) {
+                    bool is_selected = (filter_values[i] == current_filter);
+                    if (ImGui::Selectable(filter_names[i], is_selected)) {
+                        regroove_set_interpolation_filter(common_state->player, filter_values[i]);
+                        // Save to config
+                        common_state->device_config.interpolation_filter = filter_values[i];
+                        regroove_common_save_device_config(common_state, current_config_file);
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        } else {
+            ImGui::TextDisabled("(No module loaded)");
+        }
+
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Audio quality vs CPU usage");
 
         ImGui::Dummy(ImVec2(0, 20.0f));
         ImGui::Separator();

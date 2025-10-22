@@ -65,6 +65,11 @@ double regroove_get_channel_panning(const Regroove* g, int ch);
 
 void regroove_set_pitch(Regroove *g, double pitch);
 
+// Interpolation filter control
+// filter: 0 = none, 1 = linear, 2 = cubic, 4 = FIR (high quality)
+void regroove_set_interpolation_filter(Regroove *g, int filter);
+int regroove_get_interpolation_filter(const Regroove *g);
+
 // State queries
 int regroove_get_num_orders(const Regroove *g);
 int regroove_get_num_patterns(const Regroove *g);

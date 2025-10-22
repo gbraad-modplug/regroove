@@ -44,6 +44,7 @@ struct Regroove {
     int interactive2_ok;
     double samplerate;
     double pitch_factor;
+    int interpolation_filter;  // 0=none, 1=linear, 2=cubic, 4=FIR
     int num_channels;
     int* mute_states;
     double* channel_volumes;
@@ -300,6 +301,7 @@ Regroove *regroove_create(const char *filename, double samplerate) {
     g->mod = NULL;
     g->samplerate = samplerate;
     g->pitch_factor = 1.0;
+    g->interpolation_filter = 1;  // Default to linear
     g->pattern_mode = 0;
     g->pending_pattern_mode_order = -1;
 
@@ -350,6 +352,9 @@ Regroove *regroove_create(const char *filename, double samplerate) {
             g->interactive2_ok = 1;
         }
     }
+
+    // Set interpolation filter (OPENMPT_MODULE_RENDER_INTERPOLATIONFILTER_LENGTH = 3)
+    openmpt_module_set_render_param(g->mod, 3, g->interpolation_filter);
 
     g->loop_order = openmpt_module_get_current_order(g->mod);
     g->loop_pattern = openmpt_module_get_current_pattern(g->mod);
@@ -682,6 +687,20 @@ void regroove_unmute_all(Regroove* g) {
 }
 void regroove_set_pitch(Regroove* g, double pitch) {
     enqueue_command(g, RG_CMD_SET_PITCH, (int)(pitch * 100), 0);
+}
+
+void regroove_set_interpolation_filter(Regroove* g, int filter) {
+    if (!g || !g->mod) return;
+    // Validate filter value: 0, 1, 2, or 4
+    if (filter != 0 && filter != 1 && filter != 2 && filter != 4) return;
+    g->interpolation_filter = filter;
+    // OPENMPT_MODULE_RENDER_INTERPOLATIONFILTER_LENGTH = 3
+    openmpt_module_set_render_param(g->mod, 3, filter);
+}
+
+int regroove_get_interpolation_filter(const Regroove* g) {
+    if (!g) return 1;  // Default to linear
+    return g->interpolation_filter;
 }
 
 // --- Info getters ---

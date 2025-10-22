@@ -141,6 +141,7 @@ RegrooveCommonState* regroove_common_create(void) {
     state->device_config.audio_input_device = -1; // Disabled
     state->device_config.midi_output_device = -1; // Disabled
     state->device_config.midi_output_note_duration = 1; // Hold notes (default)
+    state->device_config.interpolation_filter = 1; // Linear (default)
 
     // Initialize default effect parameters (same as regroove_effects_create)
     state->device_config.fx_distortion_drive = 0.5f;
@@ -240,6 +241,8 @@ int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_pa
                     state->device_config.midi_output_device = atoi(value);
                 } else if (strcmp(key, "midi_output_note_duration") == 0) {
                     state->device_config.midi_output_note_duration = atoi(value);
+                } else if (strcmp(key, "interpolation_filter") == 0) {
+                    state->device_config.interpolation_filter = atoi(value);
                 } else if (strcmp(key, "fx_distortion_drive") == 0) {
                     state->device_config.fx_distortion_drive = atof(value);
                 } else if (strcmp(key, "fx_distortion_mix") == 0) {
@@ -363,6 +366,9 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
     if (!mod) {
         return -1;
     }
+
+    // Apply interpolation filter from config
+    regroove_set_interpolation_filter(mod, state->device_config.interpolation_filter);
 
     // Lock audio and assign new module
     if (state->audio_device_id) {
@@ -639,6 +645,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "audio_input_device = %d\n", state->device_config.audio_input_device);
         fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
         fprintf(f, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
+        fprintf(f, "interpolation_filter = %d\n", state->device_config.interpolation_filter);
         fprintf(f, "fx_distortion_drive = %.2f\n", state->device_config.fx_distortion_drive);
         fprintf(f, "fx_distortion_mix = %.2f\n", state->device_config.fx_distortion_mix);
         fprintf(f, "fx_filter_cutoff = %.2f\n", state->device_config.fx_filter_cutoff);
@@ -672,6 +679,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "audio_input_device = %d\n", state->device_config.audio_input_device);
         fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
         fprintf(f, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
+        fprintf(f, "interpolation_filter = %d\n", state->device_config.interpolation_filter);
         fprintf(f, "fx_distortion_drive = %.2f\n", state->device_config.fx_distortion_drive);
         fprintf(f, "fx_distortion_mix = %.2f\n", state->device_config.fx_distortion_mix);
         fprintf(f, "fx_filter_cutoff = %.2f\n", state->device_config.fx_filter_cutoff);
@@ -805,7 +813,9 @@ int regroove_common_save_default_config(const char *filepath) {
     fprintf(f, "# Audio devices (-1 = default for output, -1 = disabled for input)\n");
     fprintf(f, "audio_device = -1\n");
     fprintf(f, "audio_input_device = -1\n");
-    fprintf(f, "midi_output_device = -1\n\n");
+    fprintf(f, "midi_output_device = -1\n");
+    fprintf(f, "# Interpolation filter: 0=none, 1=linear, 2=cubic, 4=FIR\n");
+    fprintf(f, "interpolation_filter = 1\n\n");
     fprintf(f, "# Default effect parameters (applied when loading songs)\n");
     fprintf(f, "fx_distortion_drive = 0.50\n");
     fprintf(f, "fx_distortion_mix = 0.50\n");
