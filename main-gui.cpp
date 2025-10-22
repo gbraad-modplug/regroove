@@ -2624,7 +2624,20 @@ static void ShowMainUI() {
                     }
                 }
 
-                // Pad color with pending (pulsing blue), transition (red), or trigger fade
+                // Check if pad controls a channel's mute state
+                bool is_channel_muted = false;
+                if (player && common_state && common_state->input_mappings) {
+                    TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[idx];
+                    int ch = pad->parameter;
+                    if (ch >= 0 && ch < common_state->num_channels) {
+                        if (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_MUTE ||
+                            pad->action == ACTION_CHANNEL_SOLO || pad->action == ACTION_QUEUE_CHANNEL_SOLO) {
+                            is_channel_muted = regroove_is_channel_muted(player, ch);
+                        }
+                    }
+                }
+
+                // Pad color with pending (pulsing blue), transition (red), muted (red), or trigger fade
                 float brightness = trigger_pad_fade[idx];
                 float transition_brightness = trigger_pad_transition_fade[idx];
                 ImVec4 padCol;
@@ -2639,6 +2652,14 @@ static void ShowMainUI() {
                         0.18f + transition_brightness * 0.70f,
                         0.27f + transition_brightness * 0.10f,
                         0.18f + transition_brightness * 0.10f,
+                        1.0f
+                    );
+                } else if (is_channel_muted) {
+                    // Red when channel is muted
+                    padCol = ImVec4(
+                        0.70f + brightness * 0.20f,  // Red base with brightness
+                        0.12f + brightness * 0.10f,
+                        0.14f + brightness * 0.10f,
                         1.0f
                     );
                 } else {
@@ -2781,7 +2802,20 @@ static void ShowMainUI() {
                     }
                 }
 
-                // Pad color with pending (pulsing blue), transition (red), or trigger fade
+                // Check if pad controls a channel's mute state
+                bool is_channel_muted = false;
+                if (player && common_state && common_state->metadata) {
+                    TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[idx];
+                    int ch = pad->parameter;
+                    if (ch >= 0 && ch < common_state->num_channels) {
+                        if (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_MUTE ||
+                            pad->action == ACTION_CHANNEL_SOLO || pad->action == ACTION_QUEUE_CHANNEL_SOLO) {
+                            is_channel_muted = regroove_is_channel_muted(player, ch);
+                        }
+                    }
+                }
+
+                // Pad color with pending (pulsing blue), transition (red), muted (red), or trigger fade
                 float brightness = trigger_pad_fade[global_idx];
                 float transition_brightness = trigger_pad_transition_fade[global_idx];
                 ImVec4 padCol;
@@ -2796,6 +2830,14 @@ static void ShowMainUI() {
                         0.18f + transition_brightness * 0.70f,
                         0.27f + transition_brightness * 0.10f,
                         0.18f + transition_brightness * 0.10f,
+                        1.0f
+                    );
+                } else if (is_channel_muted) {
+                    // Red when channel is muted
+                    padCol = ImVec4(
+                        0.70f + brightness * 0.20f,  // Red base with brightness
+                        0.12f + brightness * 0.10f,
+                        0.14f + brightness * 0.10f,
                         1.0f
                     );
                 } else {
