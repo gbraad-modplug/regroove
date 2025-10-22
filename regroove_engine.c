@@ -80,6 +80,9 @@ struct Regroove {
     int* pending_mute_states;      // NULL if no pending changes
     int has_pending_mute_changes;  // Flag to indicate pending changes exist
 
+    // Track the specific queued action per channel (so UI knows which buttons to highlight)
+    int* queued_action_per_channel; // 0=none, 1=mute, 2=solo for each channel
+
     // --- UI callback hooks ---
     RegrooveOrderCallback        on_order_change;
     RegrooveRowCallback          on_row_change;
@@ -120,6 +123,11 @@ static void apply_pending_mute_changes(struct Regroove* g) {
     free(g->pending_mute_states);
     g->pending_mute_states = NULL;
     g->has_pending_mute_changes = 0;
+
+    // Clear all queued action flags
+    if (g->queued_action_per_channel) {
+        memset(g->queued_action_per_channel, 0, g->num_channels * sizeof(int));
+    }
 }
 
 static void enqueue_command(struct Regroove* g, RegrooveCommandType type, int arg1, int arg2) {
@@ -319,6 +327,11 @@ static void process_commands(struct Regroove* g) {
                     // Toggle pending mute state for this channel
                     g->pending_mute_states[cmd->arg1] = !g->pending_mute_states[cmd->arg1];
                     g->has_pending_mute_changes = 1;
+
+                    // Track that this specific channel had MUTE queued
+                    if (g->queued_action_per_channel) {
+                        g->queued_action_per_channel[cmd->arg1] = 1; // mute
+                    }
                 }
                 break;
             case RG_CMD_QUEUE_CHANNEL_SOLO:
@@ -346,10 +359,20 @@ static void process_commands(struct Regroove* g) {
                         for (int i = 0; i < g->num_channels; i++) {
                             g->pending_mute_states[i] = (i != cmd->arg1) ? 1 : 0;
                         }
+                        // Track that this specific channel had SOLO queued
+                        // Clear all previous queued actions and set only this channel to SOLO
+                        if (g->queued_action_per_channel) {
+                            memset(g->queued_action_per_channel, 0, g->num_channels * sizeof(int));
+                            g->queued_action_per_channel[cmd->arg1] = 2; // solo
+                        }
                     } else {
                         // Un-solo: unmute all
                         for (int i = 0; i < g->num_channels; i++) {
                             g->pending_mute_states[i] = 0;
+                        }
+                        // Clear all queued action flags
+                        if (g->queued_action_per_channel) {
+                            memset(g->queued_action_per_channel, 0, g->num_channels * sizeof(int));
                         }
                     }
                     g->has_pending_mute_changes = 1;
@@ -436,6 +459,7 @@ Regroove *regroove_create(const char *filename, double samplerate) {
     // Initialize pending mute/solo state
     g->pending_mute_states = NULL;
     g->has_pending_mute_changes = 0;
+    g->queued_action_per_channel = (int*)calloc(g->num_channels, sizeof(int));
 
     g->on_order_change = NULL;
     g->on_row_change = NULL;
@@ -461,6 +485,7 @@ void regroove_destroy(Regroove *g) {
     if (g->channel_pannings) free(g->channel_pannings);
     if (g->interactive2) free(g->interactive2);
     if (g->pending_mute_states) free(g->pending_mute_states);
+    if (g->queued_action_per_channel) free(g->queued_action_per_channel);
     free(g);
 }
 
@@ -818,6 +843,10 @@ int regroove_get_pending_channel_mute(const Regroove *g, int ch) {
     if (!g || ch < 0 || ch >= g->num_channels) return 0;
     if (!g->pending_mute_states) return g->mute_states[ch];  // No pending changes, return current state
     return g->pending_mute_states[ch];
+}
+int regroove_get_queued_action_for_channel(const Regroove *g, int ch) {
+    if (!g || ch < 0 || ch >= g->num_channels || !g->queued_action_per_channel) return 0;
+    return g->queued_action_per_channel[ch];
 }
 int regroove_get_pattern_mode(const Regroove* g) { return g->pattern_mode; }
 int regroove_get_custom_loop_rows(const Regroove* g) { return g->custom_loop_rows; }

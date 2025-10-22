@@ -64,6 +64,10 @@ static UIMode ui_mode = UI_MODE_VOLUME;
 
 // Visual feedback for trigger pads (fade effect) - supports both A and S pads
 static float trigger_pad_fade[MAX_TOTAL_TRIGGER_PADS] = {0.0f};
+static float trigger_pad_transition_fade[MAX_TOTAL_TRIGGER_PADS] = {0.0f}; // Red blink on transition
+
+// Track previous pending state to detect transitions
+static bool prev_channel_pending[MAX_CHANNELS] = {false};
 
 // Channel note highlighting (for tracker view and volume faders)
 static float channel_note_fade[MAX_CHANNELS] = {0.0f};
@@ -2338,10 +2342,15 @@ static void ShowMainUI() {
                 will_be_solo = (this_unmuted && all_others_muted);
             }
 
+            // Check if this channel's SOLO was specifically queued
+            bool this_solo_queued = (player && regroove_get_queued_action_for_channel(player, i) == 2);
+
             ImVec4 soloCol;
-            if (player && regroove_has_pending_mute_changes(player) && will_be_solo != is_currently_solo) {
-                // Pending change - show yellow/amber to indicate queued
-                soloCol = ImVec4(0.90f, 0.70f, 0.20f, 1.0f);
+            if (this_solo_queued) {
+                // This channel's SOLO was specifically queued - show pulsing blue
+                float pulse = (sinf((float)ImGui::GetTime() * 4.0f) + 1.0f) * 0.5f; // 0.0 to 1.0
+                float brightness = 0.3f + pulse * 0.5f; // 0.3 to 0.8
+                soloCol = ImVec4(0.2f, 0.4f + brightness * 0.3f, 0.6f + brightness * 0.4f, 1.0f);
             } else {
                 soloCol = is_currently_solo ? ImVec4(0.80f,0.12f,0.14f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
             }
@@ -2429,10 +2438,15 @@ static void ShowMainUI() {
                 will_be_muted = regroove_get_pending_channel_mute(player, i);
             }
 
+            // Check if this channel's MUTE was specifically queued
+            bool this_mute_queued = (player && regroove_get_queued_action_for_channel(player, i) == 1);
+
             ImVec4 muteCol;
-            if (player && regroove_has_pending_mute_changes(player) && will_be_muted != is_currently_muted) {
-                // Pending change - show yellow/amber to indicate queued
-                muteCol = ImVec4(0.90f, 0.70f, 0.20f, 1.0f);
+            if (this_mute_queued) {
+                // This channel's MUTE was specifically queued - show pulsing blue
+                float pulse = (sinf((float)ImGui::GetTime() * 4.0f) + 1.0f) * 0.5f; // 0.0 to 1.0
+                float brightness = 0.3f + pulse * 0.5f; // 0.3 to 0.8
+                muteCol = ImVec4(0.2f, 0.4f + brightness * 0.3f, 0.6f + brightness * 0.4f, 1.0f);
             } else {
                 muteCol = is_currently_muted ? ImVec4(0.90f,0.16f,0.18f,1.0f) : ImVec4(0.26f,0.27f,0.30f,1.0f);
             }
@@ -2486,9 +2500,33 @@ static void ShowMainUI() {
     else if (ui_mode == UI_MODE_PADS) {
         // PADS MODE: Show application trigger pads (A1-A16)
 
+        // Detect transitions and trigger red blink on pads
+        Regroove* player = common_state ? common_state->player : NULL;
+        if (player && common_state && common_state->input_mappings) {
+            for (int ch = 0; ch < common_state->num_channels; ch++) {
+                bool has_pending = regroove_has_pending_mute_changes(player) &&
+                                  (regroove_get_pending_channel_mute(player, ch) != regroove_is_channel_muted(player, ch));
+
+                // Detect transition: was pending, now not pending
+                if (prev_channel_pending[ch] && !has_pending) {
+                    // Trigger red blink on all pads that control this channel
+                    for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+                        TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[i];
+                        if ((pad->action == ACTION_QUEUE_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_SOLO) &&
+                            pad->parameter == ch) {
+                            trigger_pad_transition_fade[i] = 1.0f; // Red blink
+                        }
+                    }
+                }
+                prev_channel_pending[ch] = has_pending;
+            }
+        }
+
         // Fade trigger pads
-        for (int i = 0; i < MAX_TRIGGER_PADS; i++)
+        for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
             trigger_pad_fade[i] = fmaxf(trigger_pad_fade[i] - 0.02f, 0.0f);
+            trigger_pad_transition_fade[i] = fmaxf(trigger_pad_transition_fade[i] - 0.02f, 0.0f);
+        }
 
         // Calculate pad layout (4x4 grid)
         const int PADS_PER_ROW = 4;
@@ -2521,27 +2559,39 @@ static void ShowMainUI() {
 
                 // Check if this pad has a pending queued action
                 bool has_pending = false;
-                Regroove* player = common_state ? common_state->player : NULL;
                 if (player && common_state && common_state->input_mappings) {
                     TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[idx];
-                    if ((pad->action == ACTION_QUEUE_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_SOLO) &&
-                        regroove_has_pending_mute_changes(player)) {
-                        int ch = pad->parameter;
-                        if (ch >= 0 && ch < common_state->num_channels) {
-                            has_pending = (regroove_get_pending_channel_mute(player, ch) !=
-                                         regroove_is_channel_muted(player, ch));
+                    int ch = pad->parameter;
+
+                    if (ch >= 0 && ch < common_state->num_channels) {
+                        int queued_action = regroove_get_queued_action_for_channel(player, ch);
+                        if (pad->action == ACTION_QUEUE_CHANNEL_MUTE && queued_action == 1) {
+                            has_pending = true;
+                        } else if (pad->action == ACTION_QUEUE_CHANNEL_SOLO && queued_action == 2) {
+                            has_pending = true;
                         }
                     }
                 }
 
-                // Pad color with fade effect or pending state
+                // Pad color with pending (pulsing blue), transition (red), or trigger fade
                 float brightness = trigger_pad_fade[idx];
+                float transition_brightness = trigger_pad_transition_fade[idx];
                 ImVec4 padCol;
                 if (has_pending) {
-                    // Yellow/amber for pending queued action
-                    padCol = ImVec4(0.90f, 0.70f, 0.20f, 1.0f);
+                    // Pulsing blue for pending queued action
+                    float pulse = (sinf((float)ImGui::GetTime() * 4.0f) + 1.0f) * 0.5f; // 0.0 to 1.0
+                    float pulse_brightness = 0.3f + pulse * 0.5f; // 0.3 to 0.8
+                    padCol = ImVec4(0.2f, 0.4f + pulse_brightness * 0.3f, 0.6f + pulse_brightness * 0.4f, 1.0f);
+                } else if (transition_brightness > 0.0f) {
+                    // Red blink on transition
+                    padCol = ImVec4(
+                        0.18f + transition_brightness * 0.70f,
+                        0.27f + transition_brightness * 0.10f,
+                        0.18f + transition_brightness * 0.10f,
+                        1.0f
+                    );
                 } else {
-                    // Normal green with brightness fade
+                    // Normal green with trigger brightness fade
                     padCol = ImVec4(
                         0.18f + brightness * 0.50f,
                         0.27f + brightness * 0.40f,
@@ -2580,10 +2630,34 @@ static void ShowMainUI() {
     else if (ui_mode == UI_MODE_SONG) {
         // SONG MODE: Show song-specific trigger pads (S1-S16)
 
+        // Detect transitions and trigger red blink on song pads
+        Regroove* player = common_state ? common_state->player : NULL;
+        if (player && common_state && common_state->metadata) {
+            for (int ch = 0; ch < common_state->num_channels; ch++) {
+                bool has_pending = regroove_has_pending_mute_changes(player) &&
+                                  (regroove_get_pending_channel_mute(player, ch) != regroove_is_channel_muted(player, ch));
+
+                // Detect transition: was pending, now not pending
+                if (prev_channel_pending[ch] && !has_pending) {
+                    // Trigger red blink on all song pads that control this channel
+                    for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
+                        int global_idx = MAX_TRIGGER_PADS + i;
+                        TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[i];
+                        if ((pad->action == ACTION_QUEUE_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_SOLO) &&
+                            pad->parameter == ch) {
+                            trigger_pad_transition_fade[global_idx] = 1.0f; // Red blink
+                        }
+                    }
+                }
+                prev_channel_pending[ch] = has_pending;
+            }
+        }
+
         // Fade trigger pads
         for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
             int global_idx = MAX_TRIGGER_PADS + i;
             trigger_pad_fade[global_idx] = fmaxf(trigger_pad_fade[global_idx] - 0.02f, 0.0f);
+            trigger_pad_transition_fade[global_idx] = fmaxf(trigger_pad_transition_fade[global_idx] - 0.02f, 0.0f);
         }
 
         // Calculate pad layout (4x4 grid)
@@ -2618,27 +2692,39 @@ static void ShowMainUI() {
 
                 // Check if this song pad has a pending queued action
                 bool has_pending = false;
-                Regroove* player = common_state ? common_state->player : NULL;
                 if (player && common_state && common_state->metadata) {
                     TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[idx];
-                    if ((pad->action == ACTION_QUEUE_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_SOLO) &&
-                        regroove_has_pending_mute_changes(player)) {
-                        int ch = pad->parameter;
-                        if (ch >= 0 && ch < common_state->num_channels) {
-                            has_pending = (regroove_get_pending_channel_mute(player, ch) !=
-                                         regroove_is_channel_muted(player, ch));
+                    int ch = pad->parameter;
+
+                    if (ch >= 0 && ch < common_state->num_channels) {
+                        int queued_action = regroove_get_queued_action_for_channel(player, ch);
+                        if (pad->action == ACTION_QUEUE_CHANNEL_MUTE && queued_action == 1) {
+                            has_pending = true;
+                        } else if (pad->action == ACTION_QUEUE_CHANNEL_SOLO && queued_action == 2) {
+                            has_pending = true;
                         }
                     }
                 }
 
-                // Pad color with fade effect or pending state
+                // Pad color with pending (pulsing blue), transition (red), or trigger fade
                 float brightness = trigger_pad_fade[global_idx];
+                float transition_brightness = trigger_pad_transition_fade[global_idx];
                 ImVec4 padCol;
                 if (has_pending) {
-                    // Yellow/amber for pending queued action
-                    padCol = ImVec4(0.90f, 0.70f, 0.20f, 1.0f);
+                    // Pulsing blue for pending queued action
+                    float pulse = (sinf((float)ImGui::GetTime() * 4.0f) + 1.0f) * 0.5f; // 0.0 to 1.0
+                    float pulse_brightness = 0.3f + pulse * 0.5f; // 0.3 to 0.8
+                    padCol = ImVec4(0.2f, 0.4f + pulse_brightness * 0.3f, 0.6f + pulse_brightness * 0.4f, 1.0f);
+                } else if (transition_brightness > 0.0f) {
+                    // Red blink on transition
+                    padCol = ImVec4(
+                        0.18f + transition_brightness * 0.70f,
+                        0.27f + transition_brightness * 0.10f,
+                        0.18f + transition_brightness * 0.10f,
+                        1.0f
+                    );
                 } else {
-                    // Different color for song pads (bluish tint)
+                    // Different color for song pads (bluish tint) with trigger brightness fade
                     padCol = ImVec4(
                         0.18f + brightness * 0.30f,
                         0.27f + brightness * 0.40f,
