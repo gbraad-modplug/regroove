@@ -11,6 +11,8 @@
 typedef enum {
     RG_CMD_NONE,
     RG_CMD_QUEUE_ORDER,
+    RG_CMD_QUEUE_NEXT_ORDER,
+    RG_CMD_QUEUE_PREV_ORDER,
     RG_CMD_QUEUE_PATTERN,
     RG_CMD_JUMP_TO_PATTERN,
     RG_CMD_LOOP_TILL_ROW,
@@ -64,6 +66,7 @@ struct Regroove {
     int queued_order;
     int queued_row;
     int has_queued_jump;
+    int queued_jump_type;  // 0=none, 1=next, 2=prev, 3=specific order, 4=pattern
 
     int loop_till_row;
     int is_looping_till;
@@ -221,13 +224,45 @@ static void process_commands(struct Regroove* g) {
                 g->pitch_factor = val;
                 break;
             }
+            case RG_CMD_QUEUE_NEXT_ORDER: {
+                int cur_order = openmpt_module_get_current_order(g->mod);
+                int next_order = cur_order + 1;
+                if (next_order < g->num_orders) {
+                    if (g->pattern_mode) {
+                        g->pending_pattern_mode_order = next_order;
+                        g->queued_jump_type = 1; // next
+                    } else {
+                        g->queued_order = next_order;
+                        g->queued_row = 0;
+                        g->has_queued_jump = 1;
+                        g->queued_jump_type = 1; // next
+                    }
+                }
+                break;
+            }
+            case RG_CMD_QUEUE_PREV_ORDER: {
+                int cur_order = openmpt_module_get_current_order(g->mod);
+                int prev_order = cur_order > 0 ? cur_order - 1 : 0;
+                if (g->pattern_mode) {
+                    g->pending_pattern_mode_order = prev_order;
+                    g->queued_jump_type = 2; // prev
+                } else {
+                    g->queued_order = prev_order;
+                    g->queued_row = 0;
+                    g->has_queued_jump = 1;
+                    g->queued_jump_type = 2; // prev
+                }
+                break;
+            }
             case RG_CMD_QUEUE_ORDER:
                 if (g->pattern_mode) {
                     g->pending_pattern_mode_order = cmd->arg1;
+                    g->queued_jump_type = 3; // specific order
                 } else {
                     g->queued_order = cmd->arg1;
                     g->queued_row = cmd->arg2;
                     g->has_queued_jump = 1;
+                    g->queued_jump_type = 3; // specific order
                 }
                 break;
             case RG_CMD_QUEUE_PATTERN: {
@@ -245,10 +280,12 @@ static void process_commands(struct Regroove* g) {
                 // Queue this order (will jump at pattern end)
                 if (g->pattern_mode) {
                     g->pending_pattern_mode_order = target_order;
+                    g->queued_jump_type = 4; // pattern
                 } else {
                     g->queued_order = target_order;
                     g->queued_row = 0;
                     g->has_queued_jump = 1;
+                    g->queued_jump_type = 4; // pattern
                 }
                 break;
             }
@@ -301,6 +338,7 @@ static void process_commands(struct Regroove* g) {
                     g->full_loop_rows = openmpt_module_get_pattern_num_rows(g->mod, g->loop_pattern);
                     g->custom_loop_rows = 0;
                     g->pending_pattern_mode_order = -1;
+                    g->queued_jump_type = 0;  // Clear any queued jumps when toggling mode
                     g->prev_row = -1;
                 }
                 break;
@@ -397,6 +435,7 @@ Regroove *regroove_create(const char *filename, double samplerate) {
     g->interpolation_filter = 1;  // Default to linear
     g->pattern_mode = 0;
     g->pending_pattern_mode_order = -1;
+    g->queued_jump_type = 0;
 
     FILE* f = fopen(filename, "rb");
     if (!f) { free(g); return NULL; }
@@ -507,6 +546,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         apply_pending_mute_changes(g);
         if (g->interactive_ok) reapply_mutes(g);
         g->has_queued_jump = 0;
+        g->queued_jump_type = 0;
         g->prev_row = -1;
     }
 
@@ -550,6 +590,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             g->full_loop_rows = openmpt_module_get_pattern_num_rows(g->mod, g->loop_pattern);
             g->custom_loop_rows = 0;
             g->pending_pattern_mode_order = -1;
+            g->queued_jump_type = 0;  // Clear visual feedback
             openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
             apply_pending_mute_changes(g);
             if (g->interactive_ok) reapply_mutes(g);
@@ -588,6 +629,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         if (g->interactive_ok)
             reapply_mutes(g);
         g->has_queued_jump = 0;
+        g->queued_jump_type = 0;
         g->prev_row = -1;
     }
 
@@ -709,15 +751,10 @@ void regroove_pattern_mode(Regroove* g, int on) {
     enqueue_command(g, RG_CMD_SET_PATTERN_MODE, !!on, 0);
 }
 void regroove_queue_next_order(Regroove* g) {
-    int cur_order = openmpt_module_get_current_order(g->mod);
-    int next_order = cur_order + 1;
-    if (next_order < g->num_orders)
-        enqueue_command(g, RG_CMD_QUEUE_ORDER, next_order, 0);
+    enqueue_command(g, RG_CMD_QUEUE_NEXT_ORDER, 0, 0);
 }
 void regroove_queue_prev_order(Regroove* g) {
-    int cur_order = openmpt_module_get_current_order(g->mod);
-    int prev_order = cur_order > 0 ? cur_order - 1 : 0;
-    enqueue_command(g, RG_CMD_QUEUE_ORDER, prev_order, 0);
+    enqueue_command(g, RG_CMD_QUEUE_PREV_ORDER, 0, 0);
 }
 void regroove_queue_order(Regroove* g, int order) {
     if (order >= 0 && order < g->num_orders) {
@@ -847,6 +884,9 @@ int regroove_get_pending_channel_mute(const Regroove *g, int ch) {
 int regroove_get_queued_action_for_channel(const Regroove *g, int ch) {
     if (!g || ch < 0 || ch >= g->num_channels || !g->queued_action_per_channel) return 0;
     return g->queued_action_per_channel[ch];
+}
+int regroove_get_queued_jump_type(const Regroove *g) {
+    return g ? g->queued_jump_type : 0;
 }
 int regroove_get_pattern_mode(const Regroove* g) { return g->pattern_mode; }
 int regroove_get_custom_loop_rows(const Regroove* g) { return g->custom_loop_rows; }

@@ -68,6 +68,7 @@ static float trigger_pad_transition_fade[MAX_TOTAL_TRIGGER_PADS] = {0.0f}; // Re
 
 // Track previous pending state to detect transitions
 static bool prev_channel_pending[MAX_CHANNELS] = {false};
+static int prev_queued_jump_type = 0;
 
 // Channel note highlighting (for tracker view and volume faders)
 static float channel_note_fade[MAX_CHANNELS] = {0.0f};
@@ -2097,15 +2098,42 @@ static void ShowMainUI() {
 
     ImGui::Dummy(ImVec2(0, TRANSPORT_GAP));
 
+    // Check if prev/next order is queued
+    Regroove* player = common_state ? common_state->player : NULL;
+    int queued_jump_type = player ? regroove_get_queued_jump_type(player) : 0;
+
+    // PREV ORDER button
+    ImVec4 prevCol;
+    if (queued_jump_type == 2) {  // prev
+        float pulse = (sinf((float)ImGui::GetTime() * 4.0f) + 1.0f) * 0.5f;
+        float brightness = 0.3f + pulse * 0.5f;
+        prevCol = ImVec4(0.2f, 0.4f + brightness * 0.3f, 0.6f + brightness * 0.4f, 1.0f);
+    } else {
+        prevCol = ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    }
+    ImGui::PushStyleColor(ImGuiCol_Button, prevCol);
     if (ImGui::Button("<<", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
         if (learn_mode_active) start_learn_for_action(ACTION_PREV_ORDER);
         else dispatch_action(ACT_PREV_ORDER);
     }
+    ImGui::PopStyleColor();
     ImGui::SameLine();
+
+    // NEXT ORDER button
+    ImVec4 nextCol;
+    if (queued_jump_type == 1) {  // next
+        float pulse = (sinf((float)ImGui::GetTime() * 4.0f) + 1.0f) * 0.5f;
+        float brightness = 0.3f + pulse * 0.5f;
+        nextCol = ImVec4(0.2f, 0.4f + brightness * 0.3f, 0.6f + brightness * 0.4f, 1.0f);
+    } else {
+        nextCol = ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    }
+    ImGui::PushStyleColor(ImGuiCol_Button, nextCol);
     if (ImGui::Button(">>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
         if (learn_mode_active) start_learn_for_action(ACTION_NEXT_ORDER);
         else dispatch_action(ACT_NEXT_ORDER);
     }
+    ImGui::PopStyleColor();
     ImGui::SameLine();
 
     // Fade the blink effect each frame
@@ -2520,6 +2548,20 @@ static void ShowMainUI() {
                 }
                 prev_channel_pending[ch] = has_pending;
             }
+
+            // Detect transport transitions and trigger red blink on pads
+            int current_queued_jump = regroove_get_queued_jump_type(player);
+            if (prev_queued_jump_type != 0 && current_queued_jump == 0) {
+                // A queued jump just executed
+                for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+                    TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[i];
+                    if ((prev_queued_jump_type == 1 && pad->action == ACTION_NEXT_ORDER) ||
+                        (prev_queued_jump_type == 2 && pad->action == ACTION_PREV_ORDER)) {
+                        trigger_pad_transition_fade[i] = 1.0f; // Red blink
+                    }
+                }
+            }
+            prev_queued_jump_type = current_queued_jump;
         }
 
         // Fade trigger pads
@@ -2562,7 +2604,9 @@ static void ShowMainUI() {
                 if (player && common_state && common_state->input_mappings) {
                     TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[idx];
                     int ch = pad->parameter;
+                    int queued_jump = regroove_get_queued_jump_type(player);
 
+                    // Check for queued mute/solo actions
                     if (ch >= 0 && ch < common_state->num_channels) {
                         int queued_action = regroove_get_queued_action_for_channel(player, ch);
                         if (pad->action == ACTION_QUEUE_CHANNEL_MUTE && queued_action == 1) {
@@ -2570,6 +2614,13 @@ static void ShowMainUI() {
                         } else if (pad->action == ACTION_QUEUE_CHANNEL_SOLO && queued_action == 2) {
                             has_pending = true;
                         }
+                    }
+
+                    // Check for queued transport actions
+                    if (pad->action == ACTION_NEXT_ORDER && queued_jump == 1) {
+                        has_pending = true;
+                    } else if (pad->action == ACTION_PREV_ORDER && queued_jump == 2) {
+                        has_pending = true;
                     }
                 }
 
@@ -2651,6 +2702,21 @@ static void ShowMainUI() {
                 }
                 prev_channel_pending[ch] = has_pending;
             }
+
+            // Detect transport transitions and trigger red blink on song pads
+            int current_queued_jump = regroove_get_queued_jump_type(player);
+            if (prev_queued_jump_type != 0 && current_queued_jump == 0) {
+                // A queued jump just executed
+                for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
+                    int global_idx = MAX_TRIGGER_PADS + i;
+                    TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[i];
+                    if ((prev_queued_jump_type == 1 && pad->action == ACTION_NEXT_ORDER) ||
+                        (prev_queued_jump_type == 2 && pad->action == ACTION_PREV_ORDER)) {
+                        trigger_pad_transition_fade[global_idx] = 1.0f; // Red blink
+                    }
+                }
+            }
+            prev_queued_jump_type = current_queued_jump;
         }
 
         // Fade trigger pads
@@ -2695,7 +2761,9 @@ static void ShowMainUI() {
                 if (player && common_state && common_state->metadata) {
                     TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[idx];
                     int ch = pad->parameter;
+                    int queued_jump = regroove_get_queued_jump_type(player);
 
+                    // Check for queued mute/solo actions
                     if (ch >= 0 && ch < common_state->num_channels) {
                         int queued_action = regroove_get_queued_action_for_channel(player, ch);
                         if (pad->action == ACTION_QUEUE_CHANNEL_MUTE && queued_action == 1) {
@@ -2703,6 +2771,13 @@ static void ShowMainUI() {
                         } else if (pad->action == ACTION_QUEUE_CHANNEL_SOLO && queued_action == 2) {
                             has_pending = true;
                         }
+                    }
+
+                    // Check for queued transport actions
+                    if (pad->action == ACTION_NEXT_ORDER && queued_jump == 1) {
+                        has_pending = true;
+                    } else if (pad->action == ACTION_PREV_ORDER && queued_jump == 2) {
+                        has_pending = true;
                     }
                 }
 
