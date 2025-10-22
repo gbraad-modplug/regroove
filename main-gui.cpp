@@ -1674,6 +1674,10 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
             float right_gain = pb_vol * (0.5f + pb_pan * 0.5f);
             buffer[i * 2 + 1] = (int16_t)(buffer[i * 2 + 1] * right_gain);
         }
+    } else if (effects && fx_route == FX_ROUTE_PLAYBACK) {
+        // When not playing but effects are routed to playback, process effects on silence
+        // to allow delay/reverb tails to decay naturally instead of being cut off
+        regroove_effects_process(effects, buffer, frames, 48000);
     }
 
     // Mix in audio input when not muted and buffer is available
@@ -1708,6 +1712,21 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
             }
 
             free(input_temp);
+        }
+    } else if (effects && fx_route == FX_ROUTE_INPUT) {
+        // When input is muted/unavailable but effects are routed to input, process effects on silence
+        // to allow delay/reverb tails to decay naturally instead of being cut off
+        int16_t *silent_temp = (int16_t*)calloc(frames * 2, sizeof(int16_t));
+        if (silent_temp) {
+            regroove_effects_process(effects, silent_temp, frames, 48000);
+            // Mix the effect tail with the buffer
+            for (int i = 0; i < frames * 2; i++) {
+                int32_t mixed = buffer[i] + silent_temp[i];
+                if (mixed > 32767) mixed = 32767;
+                if (mixed < -32768) mixed = -32768;
+                buffer[i] = (int16_t)mixed;
+            }
+            free(silent_temp);
         }
     }
 
