@@ -4918,18 +4918,6 @@ static void ShowMainUI() {
             }
         }
 
-        ImGui::Dummy(ImVec2(0, 20.0f));
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0, 20.0f));
-
-        // =====================================================================
-        // SECTION 6: SAVE BUTTON
-        // =====================================================================
-        if (ImGui::Button("Save All MIDI Settings", ImVec2(220.0f, 40.0f))) {
-            save_mappings_to_config();
-            printf("MIDI settings saved to %s\n", current_config_file);
-        }
-
         ImGui::EndGroup();
 
         ImGui::EndChild(); // End midi_scroll child window
@@ -5944,46 +5932,11 @@ static void ShowMainUI() {
                     common_state->input_mappings->keyboard_mappings[common_state->input_mappings->keyboard_count++] = new_mapping;
                     printf("Added keyboard mapping: key=%d -> %s (param=%d)\n",
                            new_kb_key, input_action_name(new_kb_action), new_kb_parameter);
+
+                    // Auto-save keyboard mappings
+                    save_mappings_to_config();
                 } else {
                     printf("Keyboard mappings capacity reached\n");
-                }
-            }
-        }
-
-        ImGui::Dummy(ImVec2(0, 20.0f));
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0, 20.0f));
-
-        if (ImGui::Button("Save Settings", ImVec2(180.0f, 40.0f))) {
-            if (common_state && common_state->input_mappings) {
-                // Save input mappings
-                if (input_mappings_save(common_state->input_mappings, current_config_file) == 0) {
-                    // Save device configuration to the same file
-                    FILE *f = fopen(current_config_file, "r+");
-                    if (f) {
-                        // Check if [devices] section already exists
-                        char line[512];
-                        int has_devices_section = 0;
-                        while (fgets(line, sizeof(line), f)) {
-                            if (strstr(line, "[devices]")) {
-                                has_devices_section = 1;
-                                break;
-                            }
-                        }
-
-                        if (!has_devices_section) {
-                            // Append [devices] section
-                            fseek(f, 0, SEEK_END);
-                            fprintf(f, "\n[devices]\n");
-                            fprintf(f, "midi_device_0 = %d\n", common_state->device_config.midi_device_0);
-                            fprintf(f, "midi_device_1 = %d\n", common_state->device_config.midi_device_1);
-                            fprintf(f, "audio_device = %d\n", selected_audio_device);
-                        }
-                        fclose(f);
-                    }
-                    printf("Settings saved to %s\n", current_config_file);
-                } else {
-                    fprintf(stderr, "Failed to save settings to %s\n", current_config_file);
                 }
             }
         }
