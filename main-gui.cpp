@@ -2854,6 +2854,23 @@ static void ShowMainUI() {
                     }
                 }
 
+                // Add channel activity highlighting if this pad controls a channel
+                if (pad && common_state) {
+                    int ch = pad->parameter;
+                    if (ch >= 0 && ch < common_state->num_channels &&
+                        (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_CHANNEL_SOLO ||
+                         pad->action == ACTION_QUEUE_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_SOLO ||
+                         pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_CHANNEL_PAN)) {
+                        // Blend in cyan/green highlight for channel activity
+                        float activity = channel_note_fade[ch];
+                        if (activity > 0.0f) {
+                            padCol.x += activity * 0.15f;  // Slight red boost
+                            padCol.y += activity * 0.35f;  // Green boost
+                            padCol.z += activity * 0.25f;  // Blue boost (creates cyan/green tint)
+                        }
+                    }
+                }
+
                 ImGui::PushStyleColor(ImGuiCol_Button, padCol);
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.45f, 0.48f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.55f, 0.60f, 1.0f));
@@ -3138,6 +3155,24 @@ static void ShowMainUI() {
                         0.38f + brightness * 0.40f,
                         1.0f
                     );
+                }
+
+                // Add channel activity highlighting if this song pad controls a channel
+                if (common_state && common_state->metadata) {
+                    TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[idx];
+                    int ch = pad->parameter;
+                    if (ch >= 0 && ch < common_state->num_channels &&
+                        (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_CHANNEL_SOLO ||
+                         pad->action == ACTION_QUEUE_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_SOLO ||
+                         pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_CHANNEL_PAN)) {
+                        // Blend in cyan/green highlight for channel activity
+                        float activity = channel_note_fade[ch];
+                        if (activity > 0.0f) {
+                            padCol.x += activity * 0.15f;  // Slight red boost
+                            padCol.y += activity * 0.35f;  // Green boost
+                            padCol.z += activity * 0.25f;  // Blue boost (creates cyan/green tint)
+                        }
+                    }
                 }
 
                 ImGui::PushStyleColor(ImGuiCol_Button, padCol);
