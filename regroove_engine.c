@@ -582,8 +582,14 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         int at_custom_loop_end = (g->custom_loop_rows > 0 && cur_row >= loop_rows);
         int at_full_pattern_end = (g->custom_loop_rows == 0 && g->prev_row == loop_rows - 1 && cur_row == 0);
 
+        // Detect early pattern exit (pattern break/jump command)
+        int escaped_loop_order = (cur_order != g->loop_order);
+
+        // Pattern boundary = normal end OR early exit
+        int at_pattern_boundary = at_custom_loop_end || at_full_pattern_end || escaped_loop_order;
+
         // --- CRITICAL: process pending pattern jump first and return ---
-        if ((at_custom_loop_end || at_full_pattern_end) &&
+        if (at_pattern_boundary &&
             g->pending_pattern_mode_order != -1 && g->pending_pattern_mode_order != g->loop_order) {
             g->loop_order = g->pending_pattern_mode_order;
             g->loop_pattern = openmpt_module_get_order_pattern(g->mod, g->loop_order);
@@ -601,7 +607,8 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         }
 
         // Then do standard wrap/loop logic
-        if (cur_order == g->loop_order) {
+        if (!escaped_loop_order) {
+            // Still in the same order
             if (at_custom_loop_end || at_full_pattern_end) {
                 openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
                 apply_pending_mute_changes(g);
@@ -613,7 +620,8 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             } else {
                 g->prev_row = cur_row;
             }
-        } else { // If escaped loop order, snap back
+        } else {
+            // Escaped loop order (pattern break/jump command) - snap back
             openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
             apply_pending_mute_changes(g);
             if (g->interactive_ok)
