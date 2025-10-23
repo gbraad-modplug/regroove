@@ -1108,6 +1108,28 @@ static void handle_input_event(InputEvent *event, bool from_playback) {
         return;
     }
 
+    // Cancel any active phrases when user triggers playback control or order navigation
+    // (Manual control should override phrase playback)
+    if (!from_playback) {
+        if (event->action == ACTION_PLAY_PAUSE || event->action == ACTION_PLAY || event->action == ACTION_STOP ||
+            event->action == ACTION_RETRIGGER ||
+            event->action == ACTION_NEXT_ORDER || event->action == ACTION_PREV_ORDER ||
+            event->action == ACTION_JUMP_TO_ORDER || event->action == ACTION_JUMP_TO_PATTERN ||
+            event->action == ACTION_QUEUE_ORDER || event->action == ACTION_QUEUE_PATTERN) {
+            if (common_state && common_state->phrase && regroove_phrase_is_active(common_state->phrase)) {
+                // Stop all active phrases
+                regroove_phrase_stop_all(common_state->phrase);
+
+                // Reset channel state (mutes, volumes, etc.) and unmute all in engine
+                Regroove* mod = common_state->player;
+                if (mod) {
+                    regroove_unmute_all(mod);
+                }
+                phrase_reset_callback(NULL);
+            }
+        }
+    }
+
     // Route everything else through the performance engine
     // It will handle recording and execute via the callback we set up
     if (common_state && common_state->performance) {
@@ -2145,7 +2167,12 @@ static void ShowMainUI() {
     loop_blink = fmaxf(loop_blink - 0.05f, 0.0f);
 
     // LOOP BUTTON
-    ImVec4 baseCol = loop_enabled ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    // Check if phrase is active
+    bool phrase_active = (common_state && common_state->phrase && regroove_phrase_is_active(common_state->phrase));
+
+    // Orange when loop enabled OR phrase playing
+    bool show_orange = loop_enabled || phrase_active;
+    ImVec4 baseCol = show_orange ? ImVec4(0.70f, 0.50f, 0.10f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
     ImVec4 blinkCol = ImVec4(
         baseCol.x + loop_blink * 0.6f, // brighten R
         baseCol.y + loop_blink * 0.4f, // brighten G
@@ -2153,11 +2180,11 @@ static void ShowMainUI() {
         1.0f
     );
 
-    if (loop_enabled) {
+    if (show_orange) {
         ImGui::PushStyleColor(ImGuiCol_Button, blinkCol);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, blinkCol);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, blinkCol);
-        if (ImGui::Button("O*", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        if (ImGui::Button(phrase_active ? "O◊" : "O*", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
             if (learn_mode_active) start_learn_for_action(ACTION_PATTERN_MODE_TOGGLE);
             else dispatch_action(ACT_TOGGLE_LOOP);
         }
@@ -2671,7 +2698,9 @@ static void ShowMainUI() {
                         // STOP shows green when playing (ready to stop)
                         is_play_active = !common_state->paused;  // Use green when playing
                     } else if (pad->action == ACTION_PATTERN_MODE_TOGGLE) {
-                        is_loop_active = regroove_get_pattern_mode(player);
+                        // Orange when loop mode active OR phrase playing
+                        is_loop_active = regroove_get_pattern_mode(player) ||
+                                       (common_state->phrase && regroove_phrase_is_active(common_state->phrase));
                     }
                 }
 
@@ -2911,7 +2940,9 @@ static void ShowMainUI() {
                         // STOP shows green when playing (ready to stop)
                         is_play_active = !common_state->paused;  // Use green when playing
                     } else if (pad->action == ACTION_PATTERN_MODE_TOGGLE) {
-                        is_loop_active = regroove_get_pattern_mode(player);
+                        // Orange when loop mode active OR phrase playing
+                        is_loop_active = regroove_get_pattern_mode(player) ||
+                                       (common_state->phrase && regroove_phrase_is_active(common_state->phrase));
                     }
                 }
 
