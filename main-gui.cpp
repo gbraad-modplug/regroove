@@ -2440,11 +2440,6 @@ static void ShowMainUI() {
                 }
             }
             ImGui::PopItemWidth();
-            // Label below pan slider
-            const char* pan_label = (channels[i].pan < 0.4f) ? "L" :
-                                   (channels[i].pan > 0.6f) ? "R" : "C";
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + sliderW/2.0f - 5.0f);
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", pan_label);
 
             ImGui::Dummy(ImVec2(0, 2.0f));
 
@@ -2534,11 +2529,10 @@ static void ShowMainUI() {
             ImGui::Text("Pitch");
             ImGui::Dummy(ImVec2(0, 4.0f));
 
-            // Match channel spacing: SOLO button + pan slider + label
+            // Match channel spacing: SOLO button + pan slider
             ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
             ImGui::Dummy(ImVec2(0, 2.0f));
             ImGui::Dummy(ImVec2(sliderW, panSliderH));  // Pan slider height
-            ImGui::Dummy(ImVec2(0, labelH));             // Pan label height
             ImGui::Dummy(ImVec2(0, 2.0f));
 
             float prev_pitch = pitch_slider;
@@ -4956,11 +4950,6 @@ static void ShowMainUI() {
                 }
             }
             ImGui::PopItemWidth();
-            // Label below pan slider
-            const char* pan_label = (master_pan < 0.4f) ? "L" :
-                                   (master_pan > 0.6f) ? "R" : "C";
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + sliderW/2.0f - 5.0f);
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", pan_label);
             ImGui::Dummy(ImVec2(0, 2.0f));
 
             // Volume fader
@@ -5018,11 +5007,6 @@ static void ShowMainUI() {
                 }
             }
             ImGui::PopItemWidth();
-            // Label below pan slider
-            const char* pan_label_pb = (playback_pan < 0.4f) ? "L" :
-                                      (playback_pan > 0.6f) ? "R" : "C";
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + sliderW/2.0f - 5.0f);
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", pan_label_pb);
             ImGui::Dummy(ImVec2(0, 2.0f));
 
             // Volume fader
@@ -5080,11 +5064,6 @@ static void ShowMainUI() {
                 }
             }
             ImGui::PopItemWidth();
-            // Label below pan slider
-            const char* pan_label_in = (input_pan < 0.4f) ? "L" :
-                                      (input_pan > 0.6f) ? "R" : "C";
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + sliderW/2.0f - 5.0f);
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", pan_label_in);
             ImGui::Dummy(ImVec2(0, 2.0f));
 
             // Volume fader
