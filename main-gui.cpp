@@ -94,6 +94,9 @@ static int input_buffer_size = 0;
 static int cached_midi_port_count = -1;
 static UIMode last_ui_mode = UI_MODE_VOLUME;
 
+// Pad expansion setting
+static bool expanded_pads = false;
+
 // LCD display (initialized in main)
 static LCD* lcd_display = NULL;
 
@@ -2197,14 +2200,16 @@ static void ShowMainUI() {
 
     ImGui::Dummy(ImVec2(0, 8.0f));
 
-    // SONG button with active state highlighting
-    ImVec4 songCol = (ui_mode == UI_MODE_SONG) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, songCol);
-    if (ImGui::Button("SONG", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        ui_mode = UI_MODE_SONG;
+    // SONG button with active state highlighting (only shown when expanded_pads is enabled)
+    if (expanded_pads) {
+        ImVec4 songCol = (ui_mode == UI_MODE_SONG) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, songCol);
+        if (ImGui::Button("SONG", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+            ui_mode = UI_MODE_SONG;
+        }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
     }
-    ImGui::PopStyleColor();
-    ImGui::SameLine();
 
     // PADS button with active state highlighting
     ImVec4 padsCol = (ui_mode == UI_MODE_PADS) ? ImVec4(0.70f, 0.60f, 0.20f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
@@ -2572,7 +2577,7 @@ static void ShowMainUI() {
 
         // Calculate pad layout (4x4 grid)
         const int PADS_PER_ROW = 4;
-        const int NUM_ROWS = MAX_TRIGGER_PADS / PADS_PER_ROW;
+        const int NUM_ROWS = expanded_pads ? (MAX_TRIGGER_PADS / PADS_PER_ROW) : 4;  // 4 rows = 16 pads in non-expanded mode
         float padSpacing = 12.0f;
         float availWidth = rightW - 2 * padSpacing;
         float availHeight = contentHeight - 16.0f;
@@ -2599,10 +2604,22 @@ static void ShowMainUI() {
 
                 ImGui::SetCursorPos(ImVec2(posX, posY));
 
+                // Determine if this is an APP pad or SONG pad (in non-expanded mode)
+                bool is_song_pad = !expanded_pads && idx >= 8;  // Rows 2-3 are SONG pads in non-expanded mode
+                int pad_idx = is_song_pad ? (idx - 8) : idx;     // Adjust index for SONG pads
+                bool is_app_pad = expanded_pads || !is_song_pad;
+
+                // Get the pad configuration
+                TriggerPadConfig *pad = nullptr;
+                if (is_song_pad && common_state && common_state->metadata) {
+                    pad = &common_state->metadata->song_trigger_pads[pad_idx];
+                } else if (is_app_pad && common_state && common_state->input_mappings) {
+                    pad = &common_state->input_mappings->trigger_pads[pad_idx];
+                }
+
                 // Check if this pad has a pending queued action
                 bool has_pending = false;
-                if (player && common_state && common_state->input_mappings) {
-                    TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[idx];
+                if (player && pad) {
                     int ch = pad->parameter;
                     int queued_jump = regroove_get_queued_jump_type(player);
 
@@ -2626,8 +2643,7 @@ static void ShowMainUI() {
 
                 // Check if pad controls a channel's mute state
                 bool is_channel_muted = false;
-                if (player && common_state && common_state->input_mappings) {
-                    TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[idx];
+                if (player && pad) {
                     int ch = pad->parameter;
                     if (ch >= 0 && ch < common_state->num_channels) {
                         if (pad->action == ACTION_CHANNEL_MUTE || pad->action == ACTION_QUEUE_CHANNEL_MUTE ||
@@ -2663,35 +2679,52 @@ static void ShowMainUI() {
                         1.0f
                     );
                 } else {
-                    // Normal green with trigger brightness fade
-                    padCol = ImVec4(
-                        0.18f + brightness * 0.50f,
-                        0.27f + brightness * 0.40f,
-                        0.18f + brightness * 0.24f,
-                        1.0f
-                    );
+                    // Normal grey with trigger brightness fade
+                    // Slightly different grey for APP vs SONG pads
+                    if (is_song_pad) {
+                        // Song pads: slightly bluer grey
+                        padCol = ImVec4(
+                            0.32f + brightness * 0.30f,
+                            0.34f + brightness * 0.30f,
+                            0.38f + brightness * 0.40f,
+                            1.0f
+                        );
+                    } else {
+                        // App pads: neutral grey
+                        padCol = ImVec4(
+                            0.35f + brightness * 0.35f,
+                            0.35f + brightness * 0.35f,
+                            0.35f + brightness * 0.35f,
+                            1.0f
+                        );
+                    }
                 }
 
                 ImGui::PushStyleColor(ImGuiCol_Button, padCol);
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.48f, 0.32f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.42f, 0.65f, 0.42f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.45f, 0.48f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.55f, 0.60f, 1.0f));
 
                 char label[16];
-                snprintf(label, sizeof(label), "A%d", idx + 1);
+                if (is_song_pad) {
+                    snprintf(label, sizeof(label), "S%d", pad_idx + 1);  // S1-S8
+                } else {
+                    snprintf(label, sizeof(label), "A%d", pad_idx + 1);  // A1-A8 or A1-A16
+                }
                 if (ImGui::Button(label, ImVec2(padSize, padSize))) {
                     if (learn_mode_active) {
-                        start_learn_for_pad(idx);
-                    } else if (common_state && common_state->input_mappings) {
+                        if (is_song_pad) {
+                            start_learn_for_song_pad(pad_idx);
+                        } else {
+                            start_learn_for_pad(pad_idx);
+                        }
+                    } else if (pad && pad->action != ACTION_NONE) {
                         trigger_pad_fade[idx] = 1.0f;
                         // Execute the configured action for this pad
-                        TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[idx];
-                        if (pad->action != ACTION_NONE) {
-                            InputEvent event;
-                            event.action = pad->action;
-                            event.parameter = pad->parameter;
-                            event.value = 127; // Full value for trigger pads
-                            handle_input_event(&event);
-                        }
+                        InputEvent event;
+                        event.action = pad->action;
+                        event.parameter = pad->parameter;
+                        event.value = 127; // Full value for trigger pads
+                        handle_input_event(&event);
                     }
                 }
 
@@ -2841,18 +2874,18 @@ static void ShowMainUI() {
                         1.0f
                     );
                 } else {
-                    // Different color for song pads (bluish tint) with trigger brightness fade
+                    // Song pads: slightly bluer grey with trigger brightness fade
                     padCol = ImVec4(
-                        0.18f + brightness * 0.30f,
-                        0.27f + brightness * 0.40f,
-                        0.28f + brightness * 0.50f,  // More blue
+                        0.32f + brightness * 0.30f,
+                        0.34f + brightness * 0.30f,
+                        0.38f + brightness * 0.40f,
                         1.0f
                     );
                 }
 
                 ImGui::PushStyleColor(ImGuiCol_Button, padCol);
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.38f, 0.52f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.38f, 0.52f, 0.72f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.45f, 0.48f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.55f, 0.60f, 1.0f));
 
                 char label[16];
                 snprintf(label, sizeof(label), "S%d", idx + 1);
@@ -5620,6 +5653,28 @@ static void ShowMainUI() {
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 20.0f));
 
+        // UI Settings Section
+        ImGui::TextColored(COLOR_SECTION_HEADING, "USER INTERFACE SETTINGS");
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 12.0f));
+
+        ImGui::Text("Pad Layout:");
+        ImGui::SameLine(150.0f);
+        if (ImGui::Checkbox("Expanded pads mode", &expanded_pads)) {
+            // Save to config when changed
+            if (common_state) {
+                common_state->device_config.expanded_pads = expanded_pads ? 1 : 0;
+                regroove_common_save_device_config(common_state, current_config_file);
+            }
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+            expanded_pads ? "(16 APP + 16 SONG pads)" : "(8 APP + 8 SONG pads combined)");
+
+        ImGui::Dummy(ImVec2(0, 20.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
         // Keyboard Mappings Section
         ImGui::TextColored(COLOR_SECTION_HEADING, "KEYBOARD MAPPINGS");
         ImGui::Separator();
@@ -6204,6 +6259,9 @@ int main(int argc, char* argv[]) {
 
     // Apply loaded audio device setting to UI variable
     selected_audio_device = common_state->device_config.audio_device;
+
+    // Apply loaded UI settings to local variables
+    expanded_pads = (common_state->device_config.expanded_pads != 0);
 
     // Initialize MIDI output if configured
     if (common_state->device_config.midi_output_device >= 0) {
