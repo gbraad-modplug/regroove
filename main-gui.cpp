@@ -1933,6 +1933,12 @@ static void ShowMainUI() {
         instrument_note_fade[i] = fmaxf(instrument_note_fade[i] - 0.05f, 0.0f);
     }
 
+    // Fade ALL trigger pads (APP 0-15 and SONG 16-31) - always update regardless of panel
+    for (int i = 0; i < MAX_TOTAL_TRIGGER_PADS; i++) {
+        trigger_pad_fade[i] = fmaxf(trigger_pad_fade[i] - 0.02f, 0.0f);
+        trigger_pad_transition_fade[i] = fmaxf(trigger_pad_transition_fade[i] - 0.02f, 0.0f);
+    }
+
     ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
     ImGuiWindowFlags rootFlags =
@@ -2613,12 +2619,6 @@ static void ShowMainUI() {
             prev_queued_jump_type = current_queued_jump;
         }
 
-        // Fade trigger pads
-        for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
-            trigger_pad_fade[i] = fmaxf(trigger_pad_fade[i] - 0.02f, 0.0f);
-            trigger_pad_transition_fade[i] = fmaxf(trigger_pad_transition_fade[i] - 0.02f, 0.0f);
-        }
-
         // Calculate pad layout
         // Fullscreen pads mode: show all 32 pads (16 APP + 16 SONG) in 4x8 or 8x4 grid
         // Expanded mode: show 16 APP pads in 4x4 grid
@@ -2981,13 +2981,6 @@ static void ShowMainUI() {
                 }
             }
             prev_queued_jump_type = current_queued_jump;
-        }
-
-        // Fade trigger pads
-        for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
-            int global_idx = MAX_TRIGGER_PADS + i;
-            trigger_pad_fade[global_idx] = fmaxf(trigger_pad_fade[global_idx] - 0.02f, 0.0f);
-            trigger_pad_transition_fade[global_idx] = fmaxf(trigger_pad_transition_fade[global_idx] - 0.02f, 0.0f);
         }
 
         // Calculate pad layout (4x4 grid)
