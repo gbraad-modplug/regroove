@@ -520,6 +520,7 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                 }
                 // Audio device is always running for input passthrough - just set playing flag
                 playing = true;
+                if (common_state) common_state->paused = 0;  // Update paused state
                 printf("ACT_PLAY: playing flag set to true\n");
             }
             break;
@@ -527,6 +528,7 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
             if (mod) {
                 // Audio device stays running for input passthrough - just stop playback
                 playing = false;
+                if (common_state) common_state->paused = 1;  // Update paused state
                 printf("ACT_STOP: playing flag set to false\n");
                 // Notify performance system that playback stopped AND reset to beginning
                 if (common_state && common_state->performance) {
@@ -2653,7 +2655,27 @@ static void ShowMainUI() {
                     }
                 }
 
-                // Pad color with pending (pulsing blue), transition (red), muted (red), or trigger fade
+                // Check if pad controls playback state
+                bool is_play_active = false;
+                bool is_stop_active = false;
+                bool is_loop_active = false;
+                if (player && pad && common_state) {
+                    if (pad->action == ACTION_PLAY_PAUSE) {
+                        // PLAY_PAUSE shows green when playing, red when stopped
+                        is_play_active = !common_state->paused;
+                        is_stop_active = common_state->paused;
+                    } else if (pad->action == ACTION_PLAY) {
+                        // PLAY shows red when stopped (ready to play)
+                        is_stop_active = common_state->paused;  // Use red when stopped
+                    } else if (pad->action == ACTION_STOP) {
+                        // STOP shows green when playing (ready to stop)
+                        is_play_active = !common_state->paused;  // Use green when playing
+                    } else if (pad->action == ACTION_PATTERN_MODE_TOGGLE) {
+                        is_loop_active = regroove_get_pattern_mode(player);
+                    }
+                }
+
+                // Pad color with pending (pulsing blue), transition (red), state colors, or trigger fade
                 float brightness = trigger_pad_fade[idx];
                 float transition_brightness = trigger_pad_transition_fade[idx];
                 ImVec4 padCol;
@@ -2676,6 +2698,30 @@ static void ShowMainUI() {
                         0.70f + brightness * 0.20f,  // Red base with brightness
                         0.12f + brightness * 0.10f,
                         0.14f + brightness * 0.10f,
+                        1.0f
+                    );
+                } else if (is_play_active) {
+                    // Green when playing
+                    padCol = ImVec4(
+                        0.15f + brightness * 0.20f,
+                        0.65f + brightness * 0.25f,  // Green base with brightness
+                        0.15f + brightness * 0.20f,
+                        1.0f
+                    );
+                } else if (is_stop_active) {
+                    // Red when stopped
+                    padCol = ImVec4(
+                        0.70f + brightness * 0.20f,  // Red base with brightness
+                        0.12f + brightness * 0.10f,
+                        0.14f + brightness * 0.10f,
+                        1.0f
+                    );
+                } else if (is_loop_active) {
+                    // Yellow/orange when loop mode active
+                    padCol = ImVec4(
+                        0.70f + brightness * 0.20f,  // Orange/yellow base with brightness
+                        0.50f + brightness * 0.25f,
+                        0.10f + brightness * 0.15f,
                         1.0f
                     );
                 } else {
@@ -2848,7 +2894,28 @@ static void ShowMainUI() {
                     }
                 }
 
-                // Pad color with pending (pulsing blue), transition (red), muted (red), or trigger fade
+                // Check if pad controls playback state
+                bool is_play_active = false;
+                bool is_stop_active = false;
+                bool is_loop_active = false;
+                if (player && common_state && common_state->metadata) {
+                    TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[idx];
+                    if (pad->action == ACTION_PLAY_PAUSE) {
+                        // PLAY_PAUSE shows green when playing, red when stopped
+                        is_play_active = !common_state->paused;
+                        is_stop_active = common_state->paused;
+                    } else if (pad->action == ACTION_PLAY) {
+                        // PLAY shows red when stopped (ready to play)
+                        is_stop_active = common_state->paused;  // Use red when stopped
+                    } else if (pad->action == ACTION_STOP) {
+                        // STOP shows green when playing (ready to stop)
+                        is_play_active = !common_state->paused;  // Use green when playing
+                    } else if (pad->action == ACTION_PATTERN_MODE_TOGGLE) {
+                        is_loop_active = regroove_get_pattern_mode(player);
+                    }
+                }
+
+                // Pad color with pending (pulsing blue), transition (red), state colors, or trigger fade
                 float brightness = trigger_pad_fade[global_idx];
                 float transition_brightness = trigger_pad_transition_fade[global_idx];
                 ImVec4 padCol;
@@ -2871,6 +2938,30 @@ static void ShowMainUI() {
                         0.70f + brightness * 0.20f,  // Red base with brightness
                         0.12f + brightness * 0.10f,
                         0.14f + brightness * 0.10f,
+                        1.0f
+                    );
+                } else if (is_play_active) {
+                    // Green when playing
+                    padCol = ImVec4(
+                        0.15f + brightness * 0.20f,
+                        0.65f + brightness * 0.25f,  // Green base with brightness
+                        0.15f + brightness * 0.20f,
+                        1.0f
+                    );
+                } else if (is_stop_active) {
+                    // Red when stopped
+                    padCol = ImVec4(
+                        0.70f + brightness * 0.20f,  // Red base with brightness
+                        0.12f + brightness * 0.10f,
+                        0.14f + brightness * 0.10f,
+                        1.0f
+                    );
+                } else if (is_loop_active) {
+                    // Yellow/orange when loop mode active
+                    padCol = ImVec4(
+                        0.70f + brightness * 0.20f,  // Orange/yellow base with brightness
+                        0.50f + brightness * 0.25f,
+                        0.10f + brightness * 0.15f,
                         1.0f
                     );
                 } else {
