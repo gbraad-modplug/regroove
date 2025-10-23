@@ -2260,20 +2260,6 @@ static void ShowMainUI() {
     ImGui::PopStyleColor();
     ImGui::SameLine();
 
-    // Fullscreen Pads button
-    ImVec4 fullscreenCol = fullscreen_pads_mode ? ImVec4(0.20f, 0.65f, 0.25f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, fullscreenCol);
-    if (ImGui::Button("[ ]", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        fullscreen_pads_mode = !fullscreen_pads_mode;
-        if (fullscreen_pads_mode) {
-            ui_mode = UI_MODE_PADS;  // Auto-switch to PADS mode
-        }
-    }
-    ImGui::PopStyleColor();
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Fullscreen Pads Mode (F12)");
-    }
-
     ImGui::Dummy(ImVec2(0, 8.0f));
 
     // TRACKER button with active state highlighting
@@ -2677,10 +2663,23 @@ static void ShowMainUI() {
                 int pad_idx;
 
                 if (fullscreen_pads_mode) {
-                    // Fullscreen mode: first 16 = APP, last 16 = SONG
-                    is_app_pad = (idx < 16);
-                    is_song_pad = (idx >= 16);
-                    pad_idx = is_song_pad ? (idx - 16) : idx;
+                    // Fullscreen mode: 8x4 grid with horizontal extension
+                    // Row 0: A1 A2 A3 A4 | A9 A10 A11 A12
+                    // Row 1: A5 A6 A7 A8 | A13 A14 A15 A16
+                    // Row 2: S1 S2 S3 S4 | S9 S10 S11 S12
+                    // Row 3: S5 S6 S7 S8 | S13 S14 S15 S16
+                    int row = idx / 8;
+                    int col = idx % 8;
+
+                    is_app_pad = (row < 2);
+                    is_song_pad = (row >= 2);
+
+                    // Calculate pad index based on position
+                    int local_row = row % 2;  // 0 or 1 within APP/SONG section
+                    int half = (col < 4) ? 0 : 1;  // 0 = left half, 1 = right half
+                    int col_in_half = col % 4;
+
+                    pad_idx = local_row * 4 + col_in_half + half * 8;
                 } else if (expanded_pads) {
                     // Expanded mode: all APP pads
                     is_app_pad = true;
@@ -2862,13 +2861,35 @@ static void ShowMainUI() {
             }
         }
 
-        // Add small exit button when in fullscreen pads mode
+        // Add vertical bar on left side to enter fullscreen mode (when not already fullscreen)
+        if (!fullscreen_pads_mode) {
+            float barWidth = 12.0f;
+
+            // Left edge bar - match file browse button color
+            ImGui::SetCursorPos(ImVec2(origin.x, origin.y));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.12f, 0.12f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.23f, 0.23f, 0.23f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.16f, 0.16f, 0.16f, 1.0f));
+            if (ImGui::Button("##fullscreen_bar_left", ImVec2(barWidth, contentHeight))) {
+                fullscreen_pads_mode = true;
+                ui_mode = UI_MODE_PADS;
+            }
+            ImGui::PopStyleColor(3);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Expand to Fullscreen Pads (F12)");
+            }
+        }
+
+        // Add vertical exit bar on left side when in fullscreen pads mode
         if (fullscreen_pads_mode) {
-            ImGui::SetCursorPos(ImVec2(rightW - 70.0f, 10.0f));
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.50f, 0.50f, 0.50f, 0.7f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.60f, 0.60f, 0.60f, 0.85f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.40f, 0.40f, 0.40f, 1.0f));
-            if (ImGui::Button("X", ImVec2(60.0f, 30.0f))) {
+            float barWidth = 12.0f;
+
+            // Left edge exit bar - match file browse button color
+            ImGui::SetCursorPos(ImVec2(origin.x, origin.y));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.12f, 0.12f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.23f, 0.23f, 0.23f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.16f, 0.16f, 0.16f, 1.0f));
+            if (ImGui::Button("##exit_fullscreen_bar_left", ImVec2(barWidth, contentHeight))) {
                 fullscreen_pads_mode = false;
             }
             ImGui::PopStyleColor(3);
