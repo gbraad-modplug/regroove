@@ -632,6 +632,27 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         g->queued_jump_type = 0;
         g->prev_row = -1;
     }
+    else {
+        // Normal song playback mode - apply pending mute changes at pattern boundaries
+        // Detect pattern boundary: order changed OR row wrapped to 0
+        int boundary_crossed = 0;
+        if (g->prev_order != -1 && cur_order != g->prev_order) {
+            // Order changed - definitely a pattern boundary
+            boundary_crossed = 1;
+        } else if (g->prev_row != -1 && g->prev_row != 0 && cur_row == 0) {
+            // Row wrapped to 0 from a non-zero row - pattern boundary
+            boundary_crossed = 1;
+        }
+
+        if (boundary_crossed && g->has_pending_mute_changes) {
+            apply_pending_mute_changes(g);
+            if (g->interactive_ok)
+                reapply_mutes(g);
+        }
+
+        // Track previous row for next boundary detection
+        g->prev_row = cur_row;
+    }
 
     g->prev_order = cur_order;
 
