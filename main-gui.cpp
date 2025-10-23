@@ -61,6 +61,7 @@ enum UIMode {
     UI_MODE_SETTINGS = 9
 };
 static UIMode ui_mode = UI_MODE_VOLUME;
+static bool fullscreen_pads_mode = false;  // Performance mode: hide sidebar, show all pads
 
 // Visual feedback for trigger pads (fade effect) - supports both A and S pads
 static float trigger_pad_fade[MAX_TOTAL_TRIGGER_PADS] = {0.0f};
@@ -1548,6 +1549,15 @@ void handle_keyboard(SDL_Event &e, SDL_Window *window) {
         return;
     }
 
+    // F12: Toggle fullscreen pads performance mode
+    if (e.key.keysym.sym == SDLK_F12) {
+        fullscreen_pads_mode = !fullscreen_pads_mode;
+        if (fullscreen_pads_mode) {
+            ui_mode = UI_MODE_PADS;  // Auto-switch to PADS mode
+        }
+        return;
+    }
+
     // Convert SDL key to character for input mappings
     int key = e.key.keysym.sym;
 
@@ -1952,11 +1962,12 @@ static void ShowMainUI() {
     float channelAreaHeight = fullH - TOP_MARGIN - GAP_ABOVE_SEQUENCER - SEQUENCER_HEIGHT - BOTTOM_MARGIN - childPaddingY - childBorderY;
     if (channelAreaHeight < 280.0f) channelAreaHeight = 280.0f;
 
-    // LEFT PANEL
-    ImGui::SetCursorPos(ImVec2(SIDE_MARGIN, TOP_MARGIN));
-    ImGui::BeginChild("left_panel", ImVec2(LEFT_PANEL_WIDTH, channelAreaHeight),
-                      true, ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
-    {
+    // LEFT PANEL (hidden in fullscreen pads mode)
+    if (!fullscreen_pads_mode) {
+        ImGui::SetCursorPos(ImVec2(SIDE_MARGIN, TOP_MARGIN));
+        ImGui::BeginChild("left_panel", ImVec2(LEFT_PANEL_WIDTH, channelAreaHeight),
+                          true, ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
+        {
         if (lcd_display) {
             char lcd_text[256];
 
@@ -2247,6 +2258,21 @@ static void ShowMainUI() {
         ui_mode = UI_MODE_PADS;
     }
     ImGui::PopStyleColor();
+    ImGui::SameLine();
+
+    // Fullscreen Pads button
+    ImVec4 fullscreenCol = fullscreen_pads_mode ? ImVec4(0.20f, 0.65f, 0.25f, 1.0f) : ImVec4(0.26f, 0.27f, 0.30f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, fullscreenCol);
+    if (ImGui::Button("[ ]", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
+        fullscreen_pads_mode = !fullscreen_pads_mode;
+        if (fullscreen_pads_mode) {
+            ui_mode = UI_MODE_PADS;  // Auto-switch to PADS mode
+        }
+    }
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Fullscreen Pads Mode (F12)");
+    }
 
     ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -2320,9 +2346,11 @@ static void ShowMainUI() {
     ImGui::EndGroup();
 
     ImGui::EndChild();
+    }  // End if (!fullscreen_pads_mode)
 
     // CHANNEL PANEL (9 columns: 8 channels + 1 pitch)
-    float rightX = SIDE_MARGIN + LEFT_PANEL_WIDTH + 18.0f;
+    // In fullscreen pads mode, use full width
+    float rightX = fullscreen_pads_mode ? SIDE_MARGIN : (SIDE_MARGIN + LEFT_PANEL_WIDTH + 18.0f);
     float rightW = fullW - rightX - SIDE_MARGIN;
     if (rightW < 300.0f) rightW = 300.0f;
 
@@ -2598,9 +2626,26 @@ static void ShowMainUI() {
             trigger_pad_transition_fade[i] = fmaxf(trigger_pad_transition_fade[i] - 0.02f, 0.0f);
         }
 
-        // Calculate pad layout (4x4 grid)
-        const int PADS_PER_ROW = 4;
-        const int NUM_ROWS = expanded_pads ? (MAX_TRIGGER_PADS / PADS_PER_ROW) : 4;  // 4 rows = 16 pads in non-expanded mode
+        // Calculate pad layout
+        // Fullscreen pads mode: show all 32 pads (16 APP + 16 SONG) in 4x8 or 8x4 grid
+        // Expanded mode: show 16 APP pads in 4x4 grid
+        // Normal mode: show 8 APP + 8 SONG in combined 4x4 grid
+        int PADS_PER_ROW, NUM_ROWS, total_pads;
+        if (fullscreen_pads_mode) {
+            // Use 8 columns x 4 rows for wider screens (all 32 pads)
+            PADS_PER_ROW = 8;
+            NUM_ROWS = 4;
+            total_pads = 32;  // 16 APP + 16 SONG
+        } else if (expanded_pads) {
+            PADS_PER_ROW = 4;
+            NUM_ROWS = 4;  // 16 APP pads only
+            total_pads = 16;
+        } else {
+            PADS_PER_ROW = 4;
+            NUM_ROWS = 4;  // 8 APP + 8 SONG combined
+            total_pads = 16;
+        }
+
         float padSpacing = 12.0f;
         float availWidth = rightW - 2 * padSpacing;
         float availHeight = contentHeight - 16.0f;
@@ -2627,10 +2672,26 @@ static void ShowMainUI() {
 
                 ImGui::SetCursorPos(ImVec2(posX, posY));
 
-                // Determine if this is an APP pad or SONG pad (in non-expanded mode)
-                bool is_song_pad = !expanded_pads && idx >= 8;  // Rows 2-3 are SONG pads in non-expanded mode
-                int pad_idx = is_song_pad ? (idx - 8) : idx;     // Adjust index for SONG pads
-                bool is_app_pad = expanded_pads || !is_song_pad;
+                // Determine if this is an APP pad or SONG pad
+                bool is_song_pad, is_app_pad;
+                int pad_idx;
+
+                if (fullscreen_pads_mode) {
+                    // Fullscreen mode: first 16 = APP, last 16 = SONG
+                    is_app_pad = (idx < 16);
+                    is_song_pad = (idx >= 16);
+                    pad_idx = is_song_pad ? (idx - 16) : idx;
+                } else if (expanded_pads) {
+                    // Expanded mode: all APP pads
+                    is_app_pad = true;
+                    is_song_pad = false;
+                    pad_idx = idx;
+                } else {
+                    // Normal combined mode: first 8 = APP, last 8 = SONG
+                    is_song_pad = (idx >= 8);
+                    is_app_pad = !is_song_pad;
+                    pad_idx = is_song_pad ? (idx - 8) : idx;
+                }
 
                 // Get the pad configuration
                 TriggerPadConfig *pad = nullptr;
@@ -2798,6 +2859,21 @@ static void ShowMainUI() {
                 }
 
                 ImGui::PopStyleColor(3);
+            }
+        }
+
+        // Add small exit button when in fullscreen pads mode
+        if (fullscreen_pads_mode) {
+            ImGui::SetCursorPos(ImVec2(rightW - 70.0f, 10.0f));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.50f, 0.50f, 0.50f, 0.7f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.60f, 0.60f, 0.60f, 0.85f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.40f, 0.40f, 0.40f, 1.0f));
+            if (ImGui::Button("X", ImVec2(60.0f, 30.0f))) {
+                fullscreen_pads_mode = false;
+            }
+            ImGui::PopStyleColor(3);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Exit Fullscreen Pads (F12)");
             }
         }
     }
