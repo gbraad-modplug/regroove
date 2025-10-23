@@ -1144,18 +1144,25 @@ static void handle_input_event(InputEvent *event, bool from_playback) {
 
 // Save current mappings to config file
 static void save_mappings_to_config() {
-    if (!common_state || !common_state->input_mappings) return;
+    if (!common_state || !common_state->input_mappings) {
+        printf("ERROR: save_mappings_to_config called but common_state or input_mappings is NULL\n");
+        return;
+    }
+
+    printf("Saving mappings to %s...\n", current_config_file);
 
     // Save the current input mappings (includes trigger pads)
     if (input_mappings_save(common_state->input_mappings, current_config_file) == 0) {
+        printf("  -> input_mappings_save succeeded\n");
         // Also save device configuration
         if (regroove_common_save_device_config(common_state, current_config_file) == 0) {
+            printf("  -> device config save succeeded\n");
             printf("Saved mappings and devices to %s\n", current_config_file);
         } else {
-            fprintf(stderr, "Failed to save device config to %s\n", current_config_file);
+            fprintf(stderr, "  -> FAILED to save device config to %s\n", current_config_file);
         }
     } else {
-        fprintf(stderr, "Failed to save mappings to %s\n", current_config_file);
+        fprintf(stderr, "  -> FAILED to save mappings to %s\n", current_config_file);
     }
 }
 
@@ -2775,9 +2782,10 @@ static void ShowMainUI() {
                 }
 
                 // Pad color with pending (pulsing blue), transition (red), state colors, or trigger fade
-                // Use pad_idx (not idx) because trigger_pad_fade is indexed by pad number (0-15), not grid position
-                float brightness = trigger_pad_fade[pad_idx];
-                float transition_brightness = trigger_pad_transition_fade[pad_idx];
+                // Use correct fade index: APP pads 0-15, SONG pads 16-31
+                int fade_idx = is_song_pad ? (MAX_TRIGGER_PADS + pad_idx) : pad_idx;
+                float brightness = trigger_pad_fade[fade_idx];
+                float transition_brightness = trigger_pad_transition_fade[fade_idx];
                 ImVec4 padCol;
                 if (has_pending) {
                     // Pulsing blue for pending queued action
@@ -2864,7 +2872,9 @@ static void ShowMainUI() {
                             start_learn_for_pad(pad_idx);
                         }
                     } else if (pad && pad->action != ACTION_NONE) {
-                        trigger_pad_fade[pad_idx] = 1.0f;
+                        // Use correct fade index: SONG pads need offset
+                        int fade_idx = is_song_pad ? (MAX_TRIGGER_PADS + pad_idx) : pad_idx;
+                        trigger_pad_fade[fade_idx] = 1.0f;
                         // Execute the configured action for this pad
                         InputEvent event;
                         event.action = pad->action;
@@ -4561,8 +4571,11 @@ static void ShowMainUI() {
                     for (int a = ACTION_NONE; a < ACTION_MAX; a++) {
                         InputAction act = (InputAction)a;
                         if (ImGui::Selectable(input_action_name(act), pad->action == act)) {
+                            printf("APP Pad A%d: Changing action from %s to %s\n",
+                                   i + 1, input_action_name(pad->action), input_action_name(act));
                             pad->action = act;
                             pad->parameter = 0;
+                            save_mappings_to_config();
                         }
                     }
                     ImGui::EndCombo();
@@ -4578,15 +4591,21 @@ static void ShowMainUI() {
                     pad->action == ACTION_TRIGGER_PHRASE) {
 
                     if (ImGui::Button("-", ImVec2(30.0f, 0.0f))) {
-                        if (pad->parameter > 0) pad->parameter--;
+                        if (pad->parameter > 0) {
+                            pad->parameter--;
+                            save_mappings_to_config();
+                        }
                     }
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(60.0f);
+                    int old_param = pad->parameter;
                     ImGui::InputInt("##param", &pad->parameter, 0, 0);
                     if (pad->parameter < 0) pad->parameter = 0;
+                    if (old_param != pad->parameter) save_mappings_to_config();
                     ImGui::SameLine();
                     if (ImGui::Button("+", ImVec2(30.0f, 0.0f))) {
                         pad->parameter++;
+                        save_mappings_to_config();
                     }
                 } else {
                     ImGui::Text("-");
