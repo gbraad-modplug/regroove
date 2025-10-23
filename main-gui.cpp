@@ -2758,9 +2758,26 @@ static void ShowMainUI() {
                     }
                 }
 
+                // Check if pad controls effect toggles
+                bool is_effect_enabled = false;
+                if (pad && effects) {
+                    if (pad->action == ACTION_FX_DISTORTION_TOGGLE) {
+                        is_effect_enabled = regroove_effects_get_distortion_enabled(effects);
+                    } else if (pad->action == ACTION_FX_FILTER_TOGGLE) {
+                        is_effect_enabled = regroove_effects_get_filter_enabled(effects);
+                    } else if (pad->action == ACTION_FX_EQ_TOGGLE) {
+                        is_effect_enabled = regroove_effects_get_eq_enabled(effects);
+                    } else if (pad->action == ACTION_FX_COMPRESSOR_TOGGLE) {
+                        is_effect_enabled = regroove_effects_get_compressor_enabled(effects);
+                    } else if (pad->action == ACTION_FX_DELAY_TOGGLE) {
+                        is_effect_enabled = regroove_effects_get_delay_enabled(effects);
+                    }
+                }
+
                 // Pad color with pending (pulsing blue), transition (red), state colors, or trigger fade
-                float brightness = trigger_pad_fade[idx];
-                float transition_brightness = trigger_pad_transition_fade[idx];
+                // Use pad_idx (not idx) because trigger_pad_fade is indexed by pad number (0-15), not grid position
+                float brightness = trigger_pad_fade[pad_idx];
+                float transition_brightness = trigger_pad_transition_fade[pad_idx];
                 ImVec4 padCol;
                 if (has_pending) {
                     // Pulsing blue for pending queued action
@@ -2799,8 +2816,8 @@ static void ShowMainUI() {
                         0.14f + brightness * 0.10f,
                         1.0f
                     );
-                } else if (is_loop_active) {
-                    // Yellow/orange when loop mode active
+                } else if (is_loop_active || is_effect_enabled) {
+                    // Yellow/orange when loop mode active OR effect enabled
                     padCol = ImVec4(
                         0.70f + brightness * 0.20f,  // Orange/yellow base with brightness
                         0.50f + brightness * 0.25f,
@@ -2847,7 +2864,7 @@ static void ShowMainUI() {
                             start_learn_for_pad(pad_idx);
                         }
                     } else if (pad && pad->action != ACTION_NONE) {
-                        trigger_pad_fade[idx] = 1.0f;
+                        trigger_pad_fade[pad_idx] = 1.0f;
                         // Execute the configured action for this pad
                         InputEvent event;
                         event.action = pad->action;
@@ -3037,6 +3054,23 @@ static void ShowMainUI() {
                     }
                 }
 
+                // Check if pad controls effect toggles
+                bool is_effect_enabled = false;
+                if (common_state && common_state->metadata && effects) {
+                    TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[idx];
+                    if (pad->action == ACTION_FX_DISTORTION_TOGGLE) {
+                        is_effect_enabled = regroove_effects_get_distortion_enabled(effects);
+                    } else if (pad->action == ACTION_FX_FILTER_TOGGLE) {
+                        is_effect_enabled = regroove_effects_get_filter_enabled(effects);
+                    } else if (pad->action == ACTION_FX_EQ_TOGGLE) {
+                        is_effect_enabled = regroove_effects_get_eq_enabled(effects);
+                    } else if (pad->action == ACTION_FX_COMPRESSOR_TOGGLE) {
+                        is_effect_enabled = regroove_effects_get_compressor_enabled(effects);
+                    } else if (pad->action == ACTION_FX_DELAY_TOGGLE) {
+                        is_effect_enabled = regroove_effects_get_delay_enabled(effects);
+                    }
+                }
+
                 // Pad color with pending (pulsing blue), transition (red), state colors, or trigger fade
                 float brightness = trigger_pad_fade[global_idx];
                 float transition_brightness = trigger_pad_transition_fade[global_idx];
@@ -3078,8 +3112,8 @@ static void ShowMainUI() {
                         0.14f + brightness * 0.10f,
                         1.0f
                     );
-                } else if (is_loop_active) {
-                    // Yellow/orange when loop mode active
+                } else if (is_loop_active || is_effect_enabled) {
+                    // Yellow/orange when loop mode active OR effect enabled
                     padCol = ImVec4(
                         0.70f + brightness * 0.20f,  // Orange/yellow base with brightness
                         0.50f + brightness * 0.25f,
