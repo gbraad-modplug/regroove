@@ -91,6 +91,7 @@ struct Regroove {
     RegrooveRowCallback          on_row_change;
     RegrooveLoopPatternCallback  on_loop_pattern;
     RegrooveLoopSongCallback     on_loop_song;
+    RegroovePatternModeCallback  on_pattern_mode_change;
     RegrooveNoteCallback         on_note;
     void *callback_userdata;
 
@@ -582,11 +583,15 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         int at_custom_loop_end = (g->custom_loop_rows > 0 && cur_row >= loop_rows);
         int at_full_pattern_end = (g->custom_loop_rows == 0 && g->prev_row == loop_rows - 1 && cur_row == 0);
 
-        // Detect early pattern exit (pattern break/jump command)
-        int escaped_loop_order = (cur_order != g->loop_order);
+        // Detect early pattern exit (pattern break/jump command) in the MIDDLE of a pattern
+        // Only detect if we're not at a normal boundary AND the order changed
+        int escaped_loop_order = (cur_order != g->loop_order) &&
+                                 !at_custom_loop_end &&
+                                 !at_full_pattern_end &&
+                                 (g->prev_row != -1);
 
-        // Pattern boundary = normal end OR early exit
-        int at_pattern_boundary = at_custom_loop_end || at_full_pattern_end || escaped_loop_order;
+        // Pattern boundary = normal end only (NOT escape - we handle that separately)
+        int at_pattern_boundary = at_custom_loop_end || at_full_pattern_end;
 
         // --- CRITICAL: process pending pattern jump first and return ---
         if (at_pattern_boundary &&
@@ -597,31 +602,23 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             g->custom_loop_rows = 0;
             g->pending_pattern_mode_order = -1;
             g->queued_jump_type = 0;  // Clear visual feedback
-            openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
-            apply_pending_mute_changes(g);
-            if (g->interactive_ok) reapply_mutes(g);
-            if (g->on_loop_pattern)
-                g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
+
+            // Validate the new pattern has valid rows
+            if (g->full_loop_rows > 0) {
+                openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
+                apply_pending_mute_changes(g);
+                if (g->interactive_ok) reapply_mutes(g);
+                if (g->on_loop_pattern)
+                    g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
+            }
             g->prev_row = -1;
+            g->prev_order = g->loop_order;  // Update prev_order to avoid false escape detection
             return count;
         }
 
         // Then do standard wrap/loop logic
-        if (!escaped_loop_order) {
-            // Still in the same order
-            if (at_custom_loop_end || at_full_pattern_end) {
-                openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
-                apply_pending_mute_changes(g);
-                if (g->interactive_ok)
-                    reapply_mutes(g);
-                if (g->on_loop_pattern)
-                    g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
-                g->prev_row = -1;
-            } else {
-                g->prev_row = cur_row;
-            }
-        } else {
-            // Escaped loop order (pattern break/jump command) - snap back
+        if (at_pattern_boundary) {
+            // At normal pattern end - wrap to beginning
             openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
             apply_pending_mute_changes(g);
             if (g->interactive_ok)
@@ -629,6 +626,21 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             if (g->on_loop_pattern)
                 g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
             g->prev_row = -1;
+        } else if (escaped_loop_order) {
+            // Pattern break/jump command detected in middle of pattern
+            // Switch the loop to the new pattern instead of snapping back
+            g->loop_order = cur_order;
+            g->loop_pattern = cur_pattern;
+            g->full_loop_rows = openmpt_module_get_pattern_num_rows(g->mod, g->loop_pattern);
+            g->custom_loop_rows = 0;
+            g->prev_row = cur_row;
+
+            // Notify UI that loop switched to new pattern
+            if (g->on_loop_pattern)
+                g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
+        } else {
+            // Normal playback - just update row tracking
+            g->prev_row = cur_row;
         }
     }
     else if (g->has_queued_jump) {
