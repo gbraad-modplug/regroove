@@ -669,25 +669,33 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         int at_pattern_boundary = at_custom_loop_end || at_full_pattern_end;
 
         // --- CRITICAL: process pending pattern jump first and return ---
-        if (at_pattern_boundary &&
-            g->pending_pattern_mode_order != -1 && g->pending_pattern_mode_order != g->loop_order) {
-            g->loop_order = g->pending_pattern_mode_order;
-            g->loop_pattern = openmpt_module_get_order_pattern(g->mod, g->loop_order);
-            g->full_loop_rows = openmpt_module_get_pattern_num_rows(g->mod, g->loop_pattern);
-            g->custom_loop_rows = 0;
+        if (at_pattern_boundary && g->pending_pattern_mode_order != -1) {
+            int is_same_order = (g->pending_pattern_mode_order == g->loop_order);
+
+            if (!is_same_order) {
+                // Different order - do the jump
+                g->loop_order = g->pending_pattern_mode_order;
+                g->loop_pattern = openmpt_module_get_order_pattern(g->mod, g->loop_order);
+                g->full_loop_rows = openmpt_module_get_pattern_num_rows(g->mod, g->loop_pattern);
+                g->custom_loop_rows = 0;
+
+                // Validate the new pattern has valid rows
+                if (g->full_loop_rows > 0) {
+                    openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
+                    apply_pending_mute_changes(g);
+                    if (g->interactive_ok) reapply_mutes(g);
+                    if (g->on_loop_pattern)
+                        g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
+                }
+                g->prev_row = -1;
+                g->prev_order = g->loop_order;  // Update prev_order to avoid false escape detection
+            }
+
+            // Clear pending state (whether jump happened or not)
             g->pending_pattern_mode_order = -1;
             g->queued_jump_type = 0;  // Clear visual feedback
 
-            // Validate the new pattern has valid rows
-            if (g->full_loop_rows > 0) {
-                openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
-                apply_pending_mute_changes(g);
-                if (g->interactive_ok) reapply_mutes(g);
-                if (g->on_loop_pattern)
-                    g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
-            }
-            g->prev_row = -1;
-            g->prev_order = g->loop_order;  // Update prev_order to avoid false escape detection
+            // Return regardless of whether jump happened
             return count;
         }
 
