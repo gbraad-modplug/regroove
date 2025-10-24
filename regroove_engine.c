@@ -430,12 +430,28 @@ static void process_commands(struct Regroove* g) {
                     }
                     // Toggle pending mute state for this channel
                     g->pending_mute_states[cmd->arg1] = !g->pending_mute_states[cmd->arg1];
-                    g->has_pending_mute_changes = 1;
 
                     // Track that this specific channel had MUTE queued
+                    // BUT: if pending state == current state, that means we're canceling the change
                     if (g->queued_action_per_channel) {
-                        g->queued_action_per_channel[cmd->arg1] = 1; // mute
+                        if (g->pending_mute_states[cmd->arg1] != g->mute_states[cmd->arg1]) {
+                            // There IS a pending change - mark it
+                            g->queued_action_per_channel[cmd->arg1] = 1; // mute
+                        } else {
+                            // No change - cancel the queued action
+                            g->queued_action_per_channel[cmd->arg1] = 0;
+                        }
                     }
+
+                    // Check if there are ANY pending changes left across all channels
+                    int has_changes = 0;
+                    for (int i = 0; i < g->num_channels; i++) {
+                        if (g->pending_mute_states[i] != g->mute_states[i]) {
+                            has_changes = 1;
+                            break;
+                        }
+                    }
+                    g->has_pending_mute_changes = has_changes;
                 }
                 break;
             case RG_CMD_QUEUE_CHANNEL_SOLO:
