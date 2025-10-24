@@ -50,6 +50,7 @@ RegrooveMetadata* regroove_metadata_create(void) {
     // Initialize channel names (empty = use default "CH N")
     for (int i = 0; i < 64; i++) {
         meta->channel_names[i][0] = '\0';
+        meta->channel_pan[i] = -1;  // -1 = use module's default panning
     }
 
     return meta;
@@ -248,6 +249,17 @@ int regroove_metadata_load(RegrooveMetadata *meta, const char *rgx_path) {
                     meta->channel_names[ch_idx][31] = '\0';
                 }
             }
+        } else if (strcmp(section, "ChannelPanning") == 0) {
+            // Channel panning configuration
+            if (strncmp(key, "channel_", 8) == 0) {
+                int ch_idx = atoi(key + 8);
+                if (ch_idx >= 0 && ch_idx < 64) {
+                    int pan = atoi(value);
+                    if (pan >= -1 && pan <= 127) {
+                        meta->channel_pan[ch_idx] = pan;
+                    }
+                }
+            }
         } else if (strcmp(section, "MIDIMapping") == 0) {
             // MIDI mapping configuration: instrument_X_channel, instrument_X_name
             if (strncmp(key, "instrument_", 11) == 0) {
@@ -378,6 +390,25 @@ int regroove_metadata_save(const RegrooveMetadata *meta, const char *rgx_path) {
         for (int i = 0; i < 64; i++) {
             if (meta->channel_names[i][0] != '\0') {
                 fprintf(f, "channel_%d=%s\n", i, meta->channel_names[i]);
+            }
+        }
+        fprintf(f, "\n");
+    }
+
+    // Write Channel Panning section if any custom panning exists
+    int has_channel_panning = 0;
+    for (int i = 0; i < 64; i++) {
+        if (meta->channel_pan[i] != -1) {
+            has_channel_panning = 1;
+            break;
+        }
+    }
+    if (has_channel_panning) {
+        fprintf(f, "[ChannelPanning]\n");
+        fprintf(f, "# Pan values: -1 = use module default, 0 = hard left, 64 = center, 127 = hard right\n");
+        for (int i = 0; i < 64; i++) {
+            if (meta->channel_pan[i] != -1) {
+                fprintf(f, "channel_%d=%d\n", i, meta->channel_pan[i]);
             }
         }
         fprintf(f, "\n");

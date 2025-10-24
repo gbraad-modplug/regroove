@@ -71,6 +71,10 @@ typedef struct {
     // Empty string means use default channel name (e.g., "CH 1")
     char channel_names[64][32];  // Support up to 64 channels
 
+    // Channel default panning (song-global override)
+    // -1 = use module's default, 0 = hard left, 64 = center, 127 = hard right
+    int channel_pan[64];  // Support up to 64 channels
+
     // MIDI output channel mapping for instruments/samples
     // -2 = disabled (no MIDI output), -1 = auto (instrument_index % 16), 0-15 = specific MIDI channel
     int instrument_midi_channels[RGX_MAX_INSTRUMENTS];

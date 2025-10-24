@@ -4515,6 +4515,70 @@ static void ShowMainUI() {
 
             ImGui::Dummy(ImVec2(0, 12.0f));
             ImGui::TextWrapped("Pattern descriptions are automatically saved to a .rgx file alongside your module file.");
+
+            // Channel Panning Section
+            ImGui::Dummy(ImVec2(0, 20.0f));
+            ImGui::TextColored(COLOR_SECTION_HEADING, "CHANNEL PANNING");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            ImGui::TextWrapped("Set default panning for each channel. This overrides the module's panning and is useful for multi-channel mods where channels are duplicated left/right.");
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            int num_channels = regroove_get_num_channels(mod);
+
+            ImGui::BeginChild("##channel_pan_list", ImVec2(rightW - 64.0f, 300.0f), true);
+
+            for (int ch = 0; ch < num_channels; ch++) {
+                ImGui::PushID(ch);
+
+                // Channel label (show custom name if available)
+                if (common_state->metadata->channel_names[ch][0] != '\0') {
+                    ImGui::Text("Ch %d (%s):", ch, common_state->metadata->channel_names[ch]);
+                } else {
+                    ImGui::Text("Channel %d:", ch);
+                }
+                ImGui::SameLine(150.0f);
+
+                // Get current panning value (-1 = use module default, 0-127 = custom)
+                int current_pan = common_state->metadata->channel_pan[ch];
+
+                // Slider for panning (0 = left, 64 = center, 127 = right)
+                int pan_value = (current_pan == -1) ? 64 : current_pan;  // Default to center if unset
+                ImGui::SetNextItemWidth(250.0f);
+                if (ImGui::SliderInt("##pan", &pan_value, 0, 127, pan_value == 64 ? "Center" : (pan_value < 64 ? "L %d" : "R %d"))) {
+                    common_state->metadata->channel_pan[ch] = pan_value;
+
+                    // Apply panning immediately to the playing module
+                    if (mod) {
+                        regroove_set_channel_panning(mod, ch, (double)pan_value / 127.0);
+                    }
+
+                    save_rgx_metadata();
+                }
+
+                ImGui::SameLine();
+
+                // Reset button to restore module default
+                if (ImGui::Button("Reset")) {
+                    common_state->metadata->channel_pan[ch] = -1;
+
+                    // Reset to module default panning
+                    if (mod) {
+                        // Get the original panning from the module
+                        regroove_set_channel_panning(mod, ch, -1.0);  // -1 signals to use module default
+                    }
+
+                    save_rgx_metadata();
+                }
+
+                ImGui::PopID();
+            }
+
+            ImGui::EndChild();
+
+            ImGui::Dummy(ImVec2(0, 12.0f));
+            ImGui::TextWrapped("Channel panning settings are saved to the .rgx file. Use 'Reset' to restore the module's original panning.");
         }
 
         ImGui::EndChild(); // End info_scroll child window

@@ -418,6 +418,15 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
                 // Successfully loaded .rgx metadata
                 printf("Loaded metadata from %s\n", rgx_path);
 
+                // Apply channel panning settings from metadata
+                int num_channels = regroove_get_num_channels(mod);
+                for (int ch = 0; ch < num_channels && ch < 64; ch++) {
+                    if (state->metadata->channel_pan[ch] != -1) {
+                        // Apply custom panning (convert 0-127 to 0.0-1.0)
+                        regroove_set_channel_panning(mod, ch, (double)state->metadata->channel_pan[ch] / 127.0);
+                    }
+                }
+
                 // Load performance events from the same .rgx file
                 if (state->performance) {
                     if (regroove_performance_load(state->performance, rgx_path) == 0) {
