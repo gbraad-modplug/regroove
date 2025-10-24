@@ -63,8 +63,13 @@ typedef struct {
         int start_row;
         int end_order;
         int end_row;
+        char description[64];  // Loop description (e.g., "INTRO", "CHORUS", "BRIDGE")
     } loop_ranges[16];  // Support up to 16 saved loop ranges
     int loop_range_count;
+
+    // Channel names (song-global, shown in channel actions on pads)
+    // Empty string means use default channel name (e.g., "CH 1")
+    char channel_names[64][32];  // Support up to 64 channels
 
     // MIDI output channel mapping for instruments/samples
     // -2 = disabled (no MIDI output), -1 = auto (instrument_index % 16), 0-15 = specific MIDI channel

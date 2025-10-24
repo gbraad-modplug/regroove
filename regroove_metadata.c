@@ -41,6 +41,17 @@ RegrooveMetadata* regroove_metadata_create(void) {
         meta->instrument_names[i][0] = '\0';  // Empty = use module's name
     }
 
+    // Initialize loop ranges
+    meta->loop_range_count = 0;
+    for (int i = 0; i < 16; i++) {
+        meta->loop_ranges[i].description[0] = '\0';  // Empty description
+    }
+
+    // Initialize channel names (empty = use default "CH N")
+    for (int i = 0; i < 64; i++) {
+        meta->channel_names[i][0] = '\0';
+    }
+
     return meta;
 }
 
@@ -222,7 +233,19 @@ int regroove_metadata_load(RegrooveMetadata *meta, const char *rgx_path) {
                         meta->loop_ranges[loop_idx].end_order = atoi(value);
                     } else if (strstr(key, "_end_row")) {
                         meta->loop_ranges[loop_idx].end_row = atoi(value);
+                    } else if (strstr(key, "_description")) {
+                        strncpy(meta->loop_ranges[loop_idx].description, value, 63);
+                        meta->loop_ranges[loop_idx].description[63] = '\0';
                     }
+                }
+            }
+        } else if (strcmp(section, "ChannelNames") == 0) {
+            // Channel name configuration
+            if (strncmp(key, "channel_", 8) == 0) {
+                int ch_idx = atoi(key + 8);
+                if (ch_idx >= 0 && ch_idx < 64) {
+                    strncpy(meta->channel_names[ch_idx], value, 31);
+                    meta->channel_names[ch_idx][31] = '\0';
                 }
             }
         } else if (strcmp(section, "MIDIMapping") == 0) {
@@ -335,6 +358,27 @@ int regroove_metadata_save(const RegrooveMetadata *meta, const char *rgx_path) {
             fprintf(f, "loop_%d_start_row=%d\n", i, meta->loop_ranges[i].start_row);
             fprintf(f, "loop_%d_end_order=%d\n", i, meta->loop_ranges[i].end_order);
             fprintf(f, "loop_%d_end_row=%d\n", i, meta->loop_ranges[i].end_row);
+            if (meta->loop_ranges[i].description[0] != '\0') {
+                fprintf(f, "loop_%d_description=%s\n", i, meta->loop_ranges[i].description);
+            }
+        }
+        fprintf(f, "\n");
+    }
+
+    // Write Channel Names section if any exist
+    int has_channel_names = 0;
+    for (int i = 0; i < 64; i++) {
+        if (meta->channel_names[i][0] != '\0') {
+            has_channel_names = 1;
+            break;
+        }
+    }
+    if (has_channel_names) {
+        fprintf(f, "[ChannelNames]\n");
+        for (int i = 0; i < 64; i++) {
+            if (meta->channel_names[i][0] != '\0') {
+                fprintf(f, "channel_%d=%s\n", i, meta->channel_names[i]);
+            }
         }
         fprintf(f, "\n");
     }

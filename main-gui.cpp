@@ -1477,8 +1477,10 @@ static void unlearn_current_target() {
 
 // Helper function to format action name for display on pads
 // Returns action text (line 1) and parameter text (line 2)
+// Pulls descriptions from metadata (pattern names, phrase names, loop names, channel names)
 static void format_pad_action_text(InputAction action, int parameter, char *line1, size_t line1_size,
-                                    char *line2, size_t line2_size) {
+                                    char *line2, size_t line2_size,
+                                    Regroove *player, RegrooveMetadata *metadata) {
     line1[0] = '\0';
     line2[0] = '\0';
 
@@ -1503,60 +1505,109 @@ static void format_pad_action_text(InputAction action, int parameter, char *line
         case ACTION_FILE_LOAD: snprintf(line1, line1_size, "FILE\nLOAD"); break;
         case ACTION_CHANNEL_MUTE:
             snprintf(line1, line1_size, "MUTE");
-            snprintf(line2, line2_size, "CH %d", parameter + 1);
+            // Use custom channel name if available
+            if (metadata && metadata->channel_names[parameter][0] != '\0') {
+                snprintf(line2, line2_size, "%s", metadata->channel_names[parameter]);
+            } else {
+                snprintf(line2, line2_size, "CH %d", parameter + 1);
+            }
             break;
         case ACTION_CHANNEL_SOLO:
             snprintf(line1, line1_size, "SOLO");
-            snprintf(line2, line2_size, "CH %d", parameter + 1);
+            if (metadata && metadata->channel_names[parameter][0] != '\0') {
+                snprintf(line2, line2_size, "%s", metadata->channel_names[parameter]);
+            } else {
+                snprintf(line2, line2_size, "CH %d", parameter + 1);
+            }
             break;
         case ACTION_QUEUE_CHANNEL_MUTE:
             snprintf(line1, line1_size, "Q.MUTE");
-            snprintf(line2, line2_size, "CH %d", parameter + 1);
+            if (metadata && metadata->channel_names[parameter][0] != '\0') {
+                snprintf(line2, line2_size, "%s", metadata->channel_names[parameter]);
+            } else {
+                snprintf(line2, line2_size, "CH %d", parameter + 1);
+            }
             break;
         case ACTION_QUEUE_CHANNEL_SOLO:
             snprintf(line1, line1_size, "Q.SOLO");
-            snprintf(line2, line2_size, "CH %d", parameter + 1);
+            if (metadata && metadata->channel_names[parameter][0] != '\0') {
+                snprintf(line2, line2_size, "%s", metadata->channel_names[parameter]);
+            } else {
+                snprintf(line2, line2_size, "CH %d", parameter + 1);
+            }
             break;
         case ACTION_CHANNEL_VOLUME:
             snprintf(line1, line1_size, "VOLUME");
-            snprintf(line2, line2_size, "CH %d", parameter + 1);
+            if (metadata && metadata->channel_names[parameter][0] != '\0') {
+                snprintf(line2, line2_size, "%s", metadata->channel_names[parameter]);
+            } else {
+                snprintf(line2, line2_size, "CH %d", parameter + 1);
+            }
             break;
         case ACTION_CHANNEL_PAN:
             snprintf(line1, line1_size, "PAN");
-            snprintf(line2, line2_size, "CH %d", parameter + 1);
+            if (metadata && metadata->channel_names[parameter][0] != '\0') {
+                snprintf(line2, line2_size, "%s", metadata->channel_names[parameter]);
+            } else {
+                snprintf(line2, line2_size, "CH %d", parameter + 1);
+            }
             break;
         case ACTION_TRIGGER_PAD:
             snprintf(line1, line1_size, "TRIG");
             snprintf(line2, line2_size, "PAD %d", parameter + 1);
             break;
         case ACTION_JUMP_TO_ORDER:
-            snprintf(line1, line1_size, "JUMP");
-            snprintf(line2, line2_size, "O:%d", parameter);
+        case ACTION_QUEUE_ORDER: {
+            // Get pattern description for this order
+            int pattern = player ? regroove_get_order_pattern(player, parameter) : -1;
+            const char *desc = (metadata && pattern >= 0) ? regroove_metadata_get_pattern_desc(metadata, pattern) : NULL;
+
+            snprintf(line1, line1_size, action == ACTION_JUMP_TO_ORDER ? "JUMP" : "Q.JUMP");
+            if (desc && desc[0] != '\0') {
+                snprintf(line2, line2_size, "%s", desc);
+            } else {
+                snprintf(line2, line2_size, "O:%d", parameter);
+            }
             break;
+        }
         case ACTION_JUMP_TO_PATTERN:
-            snprintf(line1, line1_size, "JUMP");
-            snprintf(line2, line2_size, "P:%d", parameter);
+        case ACTION_QUEUE_PATTERN: {
+            // Get pattern description
+            const char *desc = metadata ? regroove_metadata_get_pattern_desc(metadata, parameter) : NULL;
+
+            snprintf(line1, line1_size, action == ACTION_JUMP_TO_PATTERN ? "JUMP" : "Q.JUMP");
+            if (desc && desc[0] != '\0') {
+                snprintf(line2, line2_size, "%s", desc);
+            } else {
+                snprintf(line2, line2_size, "P:%d", parameter);
+            }
             break;
-        case ACTION_QUEUE_ORDER:
-            snprintf(line1, line1_size, "Q.JUMP");
-            snprintf(line2, line2_size, "O:%d", parameter);
-            break;
-        case ACTION_QUEUE_PATTERN:
-            snprintf(line1, line1_size, "Q.JUMP");
-            snprintf(line2, line2_size, "P:%d", parameter);
-            break;
+        }
         case ACTION_TRIGGER_PHRASE:
-            snprintf(line1, line1_size, "PHRASE");
-            snprintf(line2, line2_size, "#%d", parameter);
+            // Use phrase name if available
+            if (metadata && parameter >= 0 && parameter < metadata->phrase_count &&
+                metadata->phrases[parameter].name[0] != '\0') {
+                snprintf(line1, line1_size, "%s", metadata->phrases[parameter].name);
+                line2[0] = '\0';  // No line 2 needed
+            } else {
+                snprintf(line1, line1_size, "PHRASE");
+                snprintf(line2, line2_size, "#%d", parameter + 1);
+            }
             break;
         case ACTION_TRIGGER_LOOP:
-            snprintf(line1, line1_size, "LOOP");
-            snprintf(line2, line2_size, "#%d", parameter);
+        case ACTION_PLAY_TO_LOOP: {
+            // Use loop description if available
+            const char *loop_desc = (metadata && parameter >= 0 && parameter < metadata->loop_range_count)
+                ? metadata->loop_ranges[parameter].description : NULL;
+
+            snprintf(line1, line1_size, action == ACTION_TRIGGER_LOOP ? "LOOP" : "ARM\nLOOP");
+            if (loop_desc && loop_desc[0] != '\0') {
+                snprintf(line2, line2_size, "%s", loop_desc);
+            } else {
+                snprintf(line2, line2_size, "#%d", parameter + 1);
+            }
             break;
-        case ACTION_PLAY_TO_LOOP:
-            snprintf(line1, line1_size, "ARM\nLOOP");
-            snprintf(line2, line2_size, "#%d", parameter);
-            break;
+        }
         case ACTION_FX_DISTORTION_TOGGLE: snprintf(line1, line1_size, "DIST\nTOGGLE"); break;
         case ACTION_FX_FILTER_TOGGLE: snprintf(line1, line1_size, "FILTER\nTOGGLE"); break;
         case ACTION_FX_EQ_TOGGLE: snprintf(line1, line1_size, "EQ\nTOGGLE"); break;
@@ -3125,7 +3176,8 @@ static void ShowMainUI() {
                 // If pad has an action assigned, show action name instead of pad number
                 if (pad && pad->action != ACTION_NONE) {
                     format_pad_action_text(pad->action, pad->parameter, action_line1, sizeof(action_line1),
-                                          action_line2, sizeof(action_line2));
+                                          action_line2, sizeof(action_line2),
+                                          player, common_state ? common_state->metadata : NULL);
                     if (action_line2[0] != '\0') {
                         // Two lines: action + parameter
                         snprintf(label, sizeof(label), "%s\n%s", action_line1, action_line2);
