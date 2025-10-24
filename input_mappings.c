@@ -13,8 +13,13 @@ InputAction parse_action(const char *str) {
     if (strcmp(str, "play") == 0) return ACTION_PLAY;
     if (strcmp(str, "stop") == 0) return ACTION_STOP;
     if (strcmp(str, "retrigger") == 0) return ACTION_RETRIGGER;
-    if (strcmp(str, "next_order") == 0) return ACTION_NEXT_ORDER;
-    if (strcmp(str, "prev_order") == 0) return ACTION_PREV_ORDER;
+    if (strcmp(str, "jump_next_order") == 0) return ACTION_JUMP_NEXT_ORDER;
+    if (strcmp(str, "jump_prev_order") == 0) return ACTION_JUMP_PREV_ORDER;
+    if (strcmp(str, "queue_next_order") == 0) return ACTION_QUEUE_NEXT_ORDER;
+    if (strcmp(str, "queue_prev_order") == 0) return ACTION_QUEUE_PREV_ORDER;
+    // Legacy support (old configs used "next_order" / "prev_order" which were queued)
+    if (strcmp(str, "next_order") == 0) return ACTION_QUEUE_NEXT_ORDER;
+    if (strcmp(str, "prev_order") == 0) return ACTION_QUEUE_PREV_ORDER;
     if (strcmp(str, "halve_loop") == 0) return ACTION_HALVE_LOOP;
     if (strcmp(str, "full_loop") == 0) return ACTION_FULL_LOOP;
     if (strcmp(str, "pattern_mode_toggle") == 0) return ACTION_PATTERN_MODE_TOGGLE;
@@ -80,8 +85,10 @@ const char* input_action_name(InputAction action) {
         case ACTION_PLAY: return "play";
         case ACTION_STOP: return "stop";
         case ACTION_RETRIGGER: return "retrigger";
-        case ACTION_NEXT_ORDER: return "next_order";
-        case ACTION_PREV_ORDER: return "prev_order";
+        case ACTION_JUMP_NEXT_ORDER: return "jump_next_order";
+        case ACTION_JUMP_PREV_ORDER: return "jump_prev_order";
+        case ACTION_QUEUE_NEXT_ORDER: return "queue_next_order";
+        case ACTION_QUEUE_PREV_ORDER: return "queue_prev_order";
         case ACTION_HALVE_LOOP: return "halve_loop";
         case ACTION_FULL_LOOP: return "full_loop";
         case ACTION_PATTERN_MODE_TOGGLE: return "pattern_mode_toggle";
@@ -197,8 +204,8 @@ void input_mappings_reset_defaults(InputMappings *mappings) {
     mappings->trigger_pads[2].action = ACTION_RETRIGGER;            // P3: Retrigger
     mappings->trigger_pads[3].action = ACTION_PATTERN_MODE_TOGGLE;  // P4: Loop toggle
 
-    mappings->trigger_pads[4].action = ACTION_PREV_ORDER;           // P5: Previous order
-    mappings->trigger_pads[5].action = ACTION_NEXT_ORDER;           // P6: Next order
+    mappings->trigger_pads[4].action = ACTION_QUEUE_PREV_ORDER;     // P5: Previous order (queued)
+    mappings->trigger_pads[5].action = ACTION_QUEUE_NEXT_ORDER;     // P6: Next order (queued)
     mappings->trigger_pads[6].action = ACTION_HALVE_LOOP;           // P7: Halve loop
     mappings->trigger_pads[7].action = ACTION_FULL_LOOP;            // P8: Full loop
 
@@ -219,8 +226,8 @@ void input_mappings_reset_defaults(InputMappings *mappings) {
         {-1, 41, ACTION_PLAY, 0, 64, 0},
         {-1, 42, ACTION_STOP, 0, 64, 0},
         {-1, 46, ACTION_PATTERN_MODE_TOGGLE, 0, 64, 0},
-        {-1, 44, ACTION_NEXT_ORDER, 0, 64, 0},
-        {-1, 43, ACTION_PREV_ORDER, 0, 64, 0},
+        {-1, 44, ACTION_JUMP_NEXT_ORDER, 0, 64, 0},
+        {-1, 43, ACTION_JUMP_PREV_ORDER, 0, 64, 0},
         {-1, 60, ACTION_FILE_LOAD, 0, 64, 0},
         {-1, 61, ACTION_FILE_PREV, 0, 64, 0},
         {-1, 62, ACTION_FILE_NEXT, 0, 64, 0},
@@ -264,10 +271,10 @@ void input_mappings_reset_defaults(InputMappings *mappings) {
         {' ', ACTION_PLAY_PAUSE, 0},
         {'r', ACTION_RETRIGGER, 0},
         {'R', ACTION_RETRIGGER, 0},
-        {'N', ACTION_NEXT_ORDER, 0},
-        {'n', ACTION_NEXT_ORDER, 0},
-        {'P', ACTION_PREV_ORDER, 0},
-        {'p', ACTION_PREV_ORDER, 0},
+        {'N', ACTION_QUEUE_NEXT_ORDER, 0},
+        {'n', ACTION_QUEUE_NEXT_ORDER, 0},
+        {'P', ACTION_QUEUE_PREV_ORDER, 0},
+        {'p', ACTION_QUEUE_PREV_ORDER, 0},
         {'h', ACTION_HALVE_LOOP, 0},
         {'H', ACTION_HALVE_LOOP, 0},
         {'f', ACTION_FULL_LOOP, 0},

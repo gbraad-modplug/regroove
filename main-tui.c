@@ -316,7 +316,7 @@ static void execute_action(InputAction action, int parameter, float value, void*
             regroove_common_retrigger(common_state);
             printf("Triggered retrigger.\n");
             break;
-        case ACTION_NEXT_ORDER:
+        case ACTION_QUEUE_NEXT_ORDER:
             regroove_common_next_order(common_state);
             if (common_state->player) {
                 int next_order = regroove_get_current_order(common_state->player) + 1;
@@ -325,7 +325,7 @@ static void execute_action(InputAction action, int parameter, float value, void*
                         next_order, regroove_get_order_pattern(common_state->player, next_order));
             }
             break;
-        case ACTION_PREV_ORDER:
+        case ACTION_QUEUE_PREV_ORDER:
             regroove_common_prev_order(common_state);
             if (common_state->player) {
                 int prev_order = regroove_get_current_order(common_state->player) > 0 ?

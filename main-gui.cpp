@@ -436,8 +436,10 @@ enum GuiAction {
     ACT_PLAY,
     ACT_STOP,
     ACT_TOGGLE_LOOP,
-    ACT_NEXT_ORDER,
-    ACT_PREV_ORDER,
+    ACT_JUMP_NEXT_ORDER,     // Immediate jump (for scrubbing << >>)
+    ACT_JUMP_PREV_ORDER,     // Immediate jump (for scrubbing << >>)
+    ACT_QUEUE_NEXT_ORDER,    // Queued jump (beat-synced)
+    ACT_QUEUE_PREV_ORDER,    // Queued jump (beat-synced)
     ACT_RETRIGGER,
     ACT_SET_PITCH,
     ACT_PITCH_RESET,
@@ -473,8 +475,10 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                 case ACT_PLAY: input_action = ACTION_PLAY; break;
                 case ACT_STOP: input_action = ACTION_STOP; break;
                 case ACT_TOGGLE_LOOP: input_action = ACTION_PATTERN_MODE_TOGGLE; break;
-                case ACT_NEXT_ORDER: input_action = ACTION_NEXT_ORDER; break;
-                case ACT_PREV_ORDER: input_action = ACTION_PREV_ORDER; break;
+                case ACT_JUMP_NEXT_ORDER: input_action = ACTION_JUMP_NEXT_ORDER; break;
+                case ACT_JUMP_PREV_ORDER: input_action = ACTION_JUMP_PREV_ORDER; break;
+                case ACT_QUEUE_NEXT_ORDER: input_action = ACTION_QUEUE_NEXT_ORDER; break;
+                case ACT_QUEUE_PREV_ORDER: input_action = ACTION_QUEUE_PREV_ORDER; break;
                 case ACT_RETRIGGER: input_action = ACTION_RETRIGGER; break;
                 case ACT_HALVE_LOOP: input_action = ACTION_HALVE_LOOP; break;
                 case ACT_FULL_LOOP: input_action = ACTION_FULL_LOOP; break;
@@ -547,10 +551,32 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                 }
             }
             break;
-        case ACT_NEXT_ORDER:
+        case ACT_JUMP_NEXT_ORDER:
+            // Immediate jump to next order (for scrubbing)
+            if (mod) {
+                int cur_order = regroove_get_current_order(mod);
+                int next_order = cur_order + 1;
+                if (next_order < regroove_get_num_orders(mod)) {
+                    regroove_jump_to_order(mod, next_order);
+                }
+            }
+            break;
+        case ACT_JUMP_PREV_ORDER:
+            // Immediate jump to previous order (for scrubbing)
+            if (mod) {
+                int cur_order = regroove_get_current_order(mod);
+                int prev_order = cur_order - 1;
+                if (prev_order >= 0) {
+                    regroove_jump_to_order(mod, prev_order);
+                }
+            }
+            break;
+        case ACT_QUEUE_NEXT_ORDER:
+            // Queued jump to next order (beat-synced)
             if (mod) regroove_queue_next_order(mod);
             break;
-        case ACT_PREV_ORDER:
+        case ACT_QUEUE_PREV_ORDER:
+            // Queued jump to previous order (beat-synced)
             if (mod) regroove_queue_prev_order(mod);
             break;
         case ACT_RETRIGGER:
@@ -805,11 +831,17 @@ static void execute_action(InputAction action, int parameter, float value, void*
         case ACTION_RETRIGGER:
             dispatch_action(ACT_RETRIGGER, -1, 0.0f, false);
             break;
-        case ACTION_NEXT_ORDER:
-            dispatch_action(ACT_NEXT_ORDER, -1, 0.0f, false);
+        case ACTION_JUMP_NEXT_ORDER:
+            dispatch_action(ACT_JUMP_NEXT_ORDER, -1, 0.0f, false);
             break;
-        case ACTION_PREV_ORDER:
-            dispatch_action(ACT_PREV_ORDER, -1, 0.0f, false);
+        case ACTION_JUMP_PREV_ORDER:
+            dispatch_action(ACT_JUMP_PREV_ORDER, -1, 0.0f, false);
+            break;
+        case ACTION_QUEUE_NEXT_ORDER:
+            dispatch_action(ACT_QUEUE_NEXT_ORDER, -1, 0.0f, false);
+            break;
+        case ACTION_QUEUE_PREV_ORDER:
+            dispatch_action(ACT_QUEUE_PREV_ORDER, -1, 0.0f, false);
             break;
         case ACTION_HALVE_LOOP:
             dispatch_action(ACT_HALVE_LOOP, -1, 0.0f, false);
@@ -1152,12 +1184,12 @@ static bool try_cancel_pending_action(InputAction action, int parameter) {
             printf("Cancelled queue to pattern %d\n", parameter);
             return true;
         }
-    } else if (action == ACTION_NEXT_ORDER && queued_jump == 1) {
+    } else if (action == ACTION_QUEUE_NEXT_ORDER && queued_jump == 1) {
         // Cancel queued next order
         regroove_clear_pending_jump(player);
         printf("Cancelled queue next order\n");
         return true;
-    } else if (action == ACTION_PREV_ORDER && queued_jump == 2) {
+    } else if (action == ACTION_QUEUE_PREV_ORDER && queued_jump == 2) {
         // Cancel queued prev order
         regroove_clear_pending_jump(player);
         printf("Cancelled queue prev order\n");
@@ -1220,7 +1252,7 @@ static void handle_input_event(InputEvent *event, bool from_playback) {
     if (!from_playback) {
         if (event->action == ACTION_PLAY_PAUSE || event->action == ACTION_PLAY || event->action == ACTION_STOP ||
             event->action == ACTION_RETRIGGER ||
-            event->action == ACTION_NEXT_ORDER || event->action == ACTION_PREV_ORDER ||
+            event->action == ACTION_QUEUE_NEXT_ORDER || event->action == ACTION_QUEUE_PREV_ORDER ||
             event->action == ACTION_JUMP_TO_ORDER || event->action == ACTION_JUMP_TO_PATTERN ||
             event->action == ACTION_QUEUE_ORDER || event->action == ACTION_QUEUE_PATTERN) {
             if (common_state && common_state->phrase && regroove_phrase_is_active(common_state->phrase)) {
@@ -1489,8 +1521,10 @@ static void format_pad_action_text(InputAction action, int parameter, char *line
         case ACTION_PLAY: snprintf(line1, line1_size, "PLAY"); break;
         case ACTION_STOP: snprintf(line1, line1_size, "STOP"); break;
         case ACTION_RETRIGGER: snprintf(line1, line1_size, "RETRIG"); break;
-        case ACTION_NEXT_ORDER: snprintf(line1, line1_size, "NEXT\nORDER"); break;
-        case ACTION_PREV_ORDER: snprintf(line1, line1_size, "PREV\nORDER"); break;
+        case ACTION_JUMP_NEXT_ORDER: snprintf(line1, line1_size, "NEXT\nORDER"); break;
+        case ACTION_JUMP_PREV_ORDER: snprintf(line1, line1_size, "PREV\nORDER"); break;
+        case ACTION_QUEUE_NEXT_ORDER: snprintf(line1, line1_size, "Q.NEXT\nORDER"); break;
+        case ACTION_QUEUE_PREV_ORDER: snprintf(line1, line1_size, "Q.PREV\nORDER"); break;
         case ACTION_HALVE_LOOP: snprintf(line1, line1_size, "HALF\nLOOP"); break;
         case ACTION_FULL_LOOP: snprintf(line1, line1_size, "FULL\nLOOP"); break;
         case ACTION_PATTERN_MODE_TOGGLE: snprintf(line1, line1_size, "LOOP\nMODE"); break;
@@ -1584,13 +1618,12 @@ static void format_pad_action_text(InputAction action, int parameter, char *line
             break;
         }
         case ACTION_TRIGGER_PHRASE:
-            // Use phrase name if available
+            // Always show "PHRASE" + description/number
+            snprintf(line1, line1_size, "PHRASE");
             if (metadata && parameter >= 0 && parameter < metadata->phrase_count &&
                 metadata->phrases[parameter].name[0] != '\0') {
-                snprintf(line1, line1_size, "%s", metadata->phrases[parameter].name);
-                line2[0] = '\0';  // No line 2 needed
+                snprintf(line2, line2_size, "%s", metadata->phrases[parameter].name);
             } else {
-                snprintf(line1, line1_size, "PHRASE");
                 snprintf(line2, line2_size, "#%d", parameter + 1);
             }
             break;
@@ -2418,8 +2451,8 @@ static void ShowMainUI() {
     }
     ImGui::PushStyleColor(ImGuiCol_Button, prevCol);
     if (ImGui::Button("<<", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        if (learn_mode_active) start_learn_for_action(ACTION_PREV_ORDER);
-        else dispatch_action(ACT_PREV_ORDER);
+        if (learn_mode_active) start_learn_for_action(ACTION_QUEUE_PREV_ORDER);
+        else dispatch_action(ACT_JUMP_PREV_ORDER);
     }
     ImGui::PopStyleColor();
     ImGui::SameLine();
@@ -2435,8 +2468,8 @@ static void ShowMainUI() {
     }
     ImGui::PushStyleColor(ImGuiCol_Button, nextCol);
     if (ImGui::Button(">>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
-        if (learn_mode_active) start_learn_for_action(ACTION_NEXT_ORDER);
-        else dispatch_action(ACT_NEXT_ORDER);
+        if (learn_mode_active) start_learn_for_action(ACTION_QUEUE_NEXT_ORDER);
+        else dispatch_action(ACT_JUMP_NEXT_ORDER);
     }
     ImGui::PopStyleColor();
     ImGui::SameLine();
@@ -2868,9 +2901,9 @@ static void ShowMainUI() {
                     TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[i];
                     bool should_blink = false;
 
-                    if (prev_queued_jump_type == 1 && pad->action == ACTION_NEXT_ORDER) {
+                    if (prev_queued_jump_type == 1 && pad->action == ACTION_QUEUE_NEXT_ORDER) {
                         should_blink = true;
-                    } else if (prev_queued_jump_type == 2 && pad->action == ACTION_PREV_ORDER) {
+                    } else if (prev_queued_jump_type == 2 && pad->action == ACTION_QUEUE_PREV_ORDER) {
                         should_blink = true;
                     } else if (prev_queued_jump_type == 3 && pad->action == ACTION_QUEUE_ORDER) {
                         // Check if this pad's parameter matches the queued order
@@ -2999,9 +3032,9 @@ static void ShowMainUI() {
                     }
 
                     // Check for queued transport actions
-                    if (pad->action == ACTION_NEXT_ORDER && queued_jump == 1) {
+                    if (pad->action == ACTION_QUEUE_NEXT_ORDER && queued_jump == 1) {
                         has_pending = true;
-                    } else if (pad->action == ACTION_PREV_ORDER && queued_jump == 2) {
+                    } else if (pad->action == ACTION_QUEUE_PREV_ORDER && queued_jump == 2) {
                         has_pending = true;
                     } else if (pad->action == ACTION_QUEUE_ORDER && queued_jump == 3) {
                         // Check if this specific order matches the queued order
@@ -3298,9 +3331,9 @@ static void ShowMainUI() {
                     TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[i];
                     bool should_blink = false;
 
-                    if (prev_queued_jump_type == 1 && pad->action == ACTION_NEXT_ORDER) {
+                    if (prev_queued_jump_type == 1 && pad->action == ACTION_QUEUE_NEXT_ORDER) {
                         should_blink = true;
-                    } else if (prev_queued_jump_type == 2 && pad->action == ACTION_PREV_ORDER) {
+                    } else if (prev_queued_jump_type == 2 && pad->action == ACTION_QUEUE_PREV_ORDER) {
                         should_blink = true;
                     } else if (prev_queued_jump_type == 3 && pad->action == ACTION_QUEUE_ORDER) {
                         // Check if this pad's parameter matches the queued order
@@ -3372,9 +3405,9 @@ static void ShowMainUI() {
                     }
 
                     // Check for queued transport actions
-                    if (pad->action == ACTION_NEXT_ORDER && queued_jump == 1) {
+                    if (pad->action == ACTION_QUEUE_NEXT_ORDER && queued_jump == 1) {
                         has_pending = true;
-                    } else if (pad->action == ACTION_PREV_ORDER && queued_jump == 2) {
+                    } else if (pad->action == ACTION_QUEUE_PREV_ORDER && queued_jump == 2) {
                         has_pending = true;
                     } else if (pad->action == ACTION_QUEUE_ORDER && queued_jump == 3) {
                         // Check if this specific order matches the queued order

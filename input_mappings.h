@@ -8,8 +8,10 @@ typedef enum {
     ACTION_PLAY,
     ACTION_STOP,
     ACTION_RETRIGGER,
-    ACTION_NEXT_ORDER,
-    ACTION_PREV_ORDER,
+    ACTION_JUMP_NEXT_ORDER,  // immediate jump to next order (for scrubbing)
+    ACTION_JUMP_PREV_ORDER,  // immediate jump to previous order (for scrubbing)
+    ACTION_QUEUE_NEXT_ORDER, // queued jump to next order (beat-synced)
+    ACTION_QUEUE_PREV_ORDER, // queued jump to previous order (beat-synced)
     ACTION_HALVE_LOOP,
     ACTION_FULL_LOOP,
     ACTION_PATTERN_MODE_TOGGLE,
