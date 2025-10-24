@@ -593,14 +593,8 @@ void regroove_set_callbacks(Regroove *g, struct RegrooveCallbacks *cb) {
 int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
     process_commands(g);
 
-    if (g->has_queued_jump) {
-        openmpt_module_set_position_order_row(g->mod, g->queued_order, g->queued_row);
-        apply_pending_mute_changes(g);
-        if (g->interactive_ok) reapply_mutes(g);
-        g->has_queued_jump = 0;
-        g->queued_jump_type = 0;
-        g->prev_row = -1;
-    }
+    // Note: Queued jumps are now handled at pattern boundaries in song playback mode
+    // (see below in the normal playback section)
 
     int count = openmpt_module_read_interleaved_stereo(
         g->mod, g->samplerate * g->pitch_factor, frames, buffer);
@@ -726,17 +720,8 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             g->prev_row = cur_row;
         }
     }
-    else if (g->has_queued_jump) {
-        openmpt_module_set_position_order_row(g->mod, g->queued_order, g->queued_row);
-        apply_pending_mute_changes(g);
-        if (g->interactive_ok)
-            reapply_mutes(g);
-        g->has_queued_jump = 0;
-        g->queued_jump_type = 0;
-        g->prev_row = -1;
-    }
     else {
-        // Normal song playback mode - apply pending mute changes at pattern boundaries
+        // Normal song playback mode - apply pending changes at pattern boundaries
         // Detect pattern boundary: order changed OR row wrapped to 0
         int boundary_crossed = 0;
         if (g->prev_order != -1 && cur_order != g->prev_order) {
@@ -747,10 +732,23 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             boundary_crossed = 1;
         }
 
-        if (boundary_crossed && g->has_pending_mute_changes) {
-            apply_pending_mute_changes(g);
-            if (g->interactive_ok)
-                reapply_mutes(g);
+        if (boundary_crossed) {
+            // Apply pending mute changes at pattern boundary
+            if (g->has_pending_mute_changes) {
+                apply_pending_mute_changes(g);
+                if (g->interactive_ok)
+                    reapply_mutes(g);
+            }
+
+            // Execute queued jump at pattern boundary
+            if (g->has_queued_jump) {
+                openmpt_module_set_position_order_row(g->mod, g->queued_order, g->queued_row);
+                if (g->interactive_ok)
+                    reapply_mutes(g);
+                g->has_queued_jump = 0;
+                g->queued_jump_type = 0;
+                g->prev_row = -1;
+            }
         }
 
         // Track previous row for next boundary detection
