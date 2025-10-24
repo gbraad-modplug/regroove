@@ -134,8 +134,10 @@ void regroove_phrase_update(RegroovePhrase* phrase) {
             int completed_phrase_index = slot->phrase_index;
             slot->phrase_index = -1;  // Mark as inactive
 
-            // Call completion callback
-            if (phrase->completion_callback) {
+            // Only call completion callback if we've actually started playback
+            // (playback_position > 0). This prevents the callback from firing during
+            // the initial trigger when all steps are at position 0.
+            if (phrase->completion_callback && slot->playback_position > 0) {
                 phrase->completion_callback(completed_phrase_index, phrase->completion_userdata);
             }
         } else {

@@ -513,10 +513,14 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
             if (mod) {
                 // In performance mode, always start from the beginning
                 // BUT: Don't enable performance playback if this is from a phrase
-                if (common_state && common_state->performance && !regroove_common_phrase_is_active(common_state)) {
+                int phrase_active = common_state ? regroove_common_phrase_is_active(common_state) : 0;
+                printf("ACT_PLAY: phrase_active=%d\n", phrase_active);
+                if (common_state && common_state->performance && !phrase_active) {
                     int event_count = regroove_performance_get_event_count(common_state->performance);
+                    printf("ACT_PLAY: Performance mode, event_count=%d\n", event_count);
                     if (event_count > 0) {
                         // Reset song position to order 0 when starting performance playback
+                        printf("ACT_PLAY: Resetting to order 0 for performance playback\n");
                         regroove_jump_to_order(mod, 0);
                         // Enable performance playback only if there are events
                         regroove_performance_set_playback(common_state->performance, 1);
@@ -800,6 +804,8 @@ static void phrase_completion_callback(int phrase_index, void* userdata) {
 
     Regroove* mod = common_state ? common_state->player : NULL;
     if (!mod) return;
+
+    printf("Phrase %d completed\n", phrase_index + 1);
 
     // Stop playback (audio device stays running for input passthrough)
     playing = false;

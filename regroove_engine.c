@@ -331,6 +331,9 @@ static void process_commands(struct Regroove* g) {
                     if (target_order == -1) {
                         target_order = 0;
                     }
+                    printf("RG_CMD_JUMP_TO_PATTERN: pattern %d, searched and found order %d\n", pattern_index, target_order);
+                } else {
+                    printf("RG_CMD_JUMP_TO_PATTERN: pattern %d, explicit order %d\n", pattern_index, target_order);
                 }
 
                 // Update loop state for pattern mode
@@ -342,6 +345,7 @@ static void process_commands(struct Regroove* g) {
 
                 // Jump to the position immediately
                 openmpt_module_set_position_order_row(g->mod, target_order, 0);
+                printf("RG_CMD_JUMP_TO_PATTERN: Executed jump to order %d, row 0\n", target_order);
                 if (g->interactive_ok) reapply_mutes(g);
                 break;
             }
@@ -895,7 +899,10 @@ void regroove_jump_to_order(Regroove* g, int order) {
         // Immediate jump - use JUMP_TO_PATTERN command which jumps immediately
         int target_order = order;
         int target_pattern = openmpt_module_get_order_pattern(g->mod, target_order);
+        printf("regroove_jump_to_order: Jumping to order %d (pattern %d)\n", target_order, target_pattern);
         enqueue_command(g, RG_CMD_JUMP_TO_PATTERN, target_pattern, target_order);
+    } else {
+        printf("regroove_jump_to_order: FAILED - order %d out of range (0-%d)\n", order, g->num_orders - 1);
     }
 }
 void regroove_jump_to_pattern(Regroove* g, int pattern) {
