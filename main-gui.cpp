@@ -805,14 +805,18 @@ static void phrase_completion_callback(int phrase_index, void* userdata) {
     Regroove* mod = common_state ? common_state->player : NULL;
     if (!mod) return;
 
-    printf("Phrase %d completed\n", phrase_index + 1);
+    printf("Phrase %d completed (playing=%d)\n", phrase_index + 1, playing);
 
-    // Stop playback (audio device stays running for input passthrough)
-    playing = false;
-    common_state->paused = 1;
+    // Check if playback was stopped by the phrase (e.g., via STOP action)
+    // If still playing, the phrase wants to continue from its final position
+    bool was_playing = playing;
 
-    // Reset to order 0
-    regroove_jump_to_order(mod, 0);
+    if (!was_playing) {
+        // Phrase stopped playback - do full cleanup
+        // Reset to order 0
+        regroove_jump_to_order(mod, 0);
+    }
+    // If was_playing=true, leave position wherever the phrase set it
 
     // Reset all channels - both engine and GUI state
     regroove_unmute_all(mod);
