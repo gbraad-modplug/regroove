@@ -908,6 +908,13 @@ void regroove_jump_to_pattern(Regroove* g, int pattern) {
         enqueue_command(g, RG_CMD_JUMP_TO_PATTERN, pattern, -1); // -1 = auto-find order
     }
 }
+void regroove_clear_pending_jump(Regroove* g) {
+    if (!g) return;
+    // Clear pending jump state without affecting pattern mode
+    g->pending_pattern_mode_order = -1;
+    g->queued_jump_type = 0;
+    g->has_queued_jump = 0;
+}
 // Loop range system
 void regroove_set_loop_range(Regroove* g, int start_order, int start_row, int end_order, int end_row) {
     enqueue_command_range(g, RG_CMD_SET_LOOP_RANGE, start_order, start_row, end_order, end_row);

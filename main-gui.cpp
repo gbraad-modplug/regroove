@@ -1127,6 +1127,78 @@ static void execute_action(InputAction action, int parameter, float value, void*
 }
 
 // -----------------------------------------------------------------------------
+// Check if action is pending and cancel it (returns true if cancelled)
+// -----------------------------------------------------------------------------
+static bool try_cancel_pending_action(InputAction action, int parameter) {
+    if (!common_state || !common_state->player) return false;
+    Regroove* player = common_state->player;
+
+    int queued_jump = regroove_get_queued_jump_type(player);
+    int queued_order = regroove_get_queued_order(player);
+
+    // Check for queued transport actions
+    if (action == ACTION_QUEUE_ORDER && queued_jump == 3) {
+        if (parameter == queued_order) {
+            // Cancel the queued order jump
+            regroove_clear_pending_jump(player);
+            printf("Cancelled queue to order %d\n", parameter);
+            return true;
+        }
+    } else if (action == ACTION_QUEUE_PATTERN && queued_jump == 4) {
+        int queued_pattern = regroove_get_order_pattern(player, queued_order);
+        if (parameter == queued_pattern) {
+            // Cancel the queued pattern jump
+            regroove_clear_pending_jump(player);
+            printf("Cancelled queue to pattern %d\n", parameter);
+            return true;
+        }
+    } else if (action == ACTION_NEXT_ORDER && queued_jump == 1) {
+        // Cancel queued next order
+        regroove_clear_pending_jump(player);
+        printf("Cancelled queue next order\n");
+        return true;
+    } else if (action == ACTION_PREV_ORDER && queued_jump == 2) {
+        // Cancel queued prev order
+        regroove_clear_pending_jump(player);
+        printf("Cancelled queue prev order\n");
+        return true;
+    }
+
+    // Check for queued channel mute/solo
+    if (action == ACTION_QUEUE_CHANNEL_MUTE || action == ACTION_QUEUE_CHANNEL_SOLO) {
+        int ch = parameter;
+        if (ch >= 0 && ch < common_state->num_channels) {
+            int queued_action = regroove_get_queued_action_for_channel(player, ch);
+            if ((action == ACTION_QUEUE_CHANNEL_MUTE && queued_action == 1) ||
+                (action == ACTION_QUEUE_CHANNEL_SOLO && queued_action == 2)) {
+                // Cancel by toggling the channel state back
+                if (action == ACTION_QUEUE_CHANNEL_MUTE) {
+                    regroove_queue_channel_mute(player, ch);
+                } else {
+                    regroove_queue_channel_solo(player, ch);
+                }
+                printf("Cancelled queued %s for channel %d\n",
+                       action == ACTION_QUEUE_CHANNEL_MUTE ? "mute" : "solo", ch + 1);
+                return true;
+            }
+        }
+    }
+
+    // Check for armed loop
+    if (action == ACTION_PLAY_TO_LOOP) {
+        int loop_state = regroove_get_loop_state(player);
+        if (loop_state == 1) {  // ARMED
+            // Cancel the armed loop
+            regroove_play_to_loop(player);  // Toggles ARMED back to OFF
+            printf("Cancelled armed loop %d\n", parameter);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// -----------------------------------------------------------------------------
 // Input Event Handler (Simplified - just routes to performance engine)
 // -----------------------------------------------------------------------------
 static void handle_input_event(InputEvent *event, bool from_playback) {
@@ -3081,12 +3153,19 @@ static void ShowMainUI() {
                         // Use correct fade index: SONG pads need offset
                         int fade_idx = is_song_pad ? (MAX_TRIGGER_PADS + pad_idx) : pad_idx;
                         trigger_pad_fade[fade_idx] = 1.0f;
-                        // Execute the configured action for this pad
-                        InputEvent event;
-                        event.action = pad->action;
-                        event.parameter = pad->parameter;
-                        event.value = 127; // Full value for trigger pads
-                        handle_input_event(&event);
+
+                        // Try to cancel pending action first
+                        bool cancelled = try_cancel_pending_action(pad->action, pad->parameter);
+
+                        // Only execute action if it wasn't a cancel operation
+                        if (!cancelled) {
+                            // Execute the configured action for this pad
+                            InputEvent event;
+                            event.action = pad->action;
+                            event.parameter = pad->parameter;
+                            event.value = 127; // Full value for trigger pads
+                            handle_input_event(&event);
+                        }
                     }
                 }
 
