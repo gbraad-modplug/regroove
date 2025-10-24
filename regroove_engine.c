@@ -120,6 +120,13 @@ static void reapply_mutes(struct Regroove* g) {
     }
 }
 
+static void reapply_pannings(struct Regroove* g) {
+    if (!g->interactive2_ok || !g->interactive2) return;
+    for (int ch = 0; ch < g->num_channels; ++ch) {
+        g->interactive2->set_channel_panning(g->modext, ch, g->channel_pannings[ch]);
+    }
+}
+
 static void apply_pending_mute_changes(struct Regroove* g) {
     if (!g->has_pending_mute_changes || !g->pending_mute_states) return;
 
@@ -129,6 +136,7 @@ static void apply_pending_mute_changes(struct Regroove* g) {
     // Apply to engine
     if (g->interactive_ok) {
         reapply_mutes(g);
+        reapply_pannings(g);
     }
 
     // Clear pending state
@@ -346,7 +354,10 @@ static void process_commands(struct Regroove* g) {
                 // Jump to the position immediately
                 openmpt_module_set_position_order_row(g->mod, target_order, 0);
                 printf("RG_CMD_JUMP_TO_PATTERN: Executed jump to order %d, row 0\n", target_order);
-                if (g->interactive_ok) reapply_mutes(g);
+                if (g->interactive_ok) {
+                    reapply_mutes(g);
+                    reapply_pannings(g);
+                }
                 break;
             }
             case RG_CMD_SET_LOOP_RANGE:
@@ -368,7 +379,10 @@ static void process_commands(struct Regroove* g) {
                 }
                 g->loop_range_enabled = 2; // ACTIVE
                 apply_pending_mute_changes(g);
-                if (g->interactive_ok) reapply_mutes(g);
+                if (g->interactive_ok) {
+                    reapply_mutes(g);
+                    reapply_pannings(g);
+                }
                 g->prev_row = -1;
                 break;
             case RG_CMD_PLAY_TO_LOOP:
@@ -394,7 +408,10 @@ static void process_commands(struct Regroove* g) {
             case RG_CMD_RETRIGGER_PATTERN: {
                 int cur_order = openmpt_module_get_current_order(g->mod);
                 openmpt_module_set_position_order_row(g->mod, cur_order, 0);
-                if (g->interactive_ok) reapply_mutes(g);
+                if (g->interactive_ok) {
+                    reapply_mutes(g);
+                    reapply_pannings(g);
+                }
                 g->prev_row = -1;
                 break;
             }
@@ -519,6 +536,7 @@ Regroove *regroove_create(const char *filename, double samplerate) {
             &g->interactive, sizeof(g->interactive)) != 0) {
         g->interactive_ok = 1;
         reapply_mutes(g);
+        reapply_pannings(g);
     }
 
     g->interactive2_ok = 0;
@@ -536,6 +554,9 @@ Regroove *regroove_create(const char *filename, double samplerate) {
 
     // Set interpolation filter (OPENMPT_MODULE_RENDER_INTERPOLATIONFILTER_LENGTH = 3)
     openmpt_module_set_render_param(g->mod, 3, g->interpolation_filter);
+
+    // Enable infinite looping (-1 = loop forever)
+    openmpt_module_set_repeat_count(g->mod, -1);
 
     g->loop_order = openmpt_module_get_current_order(g->mod);
     g->loop_pattern = openmpt_module_get_current_pattern(g->mod);
@@ -600,13 +621,23 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
     // Note: Queued jumps are now handled at pattern boundaries in song playback mode
     // (see below in the normal playback section)
 
+    // Store position BEFORE rendering
+    int prev_order_before = openmpt_module_get_current_order(g->mod);
+    int prev_row_before = openmpt_module_get_current_row(g->mod);
+
     int count = openmpt_module_read_interleaved_stereo(
         g->mod, g->samplerate * g->pitch_factor, frames, buffer);
 
+    // Get position AFTER rendering
     int cur_order = openmpt_module_get_current_order(g->mod);
     int cur_pattern = openmpt_module_get_current_pattern(g->mod);
     int cur_row = openmpt_module_get_current_row(g->mod);
     int loop_rows = g->custom_loop_rows > 0 ? g->custom_loop_rows : g->full_loop_rows;
+
+    // Debug: detect if position jumped unexpectedly
+    if (prev_order_before != cur_order || (prev_row_before != cur_row && cur_row != prev_row_before + 1 && cur_row != 0)) {
+        printf("POSITION JUMP: (%d,%d) -> (%d,%d)\n", prev_order_before, prev_row_before, cur_order, cur_row);
+    }
 
     // Loop range system: check if we should activate or loop back
     if (g->loop_range_enabled > 0) {
@@ -642,7 +673,10 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             // ACTIVE: Jump back to loop start
             openmpt_module_set_position_order_row(g->mod, loop_start_order, g->loop_start_row);
             apply_pending_mute_changes(g);
-            if (g->interactive_ok) reapply_mutes(g);
+            if (g->interactive_ok) {
+                reapply_mutes(g);
+                reapply_pannings(g);
+            }
             if (g->on_loop_pattern) {
                 int loop_pattern = openmpt_module_get_order_pattern(g->mod, loop_start_order);
                 g->on_loop_pattern(loop_start_order, loop_pattern, g->callback_userdata);
@@ -681,7 +715,10 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
                 if (g->full_loop_rows > 0) {
                     openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
                     apply_pending_mute_changes(g);
-                    if (g->interactive_ok) reapply_mutes(g);
+                    if (g->interactive_ok) {
+                        reapply_mutes(g);
+                        reapply_pannings(g);
+                    }
                     if (g->on_loop_pattern)
                         g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
                 }
@@ -702,8 +739,10 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             // At normal pattern end - wrap to beginning
             openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
             apply_pending_mute_changes(g);
-            if (g->interactive_ok)
+            if (g->interactive_ok) {
                 reapply_mutes(g);
+                reapply_pannings(g);
+            }
             if (g->on_loop_pattern)
                 g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
             g->prev_row = -1;
@@ -740,15 +779,19 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             // Apply pending mute changes at pattern boundary
             if (g->has_pending_mute_changes) {
                 apply_pending_mute_changes(g);
-                if (g->interactive_ok)
+                if (g->interactive_ok) {
                     reapply_mutes(g);
+                    reapply_pannings(g);
+                }
             }
 
             // Execute queued jump at pattern boundary
             if (g->has_queued_jump) {
                 openmpt_module_set_position_order_row(g->mod, g->queued_order, g->queued_row);
-                if (g->interactive_ok)
+                if (g->interactive_ok) {
                     reapply_mutes(g);
+                    reapply_pannings(g);
+                }
                 g->has_queued_jump = 0;
                 g->queued_jump_type = 0;
                 g->prev_row = -1;
@@ -856,6 +899,8 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
     int num_orders = openmpt_module_get_num_orders(g->mod);
     if (g->last_playback_order != -1) {
         if (g->last_playback_order == num_orders - 1 && cur_order == 0) {
+            printf("SONG LOOP DETECTED: last_order=%d, last_row=%d -> cur_order=%d, cur_row=%d\n",
+                   g->last_playback_order, g->last_playback_row, cur_order, cur_row);
             if (g->on_loop_song) {
                 g->on_loop_song(g->callback_userdata);
             }

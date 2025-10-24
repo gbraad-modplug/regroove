@@ -420,11 +420,18 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
 
                 // Apply channel panning settings from metadata
                 int num_channels = regroove_get_num_channels(mod);
+                int pan_count = 0;
                 for (int ch = 0; ch < num_channels && ch < 64; ch++) {
                     if (state->metadata->channel_pan[ch] != -1) {
                         // Apply custom panning (convert 0-127 to 0.0-1.0)
                         regroove_set_channel_panning(mod, ch, (double)state->metadata->channel_pan[ch] / 127.0);
+                        pan_count++;
                     }
+                }
+                // Process commands immediately to apply panning before playback starts
+                if (pan_count > 0) {
+                    regroove_process_commands(mod);
+                    printf("Applied %d channel panning overrides from .rgx\n", pan_count);
                 }
 
                 // Load performance events from the same .rgx file

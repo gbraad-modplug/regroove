@@ -281,7 +281,9 @@ static void my_loop_pattern_callback(int order, int pattern, void *userdata) {
 
 static void my_loop_song_callback(void *userdata) {
     //printf("[SONG] looped back to start\n");
-    playing = false;
+    // Don't stop playback - tracker modules loop continuously
+    // Just provide visual feedback
+    loop_blink = 1.0f;
 }
 
 static void my_note_callback(int channel, int note, int instrument, int volume,
@@ -357,7 +359,8 @@ static int load_module(const char *path) {
 
     for (int i = 0; i < common_state->num_channels; i++) {
         channels[i].volume = 1.0f;
-        channels[i].pan = 0.5f;  // Initialize to center
+        // Read actual panning from engine (may have been set from .rgx file)
+        channels[i].pan = (float)regroove_get_channel_panning(mod, i);
         channels[i].mute = false;
         channels[i].solo = false;
     }
@@ -875,9 +878,10 @@ static void execute_action(InputAction action, int parameter, float value, void*
             dispatch_action(ACT_PITCH_DOWN, -1, 0.0f, false);
             break;
         case ACTION_PITCH_SET:
-            // Map MIDI value (0-127) to pitch slider range (-1.0 to 1.0)
+            // Map MIDI value (0-127) to pitch slider range (inverted: 1.0 to -1.0)
+            // MIDI 0 (left/low) = slow, MIDI 127 (right/high) = fast
             {
-                float pitch_value = (value / 127.0f) * 2.0f - 1.0f; // Maps 0-127 to -1.0 to 1.0
+                float pitch_value = 1.0f - (value / 127.0f) * 2.0f; // Maps 0-127 to 1.0 to -1.0
                 dispatch_action(ACT_SET_PITCH, -1, pitch_value, false);
             }
             break;
@@ -2031,11 +2035,11 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
         float pb_vol = playback_volume;
         float pb_pan = playback_pan;
         for (int i = 0; i < frames; i++) {
-            // Left channel (i*2)
-            float left_gain = pb_vol * (1.0f - pb_pan * 0.5f);
+            // Left channel (i*2): full at pan=0.0 (left), silent at pan=1.0 (right)
+            float left_gain = pb_vol * (1.0f - pb_pan);
             buffer[i * 2] = (int16_t)(buffer[i * 2] * left_gain);
-            // Right channel (i*2+1)
-            float right_gain = pb_vol * (0.5f + pb_pan * 0.5f);
+            // Right channel (i*2+1): silent at pan=0.0 (left), full at pan=1.0 (right)
+            float right_gain = pb_vol * pb_pan;
             buffer[i * 2 + 1] = (int16_t)(buffer[i * 2 + 1] * right_gain);
         }
     } else if (effects && fx_route == FX_ROUTE_PLAYBACK) {
@@ -2060,15 +2064,15 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
             float in_vol = input_volume;
             float in_pan = input_pan;
             for (int i = 0; i < frames; i++) {
-                // Left channel (i*2)
-                float left_gain = in_vol * (1.0f - in_pan * 0.5f);
+                // Left channel (i*2): full at pan=0.0 (left), silent at pan=1.0 (right)
+                float left_gain = in_vol * (1.0f - in_pan);
                 int32_t mixed_left = buffer[i * 2] + (int32_t)(input_temp[i * 2] * left_gain);
                 if (mixed_left > 32767) mixed_left = 32767;
                 if (mixed_left < -32768) mixed_left = -32768;
                 buffer[i * 2] = (int16_t)mixed_left;
 
-                // Right channel (i*2+1)
-                float right_gain = in_vol * (0.5f + in_pan * 0.5f);
+                // Right channel (i*2+1): silent at pan=0.0 (left), full at pan=1.0 (right)
+                float right_gain = in_vol * in_pan;
                 int32_t mixed_right = buffer[i * 2 + 1] + (int32_t)(input_temp[i * 2 + 1] * right_gain);
                 if (mixed_right > 32767) mixed_right = 32767;
                 if (mixed_right < -32768) mixed_right = -32768;
@@ -2104,11 +2108,11 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
         float m_vol = master_volume;
         float m_pan = master_pan;
         for (int i = 0; i < frames; i++) {
-            // Left channel (i*2)
-            float left_gain = m_vol * (1.0f - m_pan * 0.5f);
+            // Left channel (i*2): full at pan=0.0 (left), silent at pan=1.0 (right)
+            float left_gain = m_vol * (1.0f - m_pan);
             buffer[i * 2] = (int16_t)(buffer[i * 2] * left_gain);
-            // Right channel (i*2+1)
-            float right_gain = m_vol * (0.5f + m_pan * 0.5f);
+            // Right channel (i*2+1): silent at pan=0.0 (left), full at pan=1.0 (right)
+            float right_gain = m_vol * m_pan;
             buffer[i * 2 + 1] = (int16_t)(buffer[i * 2 + 1] * right_gain);
         }
     } else {
@@ -2860,8 +2864,9 @@ static void ShowMainUI() {
             ImGui::Dummy(ImVec2(0, 2.0f));
 
             float prev_pitch = pitch_slider;
+            // Inverted slider: up = slower (min), down = faster (max)
             if (ImGui::VSliderFloat("##pitch", ImVec2(sliderW, sliderH),
-                                    &pitch_slider, -1.0f, 1.0f, "")) {
+                                    &pitch_slider, 1.0f, -1.0f, "")) {
                 if (learn_mode_active && ImGui::IsItemActive()) {
                     // User is dragging the slider in learn mode - enter learn mode for pitch
                     start_learn_for_action(ACTION_PITCH_SET);
