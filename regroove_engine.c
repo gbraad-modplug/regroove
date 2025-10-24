@@ -634,9 +634,59 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
     int cur_row = openmpt_module_get_current_row(g->mod);
     int loop_rows = g->custom_loop_rows > 0 ? g->custom_loop_rows : g->full_loop_rows;
 
-    // Debug: detect if position jumped unexpectedly
-    if (prev_order_before != cur_order || (prev_row_before != cur_row && cur_row != prev_row_before + 1 && cur_row != 0)) {
-        printf("POSITION JUMP: (%d,%d) -> (%d,%d)\n", prev_order_before, prev_row_before, cur_order, cur_row);
+    // Detect if libopenmpt looped during this buffer (order decreased or wrapped to 0)
+    // COMMENTED OUT: Not necessary in song mode for now
+    /*
+    int num_orders = openmpt_module_get_num_orders(g->mod);
+    int loop_occurred_in_buffer = 0;
+
+    if (!g->pattern_mode && g->loop_range_enabled == 0) {
+        // Check if we wrapped from a high order back to order 0
+        if (prev_order_before > 0 && cur_order == 0) {
+            loop_occurred_in_buffer = 1;
+        }
+        // Also detect if order decreased (shouldn't happen in normal playback)
+        else if (cur_order < prev_order_before && cur_order >= 0) {
+            loop_occurred_in_buffer = 1;
+        }
+    }
+
+    // If loop occurred mid-buffer (song mode), discard this buffer and render fresh from order 0
+    if (loop_occurred_in_buffer) {
+        // Jump back to order 0, row 0
+        openmpt_module_set_position_order_row(g->mod, 0, 0);
+        if (g->on_loop_song) {
+            g->on_loop_song(g->callback_userdata);
+        }
+        // Re-render a clean buffer starting from the beginning
+        count = openmpt_module_read_interleaved_stereo(
+            g->mod, g->samplerate * g->pitch_factor, frames, buffer);
+        cur_order = 0;
+        cur_pattern = openmpt_module_get_current_pattern(g->mod);
+        cur_row = openmpt_module_get_current_row(g->mod);
+        g->prev_row = -1;
+    }
+    */
+
+    // Pattern mode: detect if order escaped during render (pattern break/jump in the pattern data)
+    if (g->pattern_mode && prev_order_before == g->loop_order && cur_order != g->loop_order) {
+        // Jump back to the loop pattern start
+        openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
+        apply_pending_mute_changes(g);
+        if (g->interactive_ok) {
+            reapply_mutes(g);
+            reapply_pannings(g);
+        }
+        // Re-render a clean buffer from pattern start
+        count = openmpt_module_read_interleaved_stereo(
+            g->mod, g->samplerate * g->pitch_factor, frames, buffer);
+        cur_order = g->loop_order;
+        cur_pattern = openmpt_module_get_current_pattern(g->mod);
+        cur_row = openmpt_module_get_current_row(g->mod);
+        g->prev_row = -1;
+        if (g->on_loop_pattern) {
+            g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
+        }
     }
 
     // Loop range system: check if we should activate or loop back
@@ -895,14 +945,12 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         g->last_msg_row = final_row;
     }
 
-    // --- Manual song looping (cleaner than libopenmpt's automatic loop) ---
-    int num_orders = openmpt_module_get_num_orders(g->mod);
-
+    // --- Manual song looping - COMMENTED OUT: Song should play once and stop, not loop ---
+    /*
     // Detect if we've reached the end (after last order's last row)
     // This happens when openmpt stops because repeat_count=0
     if (count == 0 && !g->pattern_mode && g->loop_range_enabled == 0) {
         // Song ended - manually loop back to start
-        printf("MANUAL SONG LOOP: Jumping back to order 0, row 0\n");
         openmpt_module_set_position_order_row(g->mod, 0, 0);
         if (g->on_loop_song) {
             g->on_loop_song(g->callback_userdata);
@@ -914,6 +962,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         cur_row = 0;
         g->prev_row = -1;
     }
+    */
 
     g->last_playback_order = cur_order;
     g->last_playback_row = cur_row;
