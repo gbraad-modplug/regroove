@@ -443,7 +443,6 @@ enum GuiAction {
     ACT_PITCH_UP,
     ACT_PITCH_DOWN,
     ACT_SET_LOOP_ROWS,
-    ACT_LOOP_TILL_ROW,
     ACT_HALVE_LOOP,
     ACT_FULL_LOOP,
     ACT_MUTE_CHANNEL,
@@ -476,7 +475,6 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                 case ACT_NEXT_ORDER: input_action = ACTION_NEXT_ORDER; break;
                 case ACT_PREV_ORDER: input_action = ACTION_PREV_ORDER; break;
                 case ACT_RETRIGGER: input_action = ACTION_RETRIGGER; break;
-                case ACT_LOOP_TILL_ROW: input_action = ACTION_LOOP_TILL_ROW; break;
                 case ACT_HALVE_LOOP: input_action = ACTION_HALVE_LOOP; break;
                 case ACT_FULL_LOOP: input_action = ACTION_FULL_LOOP; break;
                 case ACT_MUTE_CHANNEL: input_action = ACTION_CHANNEL_MUTE; break;
@@ -542,6 +540,10 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
             if (mod) {
                 loop_enabled = !loop_enabled;
                 regroove_pattern_mode(mod, loop_enabled ? 1 : 0);
+                // When disabling pattern mode, also disable any active loop range
+                if (!loop_enabled && regroove_get_loop_state(mod) > 0) {
+                    regroove_play_to_loop(mod);  // Turns off loop range
+                }
             }
             break;
         case ACT_NEXT_ORDER:
@@ -599,12 +601,6 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                     int loop_rows = (step_index + 1) * rows_per_step;
                     regroove_set_custom_loop_rows(mod, loop_rows);
                 }
-            }
-            break;
-        case ACT_LOOP_TILL_ROW:
-            if (mod) {
-                int current_row = regroove_get_current_row(mod);
-                regroove_loop_till_row(mod, current_row);
             }
             break;
         case ACT_HALVE_LOOP:
@@ -814,9 +810,6 @@ static void execute_action(InputAction action, int parameter, float value, void*
         case ACTION_PREV_ORDER:
             dispatch_action(ACT_PREV_ORDER, -1, 0.0f, false);
             break;
-        case ACTION_LOOP_TILL_ROW:
-            dispatch_action(ACT_LOOP_TILL_ROW, -1, 0.0f, false);
-            break;
         case ACTION_HALVE_LOOP:
             dispatch_action(ACT_HALVE_LOOP, -1, 0.0f, false);
             break;
@@ -958,6 +951,26 @@ static void execute_action(InputAction action, int parameter, float value, void*
             // They are user-initiated triggers only, to prevent infinite loops
             // during playback (phrase triggers itself from recording)
             printf("Ignoring trigger_phrase during performance playback (param=%d)\n", parameter);
+            break;
+        case ACTION_TRIGGER_LOOP:
+            // Trigger a saved loop range from metadata
+            if (common_state && common_state->metadata && common_state->player) {
+                int loop_idx = parameter;
+                if (loop_idx >= 0 && loop_idx < common_state->metadata->loop_range_count) {
+                    auto *loop_range = &common_state->metadata->loop_ranges[loop_idx];
+                    // Set the loop range in the engine
+                    regroove_set_loop_range(common_state->player,
+                                           loop_range->start_order, loop_range->start_row,
+                                           loop_range->end_order, loop_range->end_row);
+                    // Enable pattern mode so UI shows loop is active
+                    regroove_pattern_mode(common_state->player, 1);
+                    // Trigger the loop (jump to start and activate)
+                    regroove_trigger_loop(common_state->player);
+                    printf("Triggered loop range %d: O:%d R:%d -> O:%d R:%d\n", loop_idx,
+                           loop_range->start_order, loop_range->start_row,
+                           loop_range->end_order, loop_range->end_row);
+                }
+            }
             break;
         case ACTION_FX_DISTORTION_DRIVE:
             if (effects) {
@@ -1367,6 +1380,99 @@ static void unlearn_current_target() {
     // Exit learn mode
     learn_mode_active = false;
     learn_target_type = LEARN_NONE;
+}
+
+// Helper function to format action name for display on pads
+// Returns action text (line 1) and parameter text (line 2)
+static void format_pad_action_text(InputAction action, int parameter, char *line1, size_t line1_size,
+                                    char *line2, size_t line2_size) {
+    line1[0] = '\0';
+    line2[0] = '\0';
+
+    switch (action) {
+        case ACTION_PLAY_PAUSE: snprintf(line1, line1_size, "PLAY/\nPAUSE"); break;
+        case ACTION_PLAY: snprintf(line1, line1_size, "PLAY"); break;
+        case ACTION_STOP: snprintf(line1, line1_size, "STOP"); break;
+        case ACTION_RETRIGGER: snprintf(line1, line1_size, "RETRIG"); break;
+        case ACTION_NEXT_ORDER: snprintf(line1, line1_size, "NEXT\nORDER"); break;
+        case ACTION_PREV_ORDER: snprintf(line1, line1_size, "PREV\nORDER"); break;
+        case ACTION_HALVE_LOOP: snprintf(line1, line1_size, "HALF\nLOOP"); break;
+        case ACTION_FULL_LOOP: snprintf(line1, line1_size, "FULL\nLOOP"); break;
+        case ACTION_PATTERN_MODE_TOGGLE: snprintf(line1, line1_size, "LOOP\nMODE"); break;
+        case ACTION_MUTE_ALL: snprintf(line1, line1_size, "MUTE\nALL"); break;
+        case ACTION_UNMUTE_ALL: snprintf(line1, line1_size, "UNMUTE\nALL"); break;
+        case ACTION_PITCH_UP: snprintf(line1, line1_size, "PITCH\nUP"); break;
+        case ACTION_PITCH_DOWN: snprintf(line1, line1_size, "PITCH\nDOWN"); break;
+        case ACTION_PITCH_RESET: snprintf(line1, line1_size, "PITCH\nRESET"); break;
+        case ACTION_QUIT: snprintf(line1, line1_size, "QUIT"); break;
+        case ACTION_FILE_PREV: snprintf(line1, line1_size, "FILE\nPREV"); break;
+        case ACTION_FILE_NEXT: snprintf(line1, line1_size, "FILE\nNEXT"); break;
+        case ACTION_FILE_LOAD: snprintf(line1, line1_size, "FILE\nLOAD"); break;
+        case ACTION_CHANNEL_MUTE:
+            snprintf(line1, line1_size, "MUTE");
+            snprintf(line2, line2_size, "CH %d", parameter + 1);
+            break;
+        case ACTION_CHANNEL_SOLO:
+            snprintf(line1, line1_size, "SOLO");
+            snprintf(line2, line2_size, "CH %d", parameter + 1);
+            break;
+        case ACTION_QUEUE_CHANNEL_MUTE:
+            snprintf(line1, line1_size, "Q.MUTE");
+            snprintf(line2, line2_size, "CH %d", parameter + 1);
+            break;
+        case ACTION_QUEUE_CHANNEL_SOLO:
+            snprintf(line1, line1_size, "Q.SOLO");
+            snprintf(line2, line2_size, "CH %d", parameter + 1);
+            break;
+        case ACTION_CHANNEL_VOLUME:
+            snprintf(line1, line1_size, "VOLUME");
+            snprintf(line2, line2_size, "CH %d", parameter + 1);
+            break;
+        case ACTION_CHANNEL_PAN:
+            snprintf(line1, line1_size, "PAN");
+            snprintf(line2, line2_size, "CH %d", parameter + 1);
+            break;
+        case ACTION_TRIGGER_PAD:
+            snprintf(line1, line1_size, "TRIG");
+            snprintf(line2, line2_size, "PAD %d", parameter + 1);
+            break;
+        case ACTION_JUMP_TO_ORDER:
+            snprintf(line1, line1_size, "JUMP");
+            snprintf(line2, line2_size, "O:%d", parameter);
+            break;
+        case ACTION_JUMP_TO_PATTERN:
+            snprintf(line1, line1_size, "JUMP");
+            snprintf(line2, line2_size, "P:%d", parameter);
+            break;
+        case ACTION_QUEUE_ORDER:
+            snprintf(line1, line1_size, "Q.JUMP");
+            snprintf(line2, line2_size, "O:%d", parameter);
+            break;
+        case ACTION_QUEUE_PATTERN:
+            snprintf(line1, line1_size, "Q.JUMP");
+            snprintf(line2, line2_size, "P:%d", parameter);
+            break;
+        case ACTION_TRIGGER_PHRASE:
+            snprintf(line1, line1_size, "PHRASE");
+            snprintf(line2, line2_size, "#%d", parameter);
+            break;
+        case ACTION_TRIGGER_LOOP:
+            snprintf(line1, line1_size, "LOOP");
+            snprintf(line2, line2_size, "#%d", parameter);
+            break;
+        case ACTION_FX_DISTORTION_TOGGLE: snprintf(line1, line1_size, "DIST\nTOGGLE"); break;
+        case ACTION_FX_FILTER_TOGGLE: snprintf(line1, line1_size, "FILTER\nTOGGLE"); break;
+        case ACTION_FX_EQ_TOGGLE: snprintf(line1, line1_size, "EQ\nTOGGLE"); break;
+        case ACTION_FX_COMPRESSOR_TOGGLE: snprintf(line1, line1_size, "COMP\nTOGGLE"); break;
+        case ACTION_FX_DELAY_TOGGLE: snprintf(line1, line1_size, "DELAY\nTOGGLE"); break;
+        case ACTION_MASTER_MUTE: snprintf(line1, line1_size, "MASTER\nMUTE"); break;
+        case ACTION_PLAYBACK_MUTE: snprintf(line1, line1_size, "PBACK\nMUTE"); break;
+        case ACTION_INPUT_MUTE: snprintf(line1, line1_size, "INPUT\nMUTE"); break;
+        case ACTION_RECORD_TOGGLE: snprintf(line1, line1_size, "RECORD"); break;
+        default:
+            snprintf(line1, line1_size, "???");
+            break;
+    }
 }
 
 // Helper functions to start learn mode for different targets
@@ -2875,12 +2981,29 @@ static void ShowMainUI() {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.45f, 0.48f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.55f, 0.60f, 1.0f));
 
-                char label[16];
-                if (is_song_pad) {
-                    snprintf(label, sizeof(label), "S%d", pad_idx + 1);  // S1-S8
+                char label[64];
+                char action_line1[32], action_line2[32];
+
+                // If pad has an action assigned, show action name instead of pad number
+                if (pad && pad->action != ACTION_NONE) {
+                    format_pad_action_text(pad->action, pad->parameter, action_line1, sizeof(action_line1),
+                                          action_line2, sizeof(action_line2));
+                    if (action_line2[0] != '\0') {
+                        // Two lines: action + parameter
+                        snprintf(label, sizeof(label), "%s\n%s", action_line1, action_line2);
+                    } else {
+                        // Single line: just action (may contain \n for wrapping)
+                        snprintf(label, sizeof(label), "%s", action_line1);
+                    }
                 } else {
-                    snprintf(label, sizeof(label), "A%d", pad_idx + 1);  // A1-A8 or A1-A16
+                    // No action assigned, show pad number
+                    if (is_song_pad) {
+                        snprintf(label, sizeof(label), "S%d", pad_idx + 1);  // S1-S8
+                    } else {
+                        snprintf(label, sizeof(label), "A%d", pad_idx + 1);  // A1-A8 or A1-A16
+                    }
                 }
+
                 if (ImGui::Button(label, ImVec2(padSize, padSize))) {
                     if (learn_mode_active) {
                         if (is_song_pad) {
@@ -3720,6 +3843,124 @@ static void ShowMainUI() {
 
             ImGui::Dummy(ImVec2(0, 12.0f));
             ImGui::TextWrapped("Phrases are saved automatically to the .rgx file. To trigger a phrase from a song pad, set the pad's action to 'trigger_phrase' and the parameter to the phrase index (Phrase 1 = parameter 0, Phrase 2 = parameter 1, etc.).");
+
+            // LOOP RANGES SECTION
+            ImGui::Dummy(ImVec2(0, 20.0f));
+            ImGui::TextColored(COLOR_SECTION_HEADING, "LOOP RANGES");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            if (common_state && common_state->metadata) {
+                RegrooveMetadata *meta = common_state->metadata;
+
+                ImGui::Text("Saved Loop Ranges: %d / 16", meta->loop_range_count);
+                ImGui::Dummy(ImVec2(0, 8.0f));
+
+                // Display existing loop ranges
+                for (int i = 0; i < meta->loop_range_count; i++) {
+                    ImGui::PushID(i);
+                    auto *loop = &meta->loop_ranges[i];
+
+                    // Display range
+                    ImGui::Text("Loop %d:", i + 1);
+                    ImGui::SameLine(80.0f);
+                    if (loop->start_order == -1) {
+                        ImGui::Text("R:%d-%d (current pattern)", loop->start_row, loop->end_row);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Loops within whichever pattern is playing when triggered");
+                        }
+                    } else {
+                        ImGui::Text("O:%d R:%d -> O:%d R:%d", loop->start_order, loop->start_row,
+                                   loop->end_order, loop->end_row);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Multi-pattern loop from order %d to order %d",
+                                            loop->start_order, loop->end_order);
+                        }
+                    }
+
+                    // Edit button
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Edit")) {
+                        // Allow inline editing
+                    }
+
+                    // Delete button
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Delete")) {
+                        // Delete loop range
+                        for (int j = i; j < meta->loop_range_count - 1; j++) {
+                            meta->loop_ranges[j] = meta->loop_ranges[j + 1];
+                        }
+                        meta->loop_range_count--;
+                        regroove_common_save_rgx(common_state);
+                    }
+
+                    ImGui::PopID();
+                }
+
+                ImGui::Dummy(ImVec2(0, 12.0f));
+
+                // Add new loop range
+                if (meta->loop_range_count < 16) {
+                    ImGui::TextColored(COLOR_SECTION_HEADING, "ADD NEW LOOP RANGE");
+                    ImGui::Separator();
+                    ImGui::Dummy(ImVec2(0, 8.0f));
+
+                    static int new_start_order = -1;
+                    static int new_start_row = 0;
+                    static int new_end_order = -1;
+                    static int new_end_row = 16;
+
+                    ImGui::Text("Start Order:");
+                    ImGui::SameLine(150.0f);
+                    ImGui::SetNextItemWidth(100.0f);
+                    ImGui::InputInt("##new_start_order", &new_start_order);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("-1 = loop within current pattern (pattern-relative)\n>= 0 = specific order number (multi-pattern loop)");
+                    }
+
+                    ImGui::Text("Start Row:");
+                    ImGui::SameLine(150.0f);
+                    ImGui::SetNextItemWidth(100.0f);
+                    ImGui::InputInt("##new_start_row", &new_start_row);
+                    if (new_start_row < 0) new_start_row = 0;
+
+                    ImGui::Text("End Order:");
+                    ImGui::SameLine(150.0f);
+                    ImGui::SetNextItemWidth(100.0f);
+                    ImGui::InputInt("##new_end_order", &new_end_order);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("-1 = loop within current pattern (pattern-relative)\n>= 0 = specific order number (multi-pattern loop)");
+                    }
+
+                    ImGui::Text("End Row:");
+                    ImGui::SameLine(150.0f);
+                    ImGui::SetNextItemWidth(100.0f);
+                    ImGui::InputInt("##new_end_row", &new_end_row);
+                    if (new_end_row < 0) new_end_row = 0;
+
+                    ImGui::Dummy(ImVec2(0, 8.0f));
+                    if (ImGui::Button("Add Loop Range", ImVec2(200.0f, 30.0f))) {
+                        if (meta->loop_range_count < 16) {
+                            int idx = meta->loop_range_count++;
+                            meta->loop_ranges[idx].start_order = new_start_order;
+                            meta->loop_ranges[idx].start_row = new_start_row;
+                            meta->loop_ranges[idx].end_order = new_end_order;
+                            meta->loop_ranges[idx].end_row = new_end_row;
+                            regroove_common_save_rgx(common_state);
+                            printf("Added loop range %d: O:%d R:%d -> O:%d R:%d\n", idx,
+                                  new_start_order, new_start_row, new_end_order, new_end_row);
+                        }
+                    }
+
+                    ImGui::Dummy(ImVec2(0, 8.0f));
+                    ImGui::TextWrapped("Loop ranges are saved to the .rgx file. To trigger a loop from a song pad, set the pad's action to 'trigger_loop' and the parameter to the loop index (Loop 1 = parameter 0, Loop 2 = parameter 1, etc.).");
+                    ImGui::Dummy(ImVec2(0, 4.0f));
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                        "Order -1 = pattern-relative (loops within current pattern when triggered)\n"
+                        "Order >= 0 = absolute (loops from specific order X to order Y)");
+                }
+            }
         }
 
         ImGui::EndChild(); // End perf_scroll child window
@@ -4616,7 +4857,7 @@ static void ShowMainUI() {
                     pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_TRIGGER_PAD ||
                     pad->action == ACTION_JUMP_TO_ORDER || pad->action == ACTION_JUMP_TO_PATTERN ||
                     pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN ||
-                    pad->action == ACTION_TRIGGER_PHRASE) {
+                    pad->action == ACTION_TRIGGER_PHRASE || pad->action == ACTION_TRIGGER_LOOP) {
 
                     if (ImGui::Button("-", ImVec2(30.0f, 0.0f))) {
                         if (pad->parameter > 0) {
@@ -4765,7 +5006,7 @@ static void ShowMainUI() {
                     pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_TRIGGER_PAD ||
                     pad->action == ACTION_JUMP_TO_ORDER || pad->action == ACTION_JUMP_TO_PATTERN ||
                     pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN ||
-                    pad->action == ACTION_TRIGGER_PHRASE) {
+                    pad->action == ACTION_TRIGGER_PHRASE || pad->action == ACTION_TRIGGER_LOOP) {
 
                     if (ImGui::Button("-", ImVec2(30.0f, 0.0f))) {
                         if (pad->parameter > 0) {

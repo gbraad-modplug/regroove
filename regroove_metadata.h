@@ -55,6 +55,17 @@ typedef struct {
     // Song-specific trigger pads (S1-S16)
     TriggerPadConfig song_trigger_pads[MAX_SONG_TRIGGER_PADS];
 
+    // Loop ranges (for trigger_loop action)
+    // Each loop range defines start/end points
+    // -1 for order means single-pattern mode (use current pattern)
+    struct {
+        int start_order;
+        int start_row;
+        int end_order;
+        int end_row;
+    } loop_ranges[16];  // Support up to 16 saved loop ranges
+    int loop_range_count;
+
     // MIDI output channel mapping for instruments/samples
     // -2 = disabled (no MIDI output), -1 = auto (instrument_index % 16), 0-15 = specific MIDI channel
     int instrument_midi_channels[RGX_MAX_INSTRUMENTS];

@@ -334,14 +334,6 @@ static void execute_action(InputAction action, int parameter, float value, void*
                     prev_order, regroove_get_order_pattern(common_state->player, prev_order));
             }
             break;
-        case ACTION_LOOP_TILL_ROW:
-            regroove_common_loop_till_row(common_state);
-            if (common_state->player) {
-                printf("Loop till row queued: Order %d, Row %d\n",
-                    regroove_get_current_order(common_state->player),
-                    regroove_get_current_row(common_state->player));
-            }
-            break;
         case ACTION_HALVE_LOOP:
             regroove_common_halve_loop(common_state);
             if (common_state->player) {

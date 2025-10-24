@@ -103,7 +103,6 @@ void regroove_common_play_pause(RegrooveCommonState *state, int play);
 void regroove_common_retrigger(RegrooveCommonState *state);
 void regroove_common_next_order(RegrooveCommonState *state);
 void regroove_common_prev_order(RegrooveCommonState *state);
-void regroove_common_loop_till_row(RegrooveCommonState *state);
 void regroove_common_halve_loop(RegrooveCommonState *state);
 void regroove_common_full_loop(RegrooveCommonState *state);
 void regroove_common_pattern_mode_toggle(RegrooveCommonState *state);

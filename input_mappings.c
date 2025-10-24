@@ -15,7 +15,6 @@ InputAction parse_action(const char *str) {
     if (strcmp(str, "retrigger") == 0) return ACTION_RETRIGGER;
     if (strcmp(str, "next_order") == 0) return ACTION_NEXT_ORDER;
     if (strcmp(str, "prev_order") == 0) return ACTION_PREV_ORDER;
-    if (strcmp(str, "loop_till_row") == 0) return ACTION_LOOP_TILL_ROW;
     if (strcmp(str, "halve_loop") == 0) return ACTION_HALVE_LOOP;
     if (strcmp(str, "full_loop") == 0) return ACTION_FULL_LOOP;
     if (strcmp(str, "pattern_mode_toggle") == 0) return ACTION_PATTERN_MODE_TOGGLE;
@@ -42,6 +41,7 @@ InputAction parse_action(const char *str) {
     if (strcmp(str, "record_toggle") == 0) return ACTION_RECORD_TOGGLE;
     if (strcmp(str, "set_loop_step") == 0) return ACTION_SET_LOOP_STEP;
     if (strcmp(str, "trigger_phrase") == 0) return ACTION_TRIGGER_PHRASE;
+    if (strcmp(str, "trigger_loop") == 0) return ACTION_TRIGGER_LOOP;
     if (strcmp(str, "fx_distortion_drive") == 0) return ACTION_FX_DISTORTION_DRIVE;
     if (strcmp(str, "fx_distortion_mix") == 0) return ACTION_FX_DISTORTION_MIX;
     if (strcmp(str, "fx_filter_cutoff") == 0) return ACTION_FX_FILTER_CUTOFF;
@@ -81,7 +81,6 @@ const char* input_action_name(InputAction action) {
         case ACTION_RETRIGGER: return "retrigger";
         case ACTION_NEXT_ORDER: return "next_order";
         case ACTION_PREV_ORDER: return "prev_order";
-        case ACTION_LOOP_TILL_ROW: return "loop_till_row";
         case ACTION_HALVE_LOOP: return "halve_loop";
         case ACTION_FULL_LOOP: return "full_loop";
         case ACTION_PATTERN_MODE_TOGGLE: return "pattern_mode_toggle";
@@ -108,6 +107,7 @@ const char* input_action_name(InputAction action) {
         case ACTION_RECORD_TOGGLE: return "record_toggle";
         case ACTION_SET_LOOP_STEP: return "set_loop_step";
         case ACTION_TRIGGER_PHRASE: return "trigger_phrase";
+        case ACTION_TRIGGER_LOOP: return "trigger_loop";
         case ACTION_FX_DISTORTION_DRIVE: return "fx_distortion_drive";
         case ACTION_FX_DISTORTION_MIX: return "fx_distortion_mix";
         case ACTION_FX_FILTER_CUTOFF: return "fx_filter_cutoff";
@@ -209,8 +209,7 @@ void input_mappings_reset_defaults(InputMappings *mappings) {
     // Pads 13-16: Reserved for user configuration
     mappings->trigger_pads[12].action = ACTION_MUTE_ALL;            // P13: Mute all
     mappings->trigger_pads[13].action = ACTION_UNMUTE_ALL;          // P14: Unmute all
-    mappings->trigger_pads[14].action = ACTION_LOOP_TILL_ROW;       // P15: Loop till row
-    // P16 is unassigned (ACTION_NONE)
+    // P15-P16 are unassigned (ACTION_NONE)
 
     // Default MIDI mappings (based on current implementation)
     // device_id = -1 means any device, 0 = device 0, 1 = device 1
@@ -267,8 +266,6 @@ void input_mappings_reset_defaults(InputMappings *mappings) {
         {'n', ACTION_NEXT_ORDER, 0},
         {'P', ACTION_PREV_ORDER, 0},
         {'p', ACTION_PREV_ORDER, 0},
-        {'j', ACTION_LOOP_TILL_ROW, 0},
-        {'J', ACTION_LOOP_TILL_ROW, 0},
         {'h', ACTION_HALVE_LOOP, 0},
         {'H', ACTION_HALVE_LOOP, 0},
         {'f', ACTION_FULL_LOOP, 0},

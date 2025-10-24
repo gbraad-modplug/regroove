@@ -10,7 +10,6 @@ typedef enum {
     ACTION_RETRIGGER,
     ACTION_NEXT_ORDER,
     ACTION_PREV_ORDER,
-    ACTION_LOOP_TILL_ROW,
     ACTION_HALVE_LOOP,
     ACTION_FULL_LOOP,
     ACTION_PATTERN_MODE_TOGGLE,
@@ -38,6 +37,7 @@ typedef enum {
     ACTION_RECORD_TOGGLE,    // toggle performance recording
     ACTION_SET_LOOP_STEP,    // parameter = step index (0-15), sets loop length
     ACTION_TRIGGER_PHRASE,   // parameter = phrase index (triggers phrase sequence)
+    ACTION_TRIGGER_LOOP,     // parameter = loop range index (triggers saved loop range)
     // Effects actions (continuous, use MIDI value 0-127)
     ACTION_FX_DISTORTION_DRIVE,    // distortion drive amount
     ACTION_FX_DISTORTION_MIX,      // distortion dry/wet mix

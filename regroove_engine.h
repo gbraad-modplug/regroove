@@ -54,7 +54,15 @@ void regroove_queue_order(Regroove *g, int order);
 void regroove_queue_pattern(Regroove *g, int pattern);
 void regroove_jump_to_order(Regroove *g, int order);
 void regroove_jump_to_pattern(Regroove *g, int pattern);
-void regroove_loop_till_row(Regroove *g, int row);
+
+// Loop range system (replaces loop_till_row)
+void regroove_set_loop_range(Regroove *g, int start_order, int start_row, int end_order, int end_row);
+void regroove_set_loop_start_here(Regroove *g);   // Set loop start to current position
+void regroove_set_loop_end_here(Regroove *g);     // Set loop end to current position
+void regroove_trigger_loop(Regroove *g);          // Jump to loop start and activate
+void regroove_play_to_loop(Regroove *g);          // Toggle: OFF↔ARMED, ACTIVE→OFF
+int regroove_get_loop_state(const Regroove *g);   // 0=OFF, 1=ARMED, 2=ACTIVE
+
 void regroove_retrigger_pattern(Regroove *g);
 void regroove_set_custom_loop_rows(Regroove *g, int rows);
 void regroove_toggle_channel_mute(Regroove *g, int ch);

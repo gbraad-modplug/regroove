@@ -206,6 +206,25 @@ int regroove_metadata_load(RegrooveMetadata *meta, const char *rgx_path) {
                     }
                 }
             }
+        } else if (strcmp(section, "LoopRanges") == 0) {
+            // Loop range configuration
+            if (strcmp(key, "count") == 0) {
+                meta->loop_range_count = atoi(value);
+                if (meta->loop_range_count > 16) meta->loop_range_count = 16;
+            } else if (strncmp(key, "loop_", 5) == 0) {
+                int loop_idx = atoi(key + 5);
+                if (loop_idx >= 0 && loop_idx < 16) {
+                    if (strstr(key, "_start_order")) {
+                        meta->loop_ranges[loop_idx].start_order = atoi(value);
+                    } else if (strstr(key, "_start_row")) {
+                        meta->loop_ranges[loop_idx].start_row = atoi(value);
+                    } else if (strstr(key, "_end_order")) {
+                        meta->loop_ranges[loop_idx].end_order = atoi(value);
+                    } else if (strstr(key, "_end_row")) {
+                        meta->loop_ranges[loop_idx].end_row = atoi(value);
+                    }
+                }
+            }
         } else if (strcmp(section, "MIDIMapping") == 0) {
             // MIDI mapping configuration: instrument_X_channel, instrument_X_name
             if (strncmp(key, "instrument_", 11) == 0) {
@@ -303,6 +322,19 @@ int regroove_metadata_save(const RegrooveMetadata *meta, const char *rgx_path) {
                 fprintf(f, "phrase_%d_step_%d_value=%d\n", i, j, step->value);
                 fprintf(f, "phrase_%d_step_%d_position=%d\n", i, j, step->position_rows);
             }
+        }
+        fprintf(f, "\n");
+    }
+
+    // Write Loop Ranges section if any exist
+    if (meta->loop_range_count > 0) {
+        fprintf(f, "[LoopRanges]\n");
+        fprintf(f, "count=%d\n", meta->loop_range_count);
+        for (int i = 0; i < meta->loop_range_count; i++) {
+            fprintf(f, "loop_%d_start_order=%d\n", i, meta->loop_ranges[i].start_order);
+            fprintf(f, "loop_%d_start_row=%d\n", i, meta->loop_ranges[i].start_row);
+            fprintf(f, "loop_%d_end_order=%d\n", i, meta->loop_ranges[i].end_order);
+            fprintf(f, "loop_%d_end_row=%d\n", i, meta->loop_ranges[i].end_row);
         }
         fprintf(f, "\n");
     }

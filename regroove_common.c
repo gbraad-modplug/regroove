@@ -543,11 +543,6 @@ void regroove_common_prev_order(RegrooveCommonState *state) {
     regroove_queue_prev_order(state->player);
 }
 
-void regroove_common_loop_till_row(RegrooveCommonState *state) {
-    if (!state || !state->player) return;
-    regroove_loop_till_row(state->player, regroove_get_current_row(state->player));
-}
-
 void regroove_common_halve_loop(RegrooveCommonState *state) {
     if (!state || !state->player) return;
 
@@ -892,8 +887,6 @@ int regroove_common_save_default_config(const char *filepath) {
     fprintf(f, "keyP = prev_order,0\n");
     fprintf(f, "keyp = prev_order,0\n\n");
     fprintf(f, "# Loop controls\n");
-    fprintf(f, "keyj = loop_till_row,0\n");
-    fprintf(f, "keyJ = loop_till_row,0\n");
     fprintf(f, "keyh = halve_loop,0\n");
     fprintf(f, "keyH = halve_loop,0\n");
     fprintf(f, "keyf = full_loop,0\n");

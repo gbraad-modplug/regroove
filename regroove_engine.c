@@ -15,7 +15,9 @@ typedef enum {
     RG_CMD_QUEUE_PREV_ORDER,
     RG_CMD_QUEUE_PATTERN,
     RG_CMD_JUMP_TO_PATTERN,
-    RG_CMD_LOOP_TILL_ROW,
+    RG_CMD_SET_LOOP_RANGE,      // Set loop start/end points
+    RG_CMD_TRIGGER_LOOP,        // Jump to loop start and begin looping (ACTIVE)
+    RG_CMD_PLAY_TO_LOOP,        // Toggle: OFF→ARMED, ARMED→OFF, ACTIVE→OFF
     RG_CMD_SET_PATTERN_MODE,
     RG_CMD_RETRIGGER_PATTERN,
     RG_CMD_SET_CUSTOM_LOOP_ROWS,
@@ -35,6 +37,8 @@ typedef struct {
     int arg1;
     int arg2;
     double dval; // For volume
+    int arg3;    // For loop range (end_order)
+    int arg4;    // For loop range (end_row)
 } RegrooveCommand;
 
 #define RG_MAX_COMMANDS 8
@@ -68,8 +72,12 @@ struct Regroove {
     int has_queued_jump;
     int queued_jump_type;  // 0=none, 1=next, 2=prev, 3=specific order, 4=pattern
 
-    int loop_till_row;
-    int is_looping_till;
+    // Loop range system (replaces loop_till_row)
+    int loop_range_enabled;    // 0=OFF, 1=ARMED (play-to-loop), 2=ACTIVE (looping)
+    int loop_start_order;      // -1 = use current pattern only
+    int loop_start_row;
+    int loop_end_order;        // -1 = use current pattern only
+    int loop_end_row;
 
     int pending_pattern_mode_order; // -1 = none
 
@@ -141,6 +149,8 @@ static void enqueue_command(struct Regroove* g, RegrooveCommandType type, int ar
         g->command_queue[g->command_queue_tail].arg1 = arg1;
         g->command_queue[g->command_queue_tail].arg2 = arg2;
         g->command_queue[g->command_queue_tail].dval = 0.0;
+        g->command_queue[g->command_queue_tail].arg3 = 0;
+        g->command_queue[g->command_queue_tail].arg4 = 0;
         g->command_queue_tail = next_tail;
     }
 }
@@ -151,6 +161,21 @@ static void enqueue_command_d(struct Regroove* g, RegrooveCommandType type, int 
         g->command_queue[g->command_queue_tail].arg1 = arg1;
         g->command_queue[g->command_queue_tail].arg2 = 0;
         g->command_queue[g->command_queue_tail].dval = dval;
+        g->command_queue[g->command_queue_tail].arg3 = 0;
+        g->command_queue[g->command_queue_tail].arg4 = 0;
+        g->command_queue_tail = next_tail;
+    }
+}
+static void enqueue_command_range(struct Regroove* g, RegrooveCommandType type,
+                                   int start_order, int start_row, int end_order, int end_row) {
+    int next_tail = (g->command_queue_tail + 1) % RG_MAX_COMMANDS;
+    if (next_tail != g->command_queue_head) {
+        g->command_queue[g->command_queue_tail].type = type;
+        g->command_queue[g->command_queue_tail].arg1 = start_order;
+        g->command_queue[g->command_queue_tail].arg2 = start_row;
+        g->command_queue[g->command_queue_tail].arg3 = end_order;
+        g->command_queue[g->command_queue_tail].arg4 = end_row;
+        g->command_queue[g->command_queue_tail].dval = 0.0;
         g->command_queue_tail = next_tail;
     }
 }
@@ -320,16 +345,35 @@ static void process_commands(struct Regroove* g) {
                 if (g->interactive_ok) reapply_mutes(g);
                 break;
             }
-            case RG_CMD_LOOP_TILL_ROW:
-                g->loop_order = cmd->arg1;
-                g->loop_pattern = openmpt_module_get_order_pattern(g->mod, cmd->arg1);
-                g->full_loop_rows = openmpt_module_get_pattern_num_rows(g->mod, g->loop_pattern);
-                g->custom_loop_rows = 0;
-                g->loop_till_row = cmd->arg2;
-                g->is_looping_till = 1;
-                openmpt_module_set_position_order_row(g->mod, cmd->arg1, 0);
+            case RG_CMD_SET_LOOP_RANGE:
+                // Set loop range: arg1=start_order, arg2=start_row, arg3=end_order, arg4=end_row
+                g->loop_start_order = cmd->arg1;
+                g->loop_start_row = cmd->arg2;
+                g->loop_end_order = cmd->arg3;
+                g->loop_end_row = cmd->arg4;
+                // Don't activate loop yet (that's done by TRIGGER_LOOP or PLAY_TO_LOOP)
+                break;
+            case RG_CMD_TRIGGER_LOOP:
+                // Jump to loop start immediately and begin looping
+                if (g->loop_start_order >= 0 && g->loop_start_order < g->num_orders) {
+                    openmpt_module_set_position_order_row(g->mod, g->loop_start_order, g->loop_start_row);
+                } else {
+                    // Single pattern mode: use current order
+                    int cur_order = openmpt_module_get_current_order(g->mod);
+                    openmpt_module_set_position_order_row(g->mod, cur_order, g->loop_start_row);
+                }
+                g->loop_range_enabled = 2; // ACTIVE
+                apply_pending_mute_changes(g);
                 if (g->interactive_ok) reapply_mutes(g);
                 g->prev_row = -1;
+                break;
+            case RG_CMD_PLAY_TO_LOOP:
+                // Toggle: OFF→ARMED, ARMED→OFF, ACTIVE→OFF
+                if (g->loop_range_enabled == 0) {
+                    g->loop_range_enabled = 1; // OFF → ARMED
+                } else {
+                    g->loop_range_enabled = 0; // ARMED or ACTIVE → OFF
+                }
                 break;
             case RG_CMD_SET_PATTERN_MODE:
                 g->pattern_mode = cmd->arg1;
@@ -496,6 +540,13 @@ Regroove *regroove_create(const char *filename, double samplerate) {
     g->prev_row = -1;
     g->prev_order = g->loop_order;
 
+    // Initialize loop range system
+    g->loop_range_enabled = 0;  // OFF
+    g->loop_start_order = -1;   // Use current pattern
+    g->loop_start_row = 0;
+    g->loop_end_order = -1;     // Use current pattern
+    g->loop_end_row = 0;
+
     // Initialize pending mute/solo state
     g->pending_mute_states = NULL;
     g->has_pending_mute_changes = 0;
@@ -559,24 +610,48 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
     int cur_row = openmpt_module_get_current_row(g->mod);
     int loop_rows = g->custom_loop_rows > 0 ? g->custom_loop_rows : g->full_loop_rows;
 
-    if (g->is_looping_till) {
-        int rows = openmpt_module_get_pattern_num_rows(g->mod, g->loop_pattern);
-        if (cur_order == g->loop_order) {
-            if (cur_row == g->loop_till_row) {
-                g->is_looping_till = 0;
-                g->prev_row = -1;
-            } else if (g->prev_row == rows - 1 && cur_row == 0) {
-                openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
-                apply_pending_mute_changes(g);
-                if (g->interactive_ok) reapply_mutes(g);
-                if (g->on_loop_pattern)
-                    g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
-                g->prev_row = -1;
-            } else {
-                g->prev_row = cur_row;
+    // Loop range system: check if we should activate or loop back
+    if (g->loop_range_enabled > 0) {
+        // Determine loop boundaries
+        int loop_start_order = (g->loop_start_order >= 0) ? g->loop_start_order : cur_order;
+        int loop_end_order = (g->loop_end_order >= 0) ? g->loop_end_order : cur_order;
+
+        // Check if we're at the loop end position
+        int at_loop_end = 0;
+        if (cur_order == loop_end_order && cur_row >= g->loop_end_row) {
+            at_loop_end = 1;
+        } else if (cur_order > loop_end_order) {
+            at_loop_end = 1;
+        }
+
+        // Check if we're at or past the loop start position (for ARMED state)
+        int at_loop_start = 0;
+        if (g->loop_range_enabled == 1) { // ARMED
+            if (cur_order == loop_start_order && cur_row >= g->loop_start_row) {
+                at_loop_start = 1;
+            } else if (cur_order > loop_start_order && cur_order <= loop_end_order) {
+                at_loop_start = 1; // We're between start and end
             }
-        } else {
+        }
+
+        // State transitions
+        if (g->loop_range_enabled == 1 && at_loop_start) {
+            // ARMED → ACTIVE when loop start is reached
+            g->loop_range_enabled = 2;
+        }
+
+        if (g->loop_range_enabled == 2 && at_loop_end) {
+            // ACTIVE: Jump back to loop start
+            openmpt_module_set_position_order_row(g->mod, loop_start_order, g->loop_start_row);
+            apply_pending_mute_changes(g);
+            if (g->interactive_ok) reapply_mutes(g);
+            if (g->on_loop_pattern) {
+                int loop_pattern = openmpt_module_get_order_pattern(g->mod, loop_start_order);
+                g->on_loop_pattern(loop_start_order, loop_pattern, g->callback_userdata);
+            }
             g->prev_row = -1;
+        } else {
+            g->prev_row = cur_row;
         }
     }
     else if (g->pattern_mode) {
@@ -825,10 +900,30 @@ void regroove_jump_to_pattern(Regroove* g, int pattern) {
         enqueue_command(g, RG_CMD_JUMP_TO_PATTERN, pattern, -1); // -1 = auto-find order
     }
 }
-void regroove_loop_till_row(Regroove* g, int row) {
-    int cur_order = openmpt_module_get_current_order(g->mod);
-    enqueue_command(g, RG_CMD_LOOP_TILL_ROW, cur_order, row);
+// Loop range system
+void regroove_set_loop_range(Regroove* g, int start_order, int start_row, int end_order, int end_row) {
+    enqueue_command_range(g, RG_CMD_SET_LOOP_RANGE, start_order, start_row, end_order, end_row);
 }
+void regroove_set_loop_start_here(Regroove* g) {
+    int cur_order = openmpt_module_get_current_order(g->mod);
+    int cur_row = openmpt_module_get_current_row(g->mod);
+    enqueue_command_range(g, RG_CMD_SET_LOOP_RANGE, cur_order, cur_row, g->loop_end_order, g->loop_end_row);
+}
+void regroove_set_loop_end_here(Regroove* g) {
+    int cur_order = openmpt_module_get_current_order(g->mod);
+    int cur_row = openmpt_module_get_current_row(g->mod);
+    enqueue_command_range(g, RG_CMD_SET_LOOP_RANGE, g->loop_start_order, g->loop_start_row, cur_order, cur_row);
+}
+void regroove_trigger_loop(Regroove* g) {
+    enqueue_command(g, RG_CMD_TRIGGER_LOOP, 0, 0);
+}
+void regroove_play_to_loop(Regroove* g) {
+    enqueue_command(g, RG_CMD_PLAY_TO_LOOP, 0, 0);
+}
+int regroove_get_loop_state(const Regroove* g) {
+    return g ? g->loop_range_enabled : 0;
+}
+
 void regroove_retrigger_pattern(Regroove* g) {
     enqueue_command(g, RG_CMD_RETRIGGER_PATTERN, 0, 0);
 }
