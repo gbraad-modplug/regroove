@@ -555,8 +555,8 @@ Regroove *regroove_create(const char *filename, double samplerate) {
     // Set interpolation filter (OPENMPT_MODULE_RENDER_INTERPOLATIONFILTER_LENGTH = 3)
     openmpt_module_set_render_param(g->mod, 3, g->interpolation_filter);
 
-    // Enable infinite looping (-1 = loop forever)
-    openmpt_module_set_repeat_count(g->mod, -1);
+    // Disable automatic looping - we'll handle it manually for cleaner loop points
+    openmpt_module_set_repeat_count(g->mod, 0);
 
     g->loop_order = openmpt_module_get_current_order(g->mod);
     g->loop_pattern = openmpt_module_get_current_pattern(g->mod);
@@ -895,17 +895,26 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         g->last_msg_row = final_row;
     }
 
-    // --- Detect song loop event ---
+    // --- Manual song looping (cleaner than libopenmpt's automatic loop) ---
     int num_orders = openmpt_module_get_num_orders(g->mod);
-    if (g->last_playback_order != -1) {
-        if (g->last_playback_order == num_orders - 1 && cur_order == 0) {
-            printf("SONG LOOP DETECTED: last_order=%d, last_row=%d -> cur_order=%d, cur_row=%d\n",
-                   g->last_playback_order, g->last_playback_row, cur_order, cur_row);
-            if (g->on_loop_song) {
-                g->on_loop_song(g->callback_userdata);
-            }
+
+    // Detect if we've reached the end (after last order's last row)
+    // This happens when openmpt stops because repeat_count=0
+    if (count == 0 && !g->pattern_mode && g->loop_range_enabled == 0) {
+        // Song ended - manually loop back to start
+        printf("MANUAL SONG LOOP: Jumping back to order 0, row 0\n");
+        openmpt_module_set_position_order_row(g->mod, 0, 0);
+        if (g->on_loop_song) {
+            g->on_loop_song(g->callback_userdata);
         }
+        // Re-render to get audio for the loop start
+        count = openmpt_module_read_interleaved_stereo(
+            g->mod, g->samplerate * g->pitch_factor, frames, buffer);
+        cur_order = 0;
+        cur_row = 0;
+        g->prev_row = -1;
     }
+
     g->last_playback_order = cur_order;
     g->last_playback_row = cur_row;
 
