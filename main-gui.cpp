@@ -70,6 +70,7 @@ static float trigger_pad_transition_fade[MAX_TOTAL_TRIGGER_PADS] = {0.0f}; // Re
 // Track previous pending state to detect transitions
 static bool prev_channel_pending[MAX_CHANNELS] = {false};
 static int prev_queued_jump_type = 0;
+static int prev_queued_order = -1;
 
 // Channel note highlighting (for tracker view and volume faders)
 static float channel_note_fade[MAX_CHANNELS] = {0.0f};
@@ -972,6 +973,26 @@ static void execute_action(InputAction action, int parameter, float value, void*
                 }
             }
             break;
+        case ACTION_PLAY_TO_LOOP:
+            // Arm a saved loop range (waits for playback to reach loop start)
+            if (common_state && common_state->metadata && common_state->player) {
+                int loop_idx = parameter;
+                if (loop_idx >= 0 && loop_idx < common_state->metadata->loop_range_count) {
+                    auto *loop_range = &common_state->metadata->loop_ranges[loop_idx];
+                    // Set the loop range in the engine
+                    regroove_set_loop_range(common_state->player,
+                                           loop_range->start_order, loop_range->start_row,
+                                           loop_range->end_order, loop_range->end_row);
+                    // Enable pattern mode so UI shows loop is active
+                    regroove_pattern_mode(common_state->player, 1);
+                    // Arm the loop (waits to reach start, doesn't jump)
+                    regroove_play_to_loop(common_state->player);
+                    printf("Armed loop range %d: O:%d R:%d -> O:%d R:%d (will activate when reached)\n", loop_idx,
+                           loop_range->start_order, loop_range->start_row,
+                           loop_range->end_order, loop_range->end_row);
+                }
+            }
+            break;
         case ACTION_FX_DISTORTION_DRIVE:
             if (effects) {
                 // Map MIDI value (0-127) to normalized 0.0-1.0
@@ -1458,6 +1479,10 @@ static void format_pad_action_text(InputAction action, int parameter, char *line
             break;
         case ACTION_TRIGGER_LOOP:
             snprintf(line1, line1_size, "LOOP");
+            snprintf(line2, line2_size, "#%d", parameter);
+            break;
+        case ACTION_PLAY_TO_LOOP:
+            snprintf(line1, line1_size, "ARM\nLOOP");
             snprintf(line2, line2_size, "#%d", parameter);
             break;
         case ACTION_FX_DISTORTION_TOGGLE: snprintf(line1, line1_size, "DIST\nTOGGLE"); break;
@@ -2712,17 +2737,38 @@ static void ShowMainUI() {
 
             // Detect transport transitions and trigger red blink on pads
             int current_queued_jump = regroove_get_queued_jump_type(player);
+            int current_queued_order = regroove_get_queued_order(player);
+
             if (prev_queued_jump_type != 0 && current_queued_jump == 0) {
-                // A queued jump just executed
+                // A queued jump just executed - use prev_queued_order to find matching pads
                 for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
                     TriggerPadConfig *pad = &common_state->input_mappings->trigger_pads[i];
-                    if ((prev_queued_jump_type == 1 && pad->action == ACTION_NEXT_ORDER) ||
-                        (prev_queued_jump_type == 2 && pad->action == ACTION_PREV_ORDER)) {
+                    bool should_blink = false;
+
+                    if (prev_queued_jump_type == 1 && pad->action == ACTION_NEXT_ORDER) {
+                        should_blink = true;
+                    } else if (prev_queued_jump_type == 2 && pad->action == ACTION_PREV_ORDER) {
+                        should_blink = true;
+                    } else if (prev_queued_jump_type == 3 && pad->action == ACTION_QUEUE_ORDER) {
+                        // Check if this pad's parameter matches the queued order
+                        if (pad->parameter == prev_queued_order) {
+                            should_blink = true;
+                        }
+                    } else if (prev_queued_jump_type == 4 && pad->action == ACTION_QUEUE_PATTERN) {
+                        // Check if this pad's parameter matches the queued pattern
+                        int prev_queued_pattern = regroove_get_order_pattern(player, prev_queued_order);
+                        if (pad->parameter == prev_queued_pattern) {
+                            should_blink = true;
+                        }
+                    }
+
+                    if (should_blink) {
                         trigger_pad_transition_fade[i] = 1.0f; // Red blink
                     }
                 }
             }
             prev_queued_jump_type = current_queued_jump;
+            prev_queued_order = current_queued_order;
         }
 
         // Calculate pad layout
@@ -2833,6 +2879,26 @@ static void ShowMainUI() {
                     if (pad->action == ACTION_NEXT_ORDER && queued_jump == 1) {
                         has_pending = true;
                     } else if (pad->action == ACTION_PREV_ORDER && queued_jump == 2) {
+                        has_pending = true;
+                    } else if (pad->action == ACTION_QUEUE_ORDER && queued_jump == 3) {
+                        // Check if this specific order matches the queued order
+                        int queued_order = regroove_get_queued_order(player);
+                        if (pad->parameter == queued_order) {
+                            has_pending = true;
+                        }
+                    } else if (pad->action == ACTION_QUEUE_PATTERN && queued_jump == 4) {
+                        // Check if this specific pattern matches the queued pattern
+                        int queued_order = regroove_get_queued_order(player);
+                        int queued_pattern = regroove_get_order_pattern(player, queued_order);
+                        if (pad->parameter == queued_pattern) {
+                            has_pending = true;
+                        }
+                    }
+
+                    // Check for ARMED loop range (waiting to reach loop start)
+                    int loop_state = regroove_get_loop_state(player);
+                    if ((pad->action == ACTION_TRIGGER_LOOP || pad->action == ACTION_PLAY_TO_LOOP) && loop_state == 1) {
+                        // Loop is ARMED (pending activation)
                         has_pending = true;
                     }
                 }
@@ -3092,18 +3158,39 @@ static void ShowMainUI() {
 
             // Detect transport transitions and trigger red blink on song pads
             int current_queued_jump = regroove_get_queued_jump_type(player);
+            int current_queued_order = regroove_get_queued_order(player);
+
             if (prev_queued_jump_type != 0 && current_queued_jump == 0) {
-                // A queued jump just executed
+                // A queued jump just executed - use prev_queued_order to find matching pads
                 for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
                     int global_idx = MAX_TRIGGER_PADS + i;
                     TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[i];
-                    if ((prev_queued_jump_type == 1 && pad->action == ACTION_NEXT_ORDER) ||
-                        (prev_queued_jump_type == 2 && pad->action == ACTION_PREV_ORDER)) {
+                    bool should_blink = false;
+
+                    if (prev_queued_jump_type == 1 && pad->action == ACTION_NEXT_ORDER) {
+                        should_blink = true;
+                    } else if (prev_queued_jump_type == 2 && pad->action == ACTION_PREV_ORDER) {
+                        should_blink = true;
+                    } else if (prev_queued_jump_type == 3 && pad->action == ACTION_QUEUE_ORDER) {
+                        // Check if this pad's parameter matches the queued order
+                        if (pad->parameter == prev_queued_order) {
+                            should_blink = true;
+                        }
+                    } else if (prev_queued_jump_type == 4 && pad->action == ACTION_QUEUE_PATTERN) {
+                        // Check if this pad's parameter matches the queued pattern
+                        int prev_queued_pattern = regroove_get_order_pattern(player, prev_queued_order);
+                        if (pad->parameter == prev_queued_pattern) {
+                            should_blink = true;
+                        }
+                    }
+
+                    if (should_blink) {
                         trigger_pad_transition_fade[global_idx] = 1.0f; // Red blink
                     }
                 }
             }
             prev_queued_jump_type = current_queued_jump;
+            prev_queued_order = current_queued_order;
         }
 
         // Calculate pad layout (4x4 grid)
@@ -3157,6 +3244,26 @@ static void ShowMainUI() {
                     if (pad->action == ACTION_NEXT_ORDER && queued_jump == 1) {
                         has_pending = true;
                     } else if (pad->action == ACTION_PREV_ORDER && queued_jump == 2) {
+                        has_pending = true;
+                    } else if (pad->action == ACTION_QUEUE_ORDER && queued_jump == 3) {
+                        // Check if this specific order matches the queued order
+                        int queued_order = regroove_get_queued_order(player);
+                        if (pad->parameter == queued_order) {
+                            has_pending = true;
+                        }
+                    } else if (pad->action == ACTION_QUEUE_PATTERN && queued_jump == 4) {
+                        // Check if this specific pattern matches the queued pattern
+                        int queued_order = regroove_get_queued_order(player);
+                        int queued_pattern = regroove_get_order_pattern(player, queued_order);
+                        if (pad->parameter == queued_pattern) {
+                            has_pending = true;
+                        }
+                    }
+
+                    // Check for ARMED loop range (waiting to reach loop start)
+                    int loop_state = regroove_get_loop_state(player);
+                    if ((pad->action == ACTION_TRIGGER_LOOP || pad->action == ACTION_PLAY_TO_LOOP) && loop_state == 1) {
+                        // Loop is ARMED (pending activation)
                         has_pending = true;
                     }
                 }
@@ -4857,7 +4964,8 @@ static void ShowMainUI() {
                     pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_TRIGGER_PAD ||
                     pad->action == ACTION_JUMP_TO_ORDER || pad->action == ACTION_JUMP_TO_PATTERN ||
                     pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN ||
-                    pad->action == ACTION_TRIGGER_PHRASE || pad->action == ACTION_TRIGGER_LOOP) {
+                    pad->action == ACTION_TRIGGER_PHRASE || pad->action == ACTION_TRIGGER_LOOP ||
+                    pad->action == ACTION_PLAY_TO_LOOP) {
 
                     if (ImGui::Button("-", ImVec2(30.0f, 0.0f))) {
                         if (pad->parameter > 0) {
@@ -5006,7 +5114,8 @@ static void ShowMainUI() {
                     pad->action == ACTION_CHANNEL_VOLUME || pad->action == ACTION_TRIGGER_PAD ||
                     pad->action == ACTION_JUMP_TO_ORDER || pad->action == ACTION_JUMP_TO_PATTERN ||
                     pad->action == ACTION_QUEUE_ORDER || pad->action == ACTION_QUEUE_PATTERN ||
-                    pad->action == ACTION_TRIGGER_PHRASE || pad->action == ACTION_TRIGGER_LOOP) {
+                    pad->action == ACTION_TRIGGER_PHRASE || pad->action == ACTION_TRIGGER_LOOP ||
+                    pad->action == ACTION_PLAY_TO_LOOP) {
 
                     if (ImGui::Button("-", ImVec2(30.0f, 0.0f))) {
                         if (pad->parameter > 0) {

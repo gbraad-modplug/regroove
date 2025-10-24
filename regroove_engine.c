@@ -1024,6 +1024,14 @@ int regroove_get_queued_action_for_channel(const Regroove *g, int ch) {
 int regroove_get_queued_jump_type(const Regroove *g) {
     return g ? g->queued_jump_type : 0;
 }
+int regroove_get_queued_order(const Regroove *g) {
+    if (!g) return -1;
+    // In pattern mode, queued order is stored in pending_pattern_mode_order
+    if (g->pattern_mode && g->queued_jump_type > 0) {
+        return g->pending_pattern_mode_order;
+    }
+    return g->queued_order;
+}
 int regroove_get_pattern_mode(const Regroove* g) { return g->pattern_mode; }
 int regroove_get_custom_loop_rows(const Regroove* g) { return g->custom_loop_rows; }
 int regroove_get_full_pattern_rows(const Regroove* g) { return g->full_loop_rows; }

@@ -97,6 +97,7 @@ int regroove_has_pending_mute_changes(const Regroove *g);
 int regroove_get_pending_channel_mute(const Regroove *g, int ch);
 int regroove_get_queued_action_for_channel(const Regroove *g, int ch);  // 0=none, 1=mute, 2=solo
 int regroove_get_queued_jump_type(const Regroove *g);  // 0=none, 1=next, 2=prev, 3=order, 4=pattern
+int regroove_get_queued_order(const Regroove *g);  // Returns the queued order number (-1 if none)
 int regroove_get_pattern_mode(const Regroove *g);
 int regroove_get_custom_loop_rows(const Regroove *g);
 int regroove_get_full_pattern_rows(const Regroove *g);
