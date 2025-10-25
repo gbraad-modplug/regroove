@@ -54,6 +54,7 @@ void regroove_queue_order(Regroove *g, int order);
 void regroove_queue_pattern(Regroove *g, int pattern);
 void regroove_jump_to_order(Regroove *g, int order);
 void regroove_jump_to_pattern(Regroove *g, int pattern);
+void regroove_set_position_row(Regroove *g, int row);  // Set row within current order
 void regroove_clear_pending_jump(Regroove *g);  // Clear any pending order/pattern jump
 
 // Loop range system (replaces loop_till_row)

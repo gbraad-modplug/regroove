@@ -6918,12 +6918,25 @@ static void ShowMainUI() {
                     ImGui::GetWindowDrawList()->AddRectFilled(row_min, row_max, IM_COL32(60, 60, 40, 255));
                 }
 
-                // Row number (blank for padding rows)
+                // Row number (blank for padding rows) - clickable to jump to that row
                 if (is_current) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
                 }
                 if (is_valid_row) {
-                    ImGui::Text("%02d", row);
+                    char row_label[8];
+                    snprintf(row_label, sizeof(row_label), "%02d", row);
+                    if (ImGui::Selectable(row_label, is_current, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, 0))) {
+                        // Clicked on row - jump to it
+                        if (mod) {
+                            regroove_set_position_row(mod, row);
+                        }
+                    }
+                    // Handle dragging to scrub through rows
+                    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+                        if (mod) {
+                            regroove_set_position_row(mod, row);
+                        }
+                    }
                 } else {
                     ImGui::Text("  "); // Empty placeholder for padding rows
                 }

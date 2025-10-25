@@ -1036,6 +1036,21 @@ void regroove_jump_to_pattern(Regroove* g, int pattern) {
         enqueue_command(g, RG_CMD_JUMP_TO_PATTERN, pattern, -1); // -1 = auto-find order
     }
 }
+void regroove_set_position_row(Regroove* g, int row) {
+    if (!g || !g->mod) return;
+
+    // Get current order and pattern
+    int current_order = openmpt_module_get_current_order(g->mod);
+    int current_pattern = openmpt_module_get_current_pattern(g->mod);
+    int num_rows = openmpt_module_get_pattern_num_rows(g->mod, current_pattern);
+
+    // Validate row
+    if (row < 0) row = 0;
+    if (row >= num_rows) row = num_rows - 1;
+
+    // Set position immediately (not queued)
+    openmpt_module_set_position_order_row(g->mod, current_order, row);
+}
 void regroove_clear_pending_jump(Regroove* g) {
     if (!g) return;
     // Clear pending jump state without affecting pattern mode
