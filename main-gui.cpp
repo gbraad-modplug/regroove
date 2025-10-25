@@ -288,6 +288,10 @@ static void my_order_callback(int ord, int pat, void *userdata) {
 static void my_loop_pattern_callback(int order, int pattern, void *userdata) {
     //printf("[LOOP] Loop/retrigger at Order %d (Pattern %d)\n", order, pattern);
     loop_blink = 1.0f;
+    // Reset program change tracking on loop retrigger
+    if (midi_output_enabled) {
+        midi_output_reset_programs();
+    }
 }
 
 static void my_loop_song_callback(void *userdata) {

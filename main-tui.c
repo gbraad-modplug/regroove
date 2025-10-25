@@ -136,6 +136,10 @@ static void my_row_callback(int order, int row, void *userdata) {
 static void my_loop_callback(int order, int pattern, void *userdata) {
     printf("[LOOP] Pattern looped at Order %d (Pattern %d)\n", order, pattern);
     (void)userdata;
+    // Reset program change tracking on loop retrigger
+    if (midi_output_enabled) {
+        midi_output_reset_programs();
+    }
 }
 
 static void my_song_callback(void *userdata) {
