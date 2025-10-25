@@ -4848,6 +4848,24 @@ static void ShowMainUI() {
             int num_instruments = regroove_get_num_instruments(mod);
             int num_samples = regroove_get_num_samples(mod);
 
+            // Global note offset control
+            int note_offset = regroove_metadata_get_note_offset(common_state->metadata);
+            ImGui::Text("Global Note Offset (semitones):");
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Shift all MIDI notes by N semitones.\nPositive = shift up, Negative = shift down\nExample: +24 shifts up 2 octaves, -12 shifts down 1 octave");
+            }
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputInt("##note_offset", &note_offset, 1, 12)) {
+                // Clamp to reasonable range
+                if (note_offset < -127) note_offset = -127;
+                if (note_offset > 127) note_offset = 127;
+                regroove_metadata_set_note_offset(common_state->metadata, note_offset);
+                save_rgx_metadata();
+            }
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
             ImGui::TextWrapped("Instrument/Sample to MIDI Channel mapping (index maps to MIDI channels 0-15 with wraparound):");
             ImGui::Dummy(ImVec2(0, 8.0f));
 
@@ -4870,15 +4888,17 @@ static void ShowMainUI() {
 
                 ImGui::BeginChild("##midi_mapping", ImVec2(child_width, 250.0f), true);
 
-                ImGui::Columns(4, "midi_mapping_columns");
+                ImGui::Columns(5, "midi_mapping_columns");
                 ImGui::SetColumnWidth(0, 60.0f);   // Index
                 ImGui::SetColumnWidth(1, 80.0f);   // Type
                 ImGui::SetColumnWidth(2, 100.0f);  // MIDI Channel
-                // Column 3 auto-sized (remaining width)
+                ImGui::SetColumnWidth(3, 90.0f);   // Program
+                // Column 4 auto-sized (remaining width) - Name
 
                 ImGui::Text("Index"); ImGui::NextColumn();
                 ImGui::Text("Type"); ImGui::NextColumn();
                 ImGui::Text("MIDI Ch"); ImGui::NextColumn();
+                ImGui::Text("Program"); ImGui::NextColumn();
                 ImGui::Text("Name"); ImGui::NextColumn();
                 ImGui::Separator();
 
@@ -4897,7 +4917,7 @@ static void ShowMainUI() {
                             ImGui::GetColorU32(ImVec4(0.2f, 0.5f, 0.2f, instrument_note_fade[i] * 0.4f)));
                     }
 
-                    ImGui::Text("%d", i);
+                    ImGui::Text("%02d", i + 1);  // Show 1-based instrument numbers (01, 02, 03...)
                     ImGui::NextColumn();
 
                     ImGui::TextColored(ImVec4(0.8f, 1.0f, 0.8f, 1.0f), "Instr");
@@ -4934,6 +4954,35 @@ static void ShowMainUI() {
                             snprintf(ch_label, sizeof(ch_label), "Ch %d", ch);
                             if (ImGui::Selectable(ch_label, midi_channel == ch && common_state->metadata->instrument_midi_channels[i] >= 0)) {
                                 regroove_metadata_set_midi_channel(common_state->metadata, i, ch);
+                                save_rgx_metadata();
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::NextColumn();
+
+                    // Program selector
+                    int program = regroove_metadata_get_program(common_state->metadata, i);
+                    char prog_combo_id[32];
+                    snprintf(prog_combo_id, sizeof(prog_combo_id), "##prog_i%d", i);
+                    char prog_label[32];
+                    if (program == -1) {
+                        snprintf(prog_label, sizeof(prog_label), "None");
+                    } else {
+                        snprintf(prog_label, sizeof(prog_label), "%d", program);
+                    }
+
+                    ImGui::SetNextItemWidth(80.0f);
+                    if (ImGui::BeginCombo(prog_combo_id, prog_label)) {
+                        if (ImGui::Selectable("None", program == -1)) {
+                            regroove_metadata_set_program(common_state->metadata, i, -1);
+                            save_rgx_metadata();
+                        }
+                        for (int p = 0; p <= 127; p++) {
+                            char p_label[16];
+                            snprintf(p_label, sizeof(p_label), "%d", p);
+                            if (ImGui::Selectable(p_label, program == p)) {
+                                regroove_metadata_set_program(common_state->metadata, i, p);
                                 save_rgx_metadata();
                             }
                         }
@@ -4995,7 +5044,7 @@ static void ShowMainUI() {
                             ImGui::GetColorU32(ImVec4(0.5f, 0.4f, 0.2f, instrument_note_fade[i] * 0.4f)));
                     }
 
-                    ImGui::Text("%d", i);
+                    ImGui::Text("%02d", i + 1);  // Show 1-based sample numbers (01, 02, 03...)
                     ImGui::NextColumn();
 
                     ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.6f, 1.0f), "Sample");
@@ -5032,6 +5081,35 @@ static void ShowMainUI() {
                             snprintf(ch_label, sizeof(ch_label), "Ch %d", ch);
                             if (ImGui::Selectable(ch_label, midi_channel == ch && common_state->metadata->instrument_midi_channels[i] >= 0)) {
                                 regroove_metadata_set_midi_channel(common_state->metadata, i, ch);
+                                save_rgx_metadata();
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::NextColumn();
+
+                    // Program selector
+                    int program = regroove_metadata_get_program(common_state->metadata, i);
+                    char prog_combo_id[32];
+                    snprintf(prog_combo_id, sizeof(prog_combo_id), "##prog_s%d", i);
+                    char prog_label[32];
+                    if (program == -1) {
+                        snprintf(prog_label, sizeof(prog_label), "None");
+                    } else {
+                        snprintf(prog_label, sizeof(prog_label), "%d", program);
+                    }
+
+                    ImGui::SetNextItemWidth(80.0f);
+                    if (ImGui::BeginCombo(prog_combo_id, prog_label)) {
+                        if (ImGui::Selectable("None", program == -1)) {
+                            regroove_metadata_set_program(common_state->metadata, i, -1);
+                            save_rgx_metadata();
+                        }
+                        for (int p = 0; p <= 127; p++) {
+                            char p_label[16];
+                            snprintf(p_label, sizeof(p_label), "%d", p);
+                            if (ImGui::Selectable(p_label, program == p)) {
+                                regroove_metadata_set_program(common_state->metadata, i, p);
                                 save_rgx_metadata();
                             }
                         }

@@ -31,6 +31,11 @@ void midi_output_note_off(int channel, int note);
 // Send all notes off on a channel
 void midi_output_all_notes_off(int channel);
 
+// Send program change message
+// channel: 0-15 (MIDI channels)
+// program: 0-127 (MIDI program number)
+void midi_output_program_change(int channel, int program);
+
 // Track active notes per channel (internal state management)
 // This is called by the engine callback to manage note-on/note-off
 // Returns 0 on success, -1 on failure

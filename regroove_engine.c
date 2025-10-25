@@ -893,6 +893,9 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
                 g->mod, final_pattern, final_row, ch, 0, 1);
 
             if (note_str && strlen(note_str) > 0) {
+                // Debug: Print raw note string
+                fprintf(stderr, "[NOTE PARSE DEBUG] ch=%d raw_str='%s'\n", ch, note_str);
+
                 // Parse note, instrument, volume, and effect from formatted string
                 // Format is typically: "C-5 01 .. ..."
                 int note = -1;

@@ -21,6 +21,9 @@ typedef struct {
 
 static ActiveNote active_notes[MAX_TRACKER_CHANNELS];
 
+// Track which instruments have had their program change sent
+static int program_sent[256];  // Track up to 256 instruments
+
 // Get MIDI channel for instrument (using metadata if available)
 static int get_midi_channel_for_instrument(int instrument) {
     if (current_metadata) {
@@ -33,12 +36,14 @@ static int get_midi_channel_for_instrument(int instrument) {
 }
 
 // Convert tracker note to MIDI note number
-// Tracker note format: C-4 = 48 (middle C)
+// Tracker note format: note value calculated from formatted string (e.g., "D-1")
 static int tracker_note_to_midi(int note) {
-    // libopenmpt uses: 0 = C-0, 12 = C-1, 48 = C-4 (middle C)
-    // MIDI note 60 = C-4 (middle C)
-    // So: MIDI note = tracker note + 12
-    int midi_note = note + 12;
+    // The note value comes from parsing the formatted string in regroove_engine.c:
+    // note = octave * 12 + base_note
+    // This already gives us the correct MIDI note number directly!
+    // For example: D-1 = 1*12 + 2 = 14 (which is MIDI note 14 = D1)
+    // No offset needed - the parsed value IS the MIDI note number
+    int midi_note = note;
 
     // Clamp to valid MIDI range
     if (midi_note < 0) midi_note = 0;
@@ -83,6 +88,9 @@ int midi_output_init(int device_id) {
     // Initialize active notes tracking
     memset(active_notes, 0, sizeof(active_notes));
 
+    // Initialize program change tracking
+    memset(program_sent, 0, sizeof(program_sent));
+
     printf("MIDI output initialized on device %d: %s\n", device_id, port_name);
     return 0;
 }
@@ -108,6 +116,10 @@ void midi_output_note_on(int channel, int note, int velocity) {
     if (velocity < 0) velocity = 0;
     if (velocity > 127) velocity = 127;
 
+    // Debug: Log note-on
+    fprintf(stderr, "[MIDI DEBUG] NOTE ON: status=0x%02X data1=%d data2=%d\n",
+            0x90 | channel, note, velocity);
+
     // Send MIDI note-on message (0x90 + channel)
     unsigned char msg[3];
     msg[0] = 0x90 | channel;
@@ -121,6 +133,10 @@ void midi_output_note_off(int channel, int note) {
     if (!midi_out) return;
     if (channel < 0 || channel > 15) return;
     if (note < 0 || note > 127) return;
+
+    // Debug: Log note-off
+    fprintf(stderr, "[MIDI DEBUG] NOTE OFF: status=0x%02X data1=%d data2=0\n",
+            0x80 | channel, note);
 
     // Send MIDI note-off message (0x80 + channel)
     unsigned char msg[3];
@@ -144,20 +160,63 @@ void midi_output_all_notes_off(int channel) {
     rtmidi_out_send_message(midi_out, msg, 3);
 }
 
+void midi_output_program_change(int channel, int program) {
+    if (!midi_out) return;
+    if (channel < 0 || channel > 15) return;
+    if (program < 0 || program > 127) return;
+
+    // Debug: Log program change
+    fprintf(stderr, "[MIDI DEBUG] PROGRAM CHANGE: channel=%d program=%d\n", channel, program);
+
+    // Send MIDI program change message (0xC0 + channel)
+    unsigned char msg[2];
+    msg[0] = 0xC0 | channel;
+    msg[1] = program;
+
+    rtmidi_out_send_message(midi_out, msg, 2);
+}
+
 int midi_output_handle_note(int tracker_channel, int note, int instrument, int volume) {
     if (!midi_out) return -1;
     if (tracker_channel < 0 || tracker_channel >= MAX_TRACKER_CHANNELS) return -1;
 
+    // Convert 1-based instrument number to 0-based index for metadata lookup
+    // Tracker instruments are numbered 01, 02, 03... but arrays are 0-indexed
+    int instrument_index = (instrument > 0) ? (instrument - 1) : instrument;
+
     // Get MIDI channel for this instrument
-    int midi_channel = get_midi_channel_for_instrument(instrument);
+    int midi_channel = get_midi_channel_for_instrument(instrument_index);
 
     // Skip if MIDI output is disabled for this instrument (-2)
     if (midi_channel == -2) {
         return 0;  // No MIDI output for this instrument
     }
 
+    // Send program change if not already sent for this instrument
+    if (current_metadata && instrument_index >= 0 && instrument_index < 256) {
+        int program = regroove_metadata_get_program(current_metadata, instrument_index);
+        if (program >= 0 && program <= 127 && !program_sent[instrument_index]) {
+            midi_output_program_change(midi_channel, program);
+            program_sent[instrument_index] = 1;
+        }
+    }
+
     // Convert tracker note to MIDI note
     int midi_note = tracker_note_to_midi(note);
+
+    // Apply global note offset
+    if (current_metadata) {
+        int offset = regroove_metadata_get_note_offset(current_metadata);
+        midi_note += offset;
+    }
+
+    // Clamp to valid MIDI range after offset
+    if (midi_note < 0) midi_note = 0;
+    if (midi_note > 127) midi_note = 127;
+
+    // Debug: Log note conversion
+    fprintf(stderr, "[MIDI DEBUG] tracker_ch=%d tracker_note=%d instrument=%d volume=%d -> midi_ch=%d midi_note=%d\n",
+            tracker_channel, note, instrument, volume, midi_channel, midi_note);
 
     // Convert volume (0-64 tracker range) to MIDI velocity (0-127)
     int velocity = (volume * 127) / 64;
@@ -208,6 +267,9 @@ void midi_output_reset(void) {
 
     // Clear tracking state
     memset(active_notes, 0, sizeof(active_notes));
+
+    // Reset program change tracking (so program changes are sent again)
+    memset(program_sent, 0, sizeof(program_sent));
 
     // Send all notes off on all MIDI channels
     for (int ch = 0; ch < 16; ch++) {

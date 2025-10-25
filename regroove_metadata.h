@@ -83,6 +83,14 @@ typedef struct {
     // Custom instrument/sample name overrides (for MIDI mapping display)
     // Empty string means use the module's original name
     char instrument_names[RGX_MAX_INSTRUMENTS][RGX_MAX_INSTRUMENT_NAME];
+
+    // Global MIDI note offset (applied to all notes, in semitones)
+    // Positive = shift up, negative = shift down, 0 = no offset
+    int midi_note_offset;
+
+    // MIDI program change (preset) per instrument
+    // -1 = no program change, 0-127 = MIDI program number
+    int instrument_program[RGX_MAX_INSTRUMENTS];
 } RegrooveMetadata;
 
 // Create new metadata structure
@@ -117,6 +125,18 @@ const char* regroove_metadata_get_instrument_name(const RegrooveMetadata *meta, 
 
 // Set custom instrument name (empty string or NULL to use module's original name)
 void regroove_metadata_set_instrument_name(RegrooveMetadata *meta, int instrument_index, const char *name);
+
+// Get global MIDI note offset (in semitones)
+int regroove_metadata_get_note_offset(const RegrooveMetadata *meta);
+
+// Set global MIDI note offset (in semitones, can be negative)
+void regroove_metadata_set_note_offset(RegrooveMetadata *meta, int offset);
+
+// Get MIDI program change for instrument (-1 = no program change, 0-127 = program number)
+int regroove_metadata_get_program(const RegrooveMetadata *meta, int instrument_index);
+
+// Set MIDI program change for instrument (-1 = no program change, 0-127 = program number)
+void regroove_metadata_set_program(RegrooveMetadata *meta, int instrument_index, int program);
 
 #ifdef __cplusplus
 }

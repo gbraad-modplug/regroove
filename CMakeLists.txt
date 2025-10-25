@@ -6,6 +6,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Add /usr/local to search paths
+set(CMAKE_PREFIX_PATH "/usr/local;${CMAKE_PREFIX_PATH}")
+list(APPEND CMAKE_LIBRARY_PATH /usr/local/lib)
+list(APPEND CMAKE_INCLUDE_PATH /usr/local/include)
+
+# Set pkg-config to also search /usr/local
+set(ENV{PKG_CONFIG_PATH} "/usr/local/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+
 # Find required packages
 find_package(PkgConfig REQUIRED)
 
