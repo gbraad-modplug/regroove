@@ -6911,32 +6911,40 @@ static void ShowMainUI() {
                 bool is_valid_row = (row >= 0 && row < num_rows);
                 bool is_current = (row == current_row);
 
+                // Store the row's screen position for interaction detection
+                ImVec2 row_min = ImGui::GetCursorScreenPos();
+                ImVec2 row_max = ImVec2(row_min.x + ROW_COL_WIDTH + num_channels * channel_width, row_min.y + ImGui::GetTextLineHeight());
+
                 // Highlight current row
                 if (is_current) {
-                    ImVec2 row_min = ImGui::GetCursorScreenPos();
-                    ImVec2 row_max = ImVec2(row_min.x + ROW_COL_WIDTH + num_channels * channel_width, row_min.y + ImGui::GetTextLineHeight());
                     ImGui::GetWindowDrawList()->AddRectFilled(row_min, row_max, IM_COL32(60, 60, 40, 255));
                 }
 
-                // Row number (blank for padding rows) - clickable to jump to that row
+                // Check if mouse is hovering/clicking/dragging over this row
+                ImVec2 mouse_pos = ImGui::GetMousePos();
+                bool mouse_over_row = (mouse_pos.x >= row_min.x && mouse_pos.x <= row_max.x &&
+                                       mouse_pos.y >= row_min.y && mouse_pos.y <= row_max.y);
+
+                // Handle row interaction - click or drag anywhere on the row to jump to it
+                if (is_valid_row && mouse_over_row && mod) {
+                    // Only trigger on click, not continuous drag
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                        regroove_set_position_row(mod, row);
+                    }
+                    // Or if dragging, only update when we're on a different row than current playback
+                    else if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) {
+                        if (row != current_row) {
+                            regroove_set_position_row(mod, row);
+                        }
+                    }
+                }
+
+                // Row number (blank for padding rows)
                 if (is_current) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
                 }
                 if (is_valid_row) {
-                    char row_label[8];
-                    snprintf(row_label, sizeof(row_label), "%02d", row);
-                    if (ImGui::Selectable(row_label, is_current, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, 0))) {
-                        // Clicked on row - jump to it
-                        if (mod) {
-                            regroove_set_position_row(mod, row);
-                        }
-                    }
-                    // Handle dragging to scrub through rows
-                    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
-                        if (mod) {
-                            regroove_set_position_row(mod, row);
-                        }
-                    }
+                    ImGui::Text("%02d", row);
                 } else {
                     ImGui::Text("  "); // Empty placeholder for padding rows
                 }
