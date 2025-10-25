@@ -21,8 +21,8 @@ typedef struct {
 
 static ActiveNote active_notes[MAX_TRACKER_CHANNELS];
 
-// Track which instruments have had their program change sent
-static int program_sent[256];  // Track up to 256 instruments
+// Track current program on each MIDI channel
+static int current_program[16];  // Track program for each MIDI channel (0-15)
 
 // Get MIDI channel for instrument (using metadata if available)
 static int get_midi_channel_for_instrument(int instrument) {
@@ -88,8 +88,10 @@ int midi_output_init(int device_id) {
     // Initialize active notes tracking
     memset(active_notes, 0, sizeof(active_notes));
 
-    // Initialize program change tracking
-    memset(program_sent, 0, sizeof(program_sent));
+    // Initialize program tracking (-1 = no program set yet)
+    for (int i = 0; i < 16; i++) {
+        current_program[i] = -1;
+    }
 
     printf("MIDI output initialized on device %d: %s\n", device_id, port_name);
     return 0;
@@ -181,12 +183,15 @@ int midi_output_handle_note(int tracker_channel, int note, int instrument, int v
         return 0;  // No MIDI output for this instrument
     }
 
-    // Send program change if not already sent for this instrument
+    // Send program change if the program for this instrument differs from current channel program
     if (current_metadata && instrument_index >= 0 && instrument_index < 256) {
         int program = regroove_metadata_get_program(current_metadata, instrument_index);
-        if (program >= 0 && program <= 127 && !program_sent[instrument_index]) {
-            midi_output_program_change(midi_channel, program);
-            program_sent[instrument_index] = 1;
+        if (program >= 0 && program <= 127) {
+            // Only send if this program is different from what's currently on this MIDI channel
+            if (current_program[midi_channel] != program) {
+                midi_output_program_change(midi_channel, program);
+                current_program[midi_channel] = program;
+            }
         }
     }
 
@@ -253,8 +258,10 @@ void midi_output_reset(void) {
     // Clear tracking state
     memset(active_notes, 0, sizeof(active_notes));
 
-    // Reset program change tracking (so program changes are sent again)
-    memset(program_sent, 0, sizeof(program_sent));
+    // Reset program tracking
+    for (int i = 0; i < 16; i++) {
+        current_program[i] = -1;
+    }
 
     // Send all notes off on all MIDI channels
     for (int ch = 0; ch < 16; ch++) {
@@ -264,4 +271,11 @@ void midi_output_reset(void) {
 
 void midi_output_set_metadata(RegrooveMetadata *metadata) {
     current_metadata = metadata;
+}
+
+void midi_output_reset_programs(void) {
+    // Reset program tracking so program changes will be resent
+    for (int i = 0; i < 16; i++) {
+        current_program[i] = -1;
+    }
 }

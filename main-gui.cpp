@@ -278,6 +278,11 @@ static void my_order_callback(int ord, int pat, void *userdata) {
     pattern = pat;
     if (common_state && common_state->player)
         total_rows = regroove_get_full_pattern_rows(common_state->player);
+
+    // Reset program change tracking so programs are resent at pattern boundaries
+    if (midi_output_enabled) {
+        midi_output_reset_programs();
+    }
 }
 
 static void my_loop_pattern_callback(int order, int pattern, void *userdata) {

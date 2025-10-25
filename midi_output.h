@@ -50,6 +50,10 @@ void midi_output_reset(void);
 // Set metadata for MIDI channel mapping (can be NULL to use default mapping)
 void midi_output_set_metadata(RegrooveMetadata *metadata);
 
+// Reset program change tracking (forces program changes to be resent)
+// Call this on pattern/order boundaries to ensure correct programs are loaded
+void midi_output_reset_programs(void);
+
 #ifdef __cplusplus
 }
 #endif

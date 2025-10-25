@@ -89,6 +89,10 @@ static void update_phrases() {
 // --- CALLBACKS for UI feedback ---
 static void my_order_callback(int order, int pattern, void *userdata) {
     printf("[ORDER] Now at Order %d (Pattern %d)\n", order, pattern);
+    // Reset program change tracking so programs are resent at pattern boundaries
+    if (midi_output_enabled) {
+        midi_output_reset_programs();
+    }
 }
 static void my_row_callback(int order, int row, void *userdata) {
     //printf("[ROW] Order %d, Row %d\n", order, row);
