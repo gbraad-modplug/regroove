@@ -54,6 +54,38 @@ void midi_output_set_metadata(RegrooveMetadata *metadata);
 // Call this on pattern/order boundaries to ensure correct programs are loaded
 void midi_output_reset_programs(void);
 
+// MIDI Clock master functions
+// Enable/disable sending MIDI Clock messages
+void midi_output_set_clock_master(int enabled);
+
+// Check if clock master is enabled
+int midi_output_is_clock_master(void);
+
+// Send MIDI Clock pulse (0xF8) - call this 24 times per quarter note
+void midi_output_send_clock(void);
+
+// Send MIDI Start message (0xFA)
+void midi_output_send_start(void);
+
+// Send MIDI Stop message (0xFC)
+void midi_output_send_stop(void);
+
+// Send MIDI Continue message (0xFB)
+void midi_output_send_continue(void);
+
+// Update MIDI Clock based on playback position
+// Call this regularly during playback (e.g., in row callback)
+// bpm: Current tempo in beats per minute
+// row_fraction: Fraction of row completed (0.0 to 1.0)
+void midi_output_update_clock(double bpm, double row_fraction);
+
+// Send MIDI Clock pulses based on audio frames rendered
+// Call this from audio callback for precise timing
+// frames: number of audio frames in this buffer
+// sample_rate: audio sample rate (e.g., 48000)
+// bpm: current tempo in beats per minute (adjusted for pitch)
+void midi_output_send_clock_pulses(int frames, double sample_rate, double bpm);
+
 #ifdef __cplusplus
 }
 #endif

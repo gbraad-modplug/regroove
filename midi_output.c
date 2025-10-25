@@ -24,6 +24,11 @@ static ActiveNote active_notes[MAX_TRACKER_CHANNELS];
 // Track current program on each MIDI channel
 static int current_program[16];  // Track program for each MIDI channel (0-15)
 
+// MIDI Clock master state
+static int clock_master_enabled = 0;
+static double clock_pulse_accumulator = 0.0;  // Accumulate fractional pulses
+static double last_bpm = 0.0;  // Track BPM for pulse timing
+
 // Get MIDI channel for instrument (using metadata if available)
 static int get_midi_channel_for_instrument(int instrument) {
     if (current_metadata) {
@@ -277,5 +282,87 @@ void midi_output_reset_programs(void) {
     // Reset program tracking so program changes will be resent
     for (int i = 0; i < 16; i++) {
         current_program[i] = -1;
+    }
+}
+
+void midi_output_set_clock_master(int enabled) {
+    clock_master_enabled = enabled;
+}
+
+int midi_output_is_clock_master(void) {
+    return clock_master_enabled;
+}
+
+void midi_output_send_clock(void) {
+    if (!midi_out || !clock_master_enabled) return;
+
+    // Send MIDI Clock message (0xF8)
+    unsigned char msg[1];
+    msg[0] = 0xF8;
+
+    rtmidi_out_send_message(midi_out, msg, 1);
+}
+
+void midi_output_send_start(void) {
+    if (!midi_out || !clock_master_enabled) return;
+
+    // Reset clock accumulator when starting playback
+    clock_pulse_accumulator = 0.0;
+
+    // Send MIDI Start message (0xFA)
+    unsigned char msg[1];
+    msg[0] = 0xFA;
+
+    rtmidi_out_send_message(midi_out, msg, 1);
+}
+
+void midi_output_send_stop(void) {
+    if (!midi_out || !clock_master_enabled) return;
+
+    // Send MIDI Stop message (0xFC)
+    unsigned char msg[1];
+    msg[0] = 0xFC;
+
+    rtmidi_out_send_message(midi_out, msg, 1);
+}
+
+void midi_output_send_continue(void) {
+    if (!midi_out || !clock_master_enabled) return;
+
+    // Send MIDI Continue message (0xFB)
+    unsigned char msg[1];
+    msg[0] = 0xFB;
+
+    rtmidi_out_send_message(midi_out, msg, 1);
+}
+
+void midi_output_update_clock(double bpm, double row_fraction) {
+    if (!midi_out || !clock_master_enabled || bpm <= 0.0) return;
+
+    // Store BPM for later use
+    last_bpm = bpm;
+}
+
+// Call this from audio callback to send clock pulses at precise intervals
+// frames: number of audio frames rendered
+// sample_rate: audio sample rate (e.g., 48000)
+void midi_output_send_clock_pulses(int frames, double sample_rate, double bpm) {
+    if (!midi_out || !clock_master_enabled || bpm <= 0.0 || sample_rate <= 0.0) return;
+
+    // Calculate how many clock pulses should occur in this audio buffer
+    // MIDI Clock = 24 pulses per quarter note (PPQN)
+    // pulses_per_second = (BPM / 60) * 24
+    double pulses_per_second = (bpm / 60.0) * 24.0;
+
+    // How many pulses should occur in this number of frames?
+    double pulses_this_buffer = (frames / sample_rate) * pulses_per_second;
+
+    // Accumulate fractional pulses
+    clock_pulse_accumulator += pulses_this_buffer;
+
+    // Send whole pulses
+    while (clock_pulse_accumulator >= 1.0) {
+        midi_output_send_clock();
+        clock_pulse_accumulator -= 1.0;
     }
 }

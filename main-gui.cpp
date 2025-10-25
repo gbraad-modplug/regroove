@@ -204,6 +204,21 @@ static int learn_target_pad_index = -1;
 template<typename T>
 static inline T Clamp(T v, T lo, T hi) { return (v < lo ? lo : (v > hi ? hi : v)); }
 
+// Convert pitch slider position to pitch factor
+// IMPORTANT: Pitch factor has INVERSE relationship with playback speed!
+//
+// How pitch works in libopenmpt:
+// - Pitch factor multiplies the sample rate passed to libopenmpt
+// - Lower pitch factor (e.g. 0.05) = lower sample rate = libopenmpt advances faster = FASTER playback
+// - Higher pitch factor (e.g. 2.0) = higher sample rate = libopenmpt advances slower = SLOWER playback
+//
+// Example: At pitch 0.5:
+//   - We tell libopenmpt sample rate is 48000 * 0.5 = 24000 Hz
+//   - libopenmpt thinks time is passing slowly (low sample rate)
+//   - It advances through the song faster to compensate
+//   - Result: Audio plays at 2x speed (chipmunk voice)
+//
+// For MIDI Clock: effective_bpm = bpm / pitch_factor (inverse relationship)
 static float MapPitchFader(float slider_val) {
     // slider_val: -1.0 ... 0.0 ... +1.0
     // output:     0.05 ... 1.0 ... 2.0
@@ -230,6 +245,16 @@ void update_channel_mute_states() {
 // -----------------------------------------------------------------------------
 static void my_row_callback(int ord, int row, void *userdata) {
     //printf("[ROW] Order %d, Row %d\n", ord, row);
+
+    // Update MIDI Clock BPM if master mode is enabled
+    // (Actual clock pulses are sent from audio callback for precise timing)
+    if (common_state && common_state->player && midi_output_is_clock_master()) {
+        double bpm = regroove_get_current_bpm(common_state->player);
+        double pitch = regroove_get_pitch(common_state->player);
+        // Lower pitch value = faster playback, so divide BPM by pitch
+        double effective_bpm = bpm / pitch;
+        midi_output_update_clock(effective_bpm, (double)row);
+    }
 
     // Update performance timeline
     if (common_state && common_state->performance) {
@@ -292,6 +317,10 @@ static void my_loop_pattern_callback(int order, int pattern, void *userdata) {
     if (midi_output_enabled) {
         midi_output_reset_programs();
     }
+
+    // Note: MIDI Clock continues at same tempo across position jumps (loops, Dxx, Bxx commands)
+    // The clock pulse rate stays accurate for tempo sync, but MIDI Clock protocol has no
+    // position information - receivers only track tempo, not song position
 }
 
 static void my_loop_song_callback(void *userdata) {
@@ -548,6 +577,11 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                 playing = true;
                 if (common_state) common_state->paused = 0;  // Update paused state
                 printf("ACT_PLAY: playing flag set to true\n");
+
+                // Send MIDI Clock start if master mode is enabled
+                if (midi_output_is_clock_master()) {
+                    midi_output_send_start();
+                }
             }
             break;
         case ACT_STOP:
@@ -560,6 +594,11 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                 if (common_state && common_state->performance) {
                     regroove_performance_set_playback(common_state->performance, 0);
                     regroove_performance_reset(common_state->performance);
+                }
+
+                // Send MIDI Clock stop if master mode is enabled
+                if (midi_output_is_clock_master()) {
+                    midi_output_send_stop();
                 }
             }
             break;
@@ -2041,6 +2080,18 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
     if (playing && common_state && common_state->player && !playback_mute) {
         regroove_render_audio(common_state->player, buffer, frames);
 
+        // Send MIDI Clock pulses if master mode is enabled
+        if (midi_output_is_clock_master()) {
+            double bpm = regroove_get_current_bpm(common_state->player);
+            double pitch = regroove_get_pitch(common_state->player);
+            // Note: pitch affects sample rate (samplerate * pitch_factor in regroove_engine.c)
+            // Lower pitch = libopenmpt renders at lower samplerate = faster playback = higher effective BPM
+            // Higher pitch = libopenmpt renders at higher samplerate = slower playback = lower effective BPM
+            // So we DIVIDE by pitch, not multiply
+            double effective_bpm = bpm / pitch;
+            midi_output_send_clock_pulses(frames, 48000.0, effective_bpm);
+        }
+
         // Apply effects if routed to playback
         if (effects && fx_route == FX_ROUTE_PLAYBACK) {
             regroove_effects_process(effects, buffer, frames, 48000);
@@ -2310,11 +2361,19 @@ static void ShowMainUI() {
                 file_disp = truncated;
             }
 
-            // Get BPM from engine
-            char bpm_str[16] = "---";
+            // Get BPM from engine and calculate effective BPM with pitch
+            char bpm_str[32] = "---";
             if (common_state && common_state->player) {
                 double bpm = regroove_get_current_bpm(common_state->player);
-                std::snprintf(bpm_str, sizeof(bpm_str), "%.0f", bpm);
+                double pitch = regroove_get_pitch(common_state->player);
+                double effective_bpm = bpm / pitch;
+
+                // Show both original and effective BPM if pitch is not 1.0
+                if (pitch > 0.99 && pitch < 1.01) {
+                    std::snprintf(bpm_str, sizeof(bpm_str), "%.0f", bpm);
+                } else {
+                    std::snprintf(bpm_str, sizeof(bpm_str), "%.0f->%.0f", bpm, effective_bpm);
+                }
             }
 
             // Get pattern description from metadata
@@ -2352,9 +2411,9 @@ static void ShowMainUI() {
             }
 
             std::snprintf(lcd_text, sizeof(lcd_text),
-                "SO:%02d PT:%02d MD:%s\nPitch:%.2f BPM:%s\n%.*s\n%.*s",
+                "SO:%02d PT:%02d MD:%s\nBPM:%s\n%.*s\n%.*s",
                 order, pattern, mode_str,
-                MapPitchFader(pitch_slider), bpm_str,
+                bpm_str,
                 MAX_LCD_TEXTLENGTH, file_disp,
                 MAX_LCD_TEXTLENGTH, pattern_desc);
 
@@ -4840,6 +4899,49 @@ static void ShowMainUI() {
             ImGui::EndCombo();
         }
 
+        ImGui::Dummy(ImVec2(0, 8.0f));
+
+        // MIDI output options (shown when MIDI output is enabled)
+        if (midi_output_enabled && common_state) {
+            // Note duration mode toggle
+            bool hold_notes = (common_state->device_config.midi_output_note_duration == 1);
+            if (ImGui::Checkbox("Hold notes until next note/off", &hold_notes)) {
+                common_state->device_config.midi_output_note_duration = hold_notes ? 1 : 0;
+                save_mappings_to_config();
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, MIDI notes are held until the next note or note-off command.\nWhen disabled, notes are immediately released after being triggered.");
+            }
+
+            // MIDI Clock sync toggle
+            bool clock_sync = (common_state->device_config.midi_clock_sync == 1);
+            if (ImGui::Checkbox("Sync tempo to MIDI Clock (Slave)", &clock_sync)) {
+                common_state->device_config.midi_clock_sync = clock_sync ? 1 : 0;
+                midi_set_clock_sync_enabled(clock_sync);
+                save_mappings_to_config();
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, playback speed will sync to incoming MIDI Clock messages (0xF8).\nEach instance controls its own playback (start/stop), but tempo is synchronized.");
+            }
+
+            // MIDI Clock master toggle
+            bool clock_master = (common_state->device_config.midi_clock_master == 1);
+            if (ImGui::Checkbox("Send MIDI Clock (Master)", &clock_master)) {
+                common_state->device_config.midi_clock_master = clock_master ? 1 : 0;
+                midi_output_set_clock_master(clock_master);
+                save_mappings_to_config();
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, this instance sends MIDI Clock messages (24 PPQN) to external devices.\nUse this to sync external hardware or software to Regroove's playback tempo.");
+            }
+        }
+
         ImGui::Dummy(ImVec2(0, 20.0f));
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 20.0f));
@@ -4876,32 +4978,6 @@ static void ShowMainUI() {
             ImGui::Dummy(ImVec2(0, 8.0f));
 
             ImGui::TextWrapped("Instrument/Sample to MIDI Channel mapping (index maps to MIDI channels 0-15 with wraparound):");
-            ImGui::Dummy(ImVec2(0, 8.0f));
-
-            // Note duration mode toggle
-            bool hold_notes = (common_state->device_config.midi_output_note_duration == 1);
-            if (ImGui::Checkbox("Hold notes until next note/off", &hold_notes)) {
-                common_state->device_config.midi_output_note_duration = hold_notes ? 1 : 0;
-                save_mappings_to_config();
-            }
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("When enabled, MIDI notes are held until the next note or note-off command.\nWhen disabled, notes are immediately released after being triggered.");
-            }
-
-            // MIDI Clock sync toggle
-            bool clock_sync = (common_state->device_config.midi_clock_sync == 1);
-            if (ImGui::Checkbox("Sync tempo to MIDI Clock", &clock_sync)) {
-                common_state->device_config.midi_clock_sync = clock_sync ? 1 : 0;
-                midi_set_clock_sync_enabled(clock_sync);
-                save_mappings_to_config();
-            }
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("When enabled, playback speed will sync to incoming MIDI Clock messages (0xF8).\nEach instance controls its own playback (start/stop), but tempo is synchronized.");
-            }
             ImGui::Dummy(ImVec2(0, 8.0f));
 
             if (num_instruments > 0 || num_samples > 0) {
@@ -7221,6 +7297,12 @@ int main(int argc, char* argv[]) {
             midi_output_device = common_state->device_config.midi_output_device;
             midi_output_enabled = true;
             printf("MIDI output enabled on device %d\n", midi_output_device);
+
+            // Initialize MIDI Clock master mode from config
+            if (common_state->device_config.midi_clock_master) {
+                midi_output_set_clock_master(1);
+                printf("MIDI Clock master enabled\n");
+            }
         } else {
             fprintf(stderr, "Failed to initialize MIDI output on device %d\n",
                     common_state->device_config.midi_output_device);
@@ -7345,7 +7427,10 @@ int main(int argc, char* argv[]) {
                 double module_tempo = regroove_get_current_bpm(common_state->player);
                 if (module_tempo > 0.0) {
                     // Calculate pitch adjustment to match MIDI clock tempo
-                    double target_pitch = midi_tempo / module_tempo;
+                    // IMPORTANT: Pitch has INVERSE relationship with playback speed!
+                    // Lower pitch = faster playback, so if MIDI tempo > module tempo, we need lower pitch
+                    // effective_bpm = module_tempo / pitch, so pitch = module_tempo / midi_tempo
+                    double target_pitch = module_tempo / midi_tempo;
                     // Clamp to reasonable range
                     if (target_pitch < 0.25) target_pitch = 0.25;
                     if (target_pitch > 3.0) target_pitch = 3.0;
