@@ -102,6 +102,7 @@ int regroove_get_queued_order(const Regroove *g);  // Returns the queued order n
 int regroove_get_pattern_mode(const Regroove *g);
 int regroove_get_custom_loop_rows(const Regroove *g);
 int regroove_get_full_pattern_rows(const Regroove *g);
+int regroove_get_pattern_num_rows(const Regroove *g, int pattern);  // Get row count for specific pattern
 double regroove_get_current_bpm(const Regroove *g);
 
 // Get formatted pattern cell data (note, instrument, volume, effects)

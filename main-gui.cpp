@@ -259,6 +259,12 @@ static void my_row_callback(int ord, int row, void *userdata) {
     // Update active phrases on every row
     update_phrases();
 
+    // Get the current pattern's row count (needed for MPTM files where patterns have different lengths)
+    if (common_state && common_state->player) {
+        int current_pattern = regroove_get_current_pattern(common_state->player);
+        total_rows = regroove_get_pattern_num_rows(common_state->player, current_pattern);
+    }
+
     if (total_rows <= 0) return;
     int rows_per_step = total_rows / 16;
     if (rows_per_step < 1) rows_per_step = 1;

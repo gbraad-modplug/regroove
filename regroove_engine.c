@@ -876,6 +876,10 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
     int final_row = openmpt_module_get_current_row(g->mod);
 
     if (g->on_order_change && g->last_msg_order != final_order) {
+        // Update full_loop_rows to reflect the current pattern's row count
+        // This is needed for MPTM files where patterns have different lengths
+        g->full_loop_rows = openmpt_module_get_pattern_num_rows(g->mod, final_pattern);
+
         g->on_order_change(final_order, final_pattern, g->callback_userdata);
         g->last_msg_order = final_order;
     }
@@ -1174,6 +1178,10 @@ int regroove_get_queued_order(const Regroove *g) {
 int regroove_get_pattern_mode(const Regroove* g) { return g->pattern_mode; }
 int regroove_get_custom_loop_rows(const Regroove* g) { return g->custom_loop_rows; }
 int regroove_get_full_pattern_rows(const Regroove* g) { return g->full_loop_rows; }
+int regroove_get_pattern_num_rows(const Regroove* g, int pattern) {
+    if (!g || !g->mod) return 0;
+    return openmpt_module_get_pattern_num_rows(g->mod, pattern);
+}
 double regroove_get_current_bpm(const Regroove* g) {
     if (!g || !g->mod) return 0.0;
     return openmpt_module_get_current_estimated_bpm(g->mod);
