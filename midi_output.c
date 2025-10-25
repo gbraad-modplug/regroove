@@ -116,10 +116,6 @@ void midi_output_note_on(int channel, int note, int velocity) {
     if (velocity < 0) velocity = 0;
     if (velocity > 127) velocity = 127;
 
-    // Debug: Log note-on
-    fprintf(stderr, "[MIDI DEBUG] NOTE ON: status=0x%02X data1=%d data2=%d\n",
-            0x90 | channel, note, velocity);
-
     // Send MIDI note-on message (0x90 + channel)
     unsigned char msg[3];
     msg[0] = 0x90 | channel;
@@ -133,10 +129,6 @@ void midi_output_note_off(int channel, int note) {
     if (!midi_out) return;
     if (channel < 0 || channel > 15) return;
     if (note < 0 || note > 127) return;
-
-    // Debug: Log note-off
-    fprintf(stderr, "[MIDI DEBUG] NOTE OFF: status=0x%02X data1=%d data2=0\n",
-            0x80 | channel, note);
 
     // Send MIDI note-off message (0x80 + channel)
     unsigned char msg[3];
@@ -164,9 +156,6 @@ void midi_output_program_change(int channel, int program) {
     if (!midi_out) return;
     if (channel < 0 || channel > 15) return;
     if (program < 0 || program > 127) return;
-
-    // Debug: Log program change
-    fprintf(stderr, "[MIDI DEBUG] PROGRAM CHANGE: channel=%d program=%d\n", channel, program);
 
     // Send MIDI program change message (0xC0 + channel)
     unsigned char msg[2];
@@ -213,10 +202,6 @@ int midi_output_handle_note(int tracker_channel, int note, int instrument, int v
     // Clamp to valid MIDI range after offset
     if (midi_note < 0) midi_note = 0;
     if (midi_note > 127) midi_note = 127;
-
-    // Debug: Log note conversion
-    fprintf(stderr, "[MIDI DEBUG] tracker_ch=%d tracker_note=%d instrument=%d volume=%d -> midi_ch=%d midi_note=%d\n",
-            tracker_channel, note, instrument, volume, midi_channel, midi_note);
 
     // Convert volume (0-64 tracker range) to MIDI velocity (0-127)
     int velocity = (volume * 127) / 64;
