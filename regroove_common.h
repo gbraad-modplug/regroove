@@ -48,6 +48,7 @@ typedef struct {
     int audio_input_device; // Audio input device index (-1 = disabled)
     int midi_output_device; // MIDI output device port (-1 = disabled)
     int midi_output_note_duration; // 0 = immediate off, 1 = hold until next note/off command
+    int midi_clock_sync;    // 0 = disabled, 1 = sync tempo to incoming MIDI clock (default: 0)
     int interpolation_filter; // 0=none, 1=linear, 2=cubic, 4=FIR (default: 2)
     int expanded_pads;      // 0 = combined 8+8 layout, 1 = separate 16+16 panels (default: 0)
 

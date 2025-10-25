@@ -44,6 +44,30 @@ int midi_list_ports(void);
  */
 int midi_get_port_name(int port, char *name_out, int bufsize);
 
+/**
+ * Enable or disable MIDI Clock synchronization.
+ * When enabled, incoming MIDI Clock messages (0xF8) will be used to calculate tempo.
+ * enabled: 1 to enable, 0 to disable
+ */
+void midi_set_clock_sync_enabled(int enabled);
+
+/**
+ * Get the current MIDI Clock sync state.
+ * Returns 1 if enabled, 0 if disabled.
+ */
+int midi_is_clock_sync_enabled(void);
+
+/**
+ * Get the tempo calculated from incoming MIDI Clock messages.
+ * Returns BPM as a double, or 0.0 if no clock is being received.
+ */
+double midi_get_clock_tempo(void);
+
+/**
+ * Reset MIDI Clock timing (call when playback stops or tempo changes externally).
+ */
+void midi_reset_clock(void);
+
 #ifdef __cplusplus
 }
 #endif

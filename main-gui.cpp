@@ -4889,6 +4889,19 @@ static void ShowMainUI() {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("When enabled, MIDI notes are held until the next note or note-off command.\nWhen disabled, notes are immediately released after being triggered.");
             }
+
+            // MIDI Clock sync toggle
+            bool clock_sync = (common_state->device_config.midi_clock_sync == 1);
+            if (ImGui::Checkbox("Sync tempo to MIDI Clock", &clock_sync)) {
+                common_state->device_config.midi_clock_sync = clock_sync ? 1 : 0;
+                midi_set_clock_sync_enabled(clock_sync);
+                save_mappings_to_config();
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, playback speed will sync to incoming MIDI Clock messages (0xF8).\nEach instance controls its own playback (start/stop), but tempo is synchronized.");
+            }
             ImGui::Dummy(ImVec2(0, 8.0f));
 
             if (num_instruments > 0 || num_samples > 0) {
@@ -7308,6 +7321,10 @@ int main(int argc, char* argv[]) {
 
         if (num_devices > 0) {
             midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
+            // Enable MIDI clock sync if configured
+            if (common_state && common_state->device_config.midi_clock_sync) {
+                midi_set_clock_sync_enabled(1);
+            }
         }
     }
     bool running = true;
@@ -7319,6 +7336,27 @@ int main(int argc, char* argv[]) {
             handle_keyboard(e, window); // unified handler!
         }
         if (common_state && common_state->player) regroove_process_commands(common_state->player);
+
+        // Apply MIDI Clock tempo sync if enabled
+        if (common_state && common_state->player && midi_is_clock_sync_enabled()) {
+            double midi_tempo = midi_get_clock_tempo();
+            if (midi_tempo > 0.0) {
+                // Get the module's current base tempo
+                double module_tempo = regroove_get_current_bpm(common_state->player);
+                if (module_tempo > 0.0) {
+                    // Calculate pitch adjustment to match MIDI clock tempo
+                    double target_pitch = midi_tempo / module_tempo;
+                    // Clamp to reasonable range
+                    if (target_pitch < 0.25) target_pitch = 0.25;
+                    if (target_pitch > 3.0) target_pitch = 3.0;
+                    // Update pitch
+                    regroove_common_set_pitch(common_state, target_pitch);
+                    // Update UI slider to reflect MIDI-controlled pitch
+                    pitch_slider = (float)(target_pitch - 1.0);
+                }
+            }
+        }
+
         ImGui_ImplOpenGL2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
