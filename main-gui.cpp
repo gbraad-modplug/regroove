@@ -4937,10 +4937,13 @@ static void ShowMainUI() {
         const char* midi_out_label = (midi_output_device == -1) ? "Disabled" : "Port";
         if (midi_output_device >= 0) {
             char port_name[128];
-            if (midi_get_port_name(midi_output_device, port_name, sizeof(port_name)) == 0) {
+            if (midi_output_get_port_name(midi_output_device, port_name, sizeof(port_name)) == 0) {
                 midi_out_label = port_name;
             }
         }
+
+        // Get MIDI output port count (separate from input ports)
+        int num_midi_output_ports = midi_output_list_ports();
 
         if (ImGui::BeginCombo("##midi_output", midi_out_label)) {
             // Disabled option
@@ -4958,10 +4961,10 @@ static void ShowMainUI() {
             }
 
             // List MIDI output ports
-            for (int i = 0; i < num_midi_ports; i++) {
+            for (int i = 0; i < num_midi_output_ports; i++) {
                 char label[128];
                 char port_name[128];
-                if (midi_get_port_name(i, port_name, sizeof(port_name)) == 0) {
+                if (midi_output_get_port_name(i, port_name, sizeof(port_name)) == 0) {
                     snprintf(label, sizeof(label), "%s", port_name);
                 } else {
                     snprintf(label, sizeof(label), "Port %d", i);

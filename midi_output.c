@@ -57,6 +57,31 @@ static int tracker_note_to_midi(int note) {
     return midi_note;
 }
 
+int midi_output_list_ports(void) {
+    RtMidiOutPtr temp = rtmidi_out_create_default();
+    if (!temp) return 0;
+    unsigned int nports = rtmidi_get_port_count(temp);
+    rtmidi_out_free(temp);
+    return nports;
+}
+
+int midi_output_get_port_name(int port, char *name_out, int bufsize) {
+    if (!name_out || bufsize <= 0) return -1;
+
+    RtMidiOutPtr temp = rtmidi_out_create_default();
+    if (!temp) return -1;
+
+    unsigned int nports = rtmidi_get_port_count(temp);
+    if (port < 0 || port >= (int)nports) {
+        rtmidi_out_free(temp);
+        return -1;
+    }
+
+    rtmidi_get_port_name(temp, port, name_out, &bufsize);
+    rtmidi_out_free(temp);
+    return 0;
+}
+
 int midi_output_init(int device_id) {
     if (midi_out != NULL) {
         midi_output_deinit();
