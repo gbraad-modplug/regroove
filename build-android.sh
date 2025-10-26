@@ -114,19 +114,3 @@ if [ ! -f "$INSTALL_PREFIX/lib/librtmidi.a" ]; then
 else
     echo "RtMidi already built (skipping)"
 fi
-
-# Note: SDL2 for Android requires a different approach
-echo ""
-echo "=== Note: SDL2 for Android ==="
-echo "SDL2 on Android requires special setup with Java/Kotlin integration."
-echo "You'll need to create an Android Studio project with SDL2."
-echo "See: https://github.com/libsdl-org/SDL/blob/main/docs/README-android.md"
-echo ""
-echo "Libraries built for Android ($ANDROID_ABI):"
-echo "  - libopenmpt: $INSTALL_PREFIX/lib/libopenmpt.a"
-echo "  - rtmidi: $INSTALL_PREFIX/lib/librtmidi.a"
-echo ""
-echo "Next steps:"
-echo "1. Create Android Studio project"
-echo "2. Add SDL2 for Android"
-echo "3. Link with the built libraries"
