@@ -73,10 +73,34 @@ int regroove_filelist_load(RegrooveFileList *list, const char *dir_path) {
     // Read directory entries
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL && list->count < COMMON_MAX_FILES) {
-        if ((entry->d_type == DT_REG || entry->d_type == DT_UNKNOWN) &&
-            is_module_file(entry->d_name)) {
+        // Check if it's a module file by extension first
+        if (!is_module_file(entry->d_name)) {
+            continue;
+        }
+
+        // On systems without d_type (like Windows), or when d_type is DT_UNKNOWN,
+        // use stat() to check if it's a regular file
+#ifdef _WIN32
+        // Windows: always use stat
+        char fullpath[COMMON_MAX_PATH];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", list->directory, entry->d_name);
+        struct stat st;
+        if (stat(fullpath, &st) == 0 && S_ISREG(st.st_mode)) {
             list->filenames[list->count++] = strdup(entry->d_name);
         }
+#else
+        // Unix: use d_type if available, fallback to stat
+        if (entry->d_type == DT_REG) {
+            list->filenames[list->count++] = strdup(entry->d_name);
+        } else if (entry->d_type == DT_UNKNOWN) {
+            char fullpath[COMMON_MAX_PATH];
+            snprintf(fullpath, sizeof(fullpath), "%s/%s", list->directory, entry->d_name);
+            struct stat st;
+            if (stat(fullpath, &st) == 0 && S_ISREG(st.st_mode)) {
+                list->filenames[list->count++] = strdup(entry->d_name);
+            }
+        }
+#endif
     }
 
     closedir(dir);

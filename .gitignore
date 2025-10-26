@@ -1,1 +1,5 @@
 build/
+build-libopenmpt-mingw/
+build-rtmidi-mingw/
+build-windows/
+regroove-windows/

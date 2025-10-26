@@ -1,8 +1,12 @@
 #include "midi.h"
+#ifndef _WIN32
 #include <unistd.h>
+#include <sys/time.h>
+#else
+#include <windows.h>
+#endif
 #include <stdio.h>
 #include <rtmidi_c.h>
-#include <sys/time.h>
 
 static RtMidiInPtr midiin[MIDI_MAX_DEVICES] = {NULL};
 static MidiEventCallback midi_cb = NULL;
@@ -11,7 +15,7 @@ static void *cb_userdata = NULL;
 // MIDI Clock synchronization state
 static int clock_sync_enabled = 0;
 static double clock_bpm = 0.0;
-static struct timeval last_clock_time = {0, 0};
+static double last_clock_time = 0.0;
 static int clock_pulse_count = 0;
 static double pulse_interval_sum = 0.0;  // Running sum for average
 static int pulse_interval_count = 0;     // Count for average
@@ -21,9 +25,16 @@ static int pulse_interval_count = 0;     // Count for average
 
 // Get current time in microseconds
 static double get_time_us(void) {
+#ifdef _WIN32
+    LARGE_INTEGER frequency, counter;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&counter);
+    return (double)counter.QuadPart * 1000000.0 / (double)frequency.QuadPart;
+#else
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (double)tv.tv_sec * 1000000.0 + (double)tv.tv_usec;
+#endif
 }
 
 // Process MIDI Clock message (0xF8)
@@ -34,8 +45,7 @@ static void process_midi_clock(void) {
 
     // If this is not the first pulse, calculate interval
     if (clock_pulse_count > 0) {
-        double last_time = (double)last_clock_time.tv_sec * 1000000.0 + (double)last_clock_time.tv_usec;
-        double interval = current_time - last_time;
+        double interval = current_time - last_clock_time;
 
         // Ignore unrealistic intervals (< 1ms or > 1 second)
         if (interval > 1000.0 && interval < 1000000.0) {
@@ -57,7 +67,7 @@ static void process_midi_clock(void) {
     }
 
     // Update state
-    gettimeofday(&last_clock_time, NULL);
+    last_clock_time = current_time;
     clock_pulse_count++;
 }
 
@@ -89,7 +99,10 @@ static void rtmidi_event_callback_1(double dt, const unsigned char *msg, size_t 
 }
 
 int midi_list_ports(void) {
+#ifndef _WIN32
+    // On Linux, check if ALSA sequencer is available
     if (access("/dev/snd/seq", F_OK) != 0) return 0;
+#endif
     RtMidiInPtr temp = rtmidi_in_create_default();
     if (!temp) return 0;
     unsigned int nports = rtmidi_get_port_count(temp);
@@ -99,7 +112,10 @@ int midi_list_ports(void) {
 
 int midi_get_port_name(int port, char *name_out, int bufsize) {
     if (!name_out || bufsize <= 0) return -1;
+#ifndef _WIN32
+    // On Linux, check if ALSA sequencer is available
     if (access("/dev/snd/seq", F_OK) != 0) return -1;
+#endif
 
     RtMidiInPtr temp = rtmidi_in_create_default();
     if (!temp) return -1;
@@ -121,7 +137,10 @@ int midi_init(MidiEventCallback cb, void *userdata, int port) {
 }
 
 int midi_init_multi(MidiEventCallback cb, void *userdata, const int *ports, int num_ports) {
+#ifndef _WIN32
+    // On Linux, check if ALSA sequencer is available
     if (access("/dev/snd/seq", F_OK) != 0) return -1;
+#endif
 
     if (num_ports > MIDI_MAX_DEVICES) num_ports = MIDI_MAX_DEVICES;
 
@@ -189,6 +208,5 @@ void midi_reset_clock(void) {
     clock_pulse_count = 0;
     pulse_interval_sum = 0.0;
     pulse_interval_count = 0;
-    last_clock_time.tv_sec = 0;
-    last_clock_time.tv_usec = 0;
+    last_clock_time = 0.0;
 }

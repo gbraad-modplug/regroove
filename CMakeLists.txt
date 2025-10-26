@@ -21,38 +21,40 @@ pkg_check_modules(SDL2 REQUIRED sdl2)
 pkg_check_modules(OPENMPT REQUIRED libopenmpt)
 pkg_check_modules(RTMIDI REQUIRED rtmidi)
 
-# Console version with MIDI
-add_executable(regroove-tui
-    main-tui.c
-    regroove_engine.c
-    regroove_common.c
-    regroove_metadata.c
-    regroove_performance.c
-    regroove_phrase.c
-    regroove_effects.c
-    midi.c
-    midi_output.c
-    input_mappings.c
-)
+# Console version with MIDI (Unix only - uses termios)
+if(NOT WIN32)
+    add_executable(regroove-tui
+        main-tui.c
+        regroove_engine.c
+        regroove_common.c
+        regroove_metadata.c
+        regroove_performance.c
+        regroove_phrase.c
+        regroove_effects.c
+        midi.c
+        midi_output.c
+        input_mappings.c
+    )
 
-target_include_directories(regroove-tui PRIVATE
-    ${SDL2_INCLUDE_DIRS}
-    ${OPENMPT_INCLUDE_DIRS}
-    ${RTMIDI_INCLUDE_DIRS}
-)
+    target_include_directories(regroove-tui PRIVATE
+        ${SDL2_INCLUDE_DIRS}
+        ${OPENMPT_INCLUDE_DIRS}
+        ${RTMIDI_INCLUDE_DIRS}
+    )
 
-target_link_libraries(regroove-tui PRIVATE
-    ${SDL2_LIBRARIES}
-    ${OPENMPT_LIBRARIES}
-    ${RTMIDI_LIBRARIES}
-    m
-)
+    target_link_libraries(regroove-tui PRIVATE
+        ${SDL2_LIBRARIES}
+        ${OPENMPT_LIBRARIES}
+        ${RTMIDI_LIBRARIES}
+        m
+    )
 
-target_compile_options(regroove-tui PRIVATE
-    ${SDL2_CFLAGS_OTHER}
-    ${OPENMPT_CFLAGS_OTHER}
-    ${RTMIDI_CFLAGS_OTHER}
-)
+    target_compile_options(regroove-tui PRIVATE
+        ${SDL2_CFLAGS_OTHER}
+        ${OPENMPT_CFLAGS_OTHER}
+        ${RTMIDI_CFLAGS_OTHER}
+    )
+endif()
 
 # GUI version
 add_executable(regroove-gui
@@ -88,11 +90,26 @@ target_link_libraries(regroove-gui PRIVATE
     ${SDL2_LIBRARIES}
     ${OPENMPT_LIBRARIES}
     ${RTMIDI_LIBRARIES}
-    GL
-    dl
-    pthread
-    m
 )
+
+# Platform-specific libraries
+if(WIN32)
+    target_link_libraries(regroove-gui PRIVATE
+        opengl32
+        winmm
+        imm32
+        version
+        setupapi
+        z
+    )
+else()
+    target_link_libraries(regroove-gui PRIVATE
+        GL
+        dl
+        pthread
+        m
+    )
+endif()
 
 target_compile_options(regroove-gui PRIVATE
     ${SDL2_CFLAGS_OTHER}
@@ -101,6 +118,12 @@ target_compile_options(regroove-gui PRIVATE
 )
 
 # Installation rules
-install(TARGETS regroove-tui regroove-gui
-    RUNTIME DESTINATION bin
-)
+if(WIN32)
+    install(TARGETS regroove-gui
+        RUNTIME DESTINATION bin
+    )
+else()
+    install(TARGETS regroove-tui regroove-gui
+        RUNTIME DESTINATION bin
+    )
+endif()
