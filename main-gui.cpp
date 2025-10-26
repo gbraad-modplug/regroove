@@ -340,8 +340,10 @@ static void my_note_callback(int channel, int note, int instrument, int volume,
     }
 
     // Trigger instrument highlighting for visual feedback
-    if (instrument >= 0 && instrument < 256 && note >= 0) {
-        instrument_note_fade[instrument] = 1.0f;
+    // Convert 1-based instrument number to 0-based index
+    int instrument_index = (instrument > 0) ? (instrument - 1) : 0;
+    if (instrument_index >= 0 && instrument_index < 256 && note >= 0) {
+        instrument_note_fade[instrument_index] = 1.0f;
     }
 
     if (!midi_output_enabled) return;
