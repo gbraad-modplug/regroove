@@ -5067,7 +5067,7 @@ static void ShowMainUI() {
             }
             ImGui::Dummy(ImVec2(0, 8.0f));
 
-            ImGui::TextWrapped("Instrument/Sample to MIDI Channel mapping (index maps to MIDI channels 0-15 with wraparound):");
+            ImGui::TextWrapped("Instrument/Sample to MIDI Channel mapping:");
             ImGui::Dummy(ImVec2(0, 8.0f));
 
             if (num_instruments > 0 || num_samples > 0) {
@@ -5117,10 +5117,11 @@ static void ShowMainUI() {
                     char channel_label[32];
                     if (common_state->metadata->instrument_midi_channels[i] == -2) {
                         snprintf(channel_label, sizeof(channel_label), "None");
-                    } else if (common_state->metadata->instrument_midi_channels[i] == -1) {
-                        snprintf(channel_label, sizeof(channel_label), "Auto (Ch %d)", i % 16);
+                    } else if (midi_channel >= 0 && midi_channel < 16) {
+                        snprintf(channel_label, sizeof(channel_label), "Ch %d", midi_channel + 1);
                     } else {
-                        snprintf(channel_label, sizeof(channel_label), "Ch %d", midi_channel);
+                        // Default to Ch 1 if no valid channel set
+                        snprintf(channel_label, sizeof(channel_label), "Ch 1");
                     }
 
                     if (ImGui::BeginCombo(combo_id, channel_label)) {
@@ -5130,16 +5131,10 @@ static void ShowMainUI() {
                             save_rgx_metadata();
                         }
 
-                        // Option for automatic mapping
-                        if (ImGui::Selectable("Auto", common_state->metadata->instrument_midi_channels[i] == -1)) {
-                            regroove_metadata_set_midi_channel(common_state->metadata, i, -1);
-                            save_rgx_metadata();
-                        }
-
-                        // Options for channels 0-15
+                        // Options for channels 1-16 (display as 1-based)
                         for (int ch = 0; ch < 16; ch++) {
                             char ch_label[16];
-                            snprintf(ch_label, sizeof(ch_label), "Ch %d", ch);
+                            snprintf(ch_label, sizeof(ch_label), "Ch %d", ch + 1);
                             if (ImGui::Selectable(ch_label, midi_channel == ch && common_state->metadata->instrument_midi_channels[i] >= 0)) {
                                 regroove_metadata_set_midi_channel(common_state->metadata, i, ch);
                                 save_rgx_metadata();
@@ -5244,10 +5239,11 @@ static void ShowMainUI() {
                     char channel_label[32];
                     if (common_state->metadata->instrument_midi_channels[i] == -2) {
                         snprintf(channel_label, sizeof(channel_label), "None");
-                    } else if (common_state->metadata->instrument_midi_channels[i] == -1) {
-                        snprintf(channel_label, sizeof(channel_label), "Auto (Ch %d)", i % 16);
+                    } else if (midi_channel >= 0 && midi_channel < 16) {
+                        snprintf(channel_label, sizeof(channel_label), "Ch %d", midi_channel + 1);
                     } else {
-                        snprintf(channel_label, sizeof(channel_label), "Ch %d", midi_channel);
+                        // Default to Ch 1 if no valid channel set
+                        snprintf(channel_label, sizeof(channel_label), "Ch 1");
                     }
 
                     if (ImGui::BeginCombo(combo_id, channel_label)) {
@@ -5257,16 +5253,10 @@ static void ShowMainUI() {
                             save_rgx_metadata();
                         }
 
-                        // Option for automatic mapping
-                        if (ImGui::Selectable("Auto", common_state->metadata->instrument_midi_channels[i] == -1)) {
-                            regroove_metadata_set_midi_channel(common_state->metadata, i, -1);
-                            save_rgx_metadata();
-                        }
-
-                        // Options for channels 0-15
+                        // Options for channels 1-16 (display as 1-based)
                         for (int ch = 0; ch < 16; ch++) {
                             char ch_label[16];
-                            snprintf(ch_label, sizeof(ch_label), "Ch %d", ch);
+                            snprintf(ch_label, sizeof(ch_label), "Ch %d", ch + 1);
                             if (ImGui::Selectable(ch_label, midi_channel == ch && common_state->metadata->instrument_midi_channels[i] >= 0)) {
                                 regroove_metadata_set_midi_channel(common_state->metadata, i, ch);
                                 save_rgx_metadata();
