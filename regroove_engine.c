@@ -685,7 +685,9 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
     */
 
     // Pattern mode: detect if order escaped during render (pattern break/jump in the pattern data)
-    if (g->pattern_mode && prev_order_before == g->loop_order && cur_order != g->loop_order) {
+    // BUT: Don't treat it as an escape if we have a pending pattern mode order change queued
+    if (g->pattern_mode && prev_order_before == g->loop_order && cur_order != g->loop_order &&
+        g->pending_pattern_mode_order == -1) {
         // Jump back to the loop pattern start
         openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
         apply_pending_mute_changes(g);
@@ -768,10 +770,26 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
 
         // --- CRITICAL: process pending pattern jump first and return ---
         if (at_pattern_boundary && g->pending_pattern_mode_order != -1) {
-            int is_same_order = (g->pending_pattern_mode_order == g->loop_order);
+            // Check if we're already at the target order (natural advance already happened)
+            int is_same_order = (g->pending_pattern_mode_order == cur_order);
 
-            if (!is_same_order) {
-                // Different order - do the jump
+            if (is_same_order) {
+                // Already at target order - just update loop state without re-rendering
+                g->loop_order = cur_order;
+                g->loop_pattern = cur_pattern;
+                g->full_loop_rows = openmpt_module_get_pattern_num_rows(g->mod, g->loop_pattern);
+                g->custom_loop_rows = 0;
+                g->prev_row = -1;
+                g->prev_order = g->loop_order;
+                apply_pending_mute_changes(g);
+                if (g->interactive_ok) {
+                    reapply_mutes(g);
+                    reapply_pannings(g);
+                }
+                if (g->on_loop_pattern)
+                    g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
+            } else {
+                // Different order - do the jump and re-render
                 g->loop_order = g->pending_pattern_mode_order;
                 g->loop_pattern = openmpt_module_get_order_pattern(g->mod, g->loop_order);
                 g->full_loop_rows = openmpt_module_get_pattern_num_rows(g->mod, g->loop_pattern);
@@ -785,6 +803,12 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
                         reapply_mutes(g);
                         reapply_pannings(g);
                     }
+                    // Re-render a clean buffer from the new pattern start to avoid glitches
+                    count = openmpt_module_read_interleaved_stereo(
+                        g->mod, g->samplerate * g->pitch_factor, frames, buffer);
+                    cur_order = g->loop_order;
+                    cur_pattern = g->loop_pattern;
+                    cur_row = openmpt_module_get_current_row(g->mod);
                     if (g->on_loop_pattern)
                         g->on_loop_pattern(g->loop_order, g->loop_pattern, g->callback_userdata);
                 }
