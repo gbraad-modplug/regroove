@@ -41,6 +41,7 @@ typedef enum {
     ACTION_TRIGGER_PHRASE,   // parameter = phrase index (triggers phrase sequence)
     ACTION_TRIGGER_LOOP,     // parameter = loop range index (triggers saved loop range)
     ACTION_PLAY_TO_LOOP,     // parameter = loop range index (arms loop, waits to reach start)
+    ACTION_TAP_TEMPO,        // tap to set tempo (adjusts pitch to match tapped BPM)
     // Effects actions (continuous, use MIDI value 0-127)
     ACTION_FX_DISTORTION_DRIVE,    // distortion drive amount
     ACTION_FX_DISTORTION_MIX,      // distortion dry/wet mix

@@ -1093,6 +1093,75 @@ static void execute_action(InputAction action, int parameter, float value, void*
                 }
             }
             break;
+        case ACTION_TAP_TEMPO: {
+            // Tap tempo: calculate BPM from tap intervals and adjust pitch to match
+            static Uint32 last_tap_time = 0;
+            static Uint32 tap_times[4] = {0, 0, 0, 0};  // Store last 4 tap times
+            static int tap_count = 0;
+
+            Uint32 current_time = SDL_GetTicks();
+
+            // Reset if more than 2 seconds since last tap
+            if (last_tap_time != 0 && (current_time - last_tap_time) > 2000) {
+                tap_count = 0;
+                printf("Tap tempo reset (timeout)\n");
+            }
+
+            // Store this tap
+            if (tap_count < 4) {
+                tap_times[tap_count] = current_time;
+                tap_count++;
+            } else {
+                // Shift array left and add new tap
+                for (int i = 0; i < 3; i++) {
+                    tap_times[i] = tap_times[i + 1];
+                }
+                tap_times[3] = current_time;
+            }
+
+            last_tap_time = current_time;
+
+            // Need at least 2 taps to calculate BPM
+            if (tap_count >= 2 && common_state && common_state->player) {
+                // Calculate average interval between taps
+                Uint32 total_interval = 0;
+                int interval_count = 0;
+
+                for (int i = 1; i < tap_count; i++) {
+                    total_interval += (tap_times[i] - tap_times[i - 1]);
+                    interval_count++;
+                }
+
+                double avg_interval_ms = (double)total_interval / interval_count;
+
+                // Convert to BPM (60000 ms per minute)
+                double tapped_bpm = 60000.0 / avg_interval_ms;
+
+                // Get module's current base tempo
+                double module_bpm = regroove_get_current_bpm(common_state->player);
+
+                if (module_bpm > 0.0) {
+                    // Calculate pitch adjustment to match tapped tempo
+                    // IMPORTANT: Pitch has INVERSE relationship with playback speed!
+                    // effective_bpm = module_bpm / pitch, so pitch = module_bpm / tapped_bpm
+                    double target_pitch = module_bpm / tapped_bpm;
+
+                    // Clamp to reasonable range
+                    if (target_pitch < 0.25) target_pitch = 0.25;
+                    if (target_pitch > 3.0) target_pitch = 3.0;
+
+                    // Apply pitch adjustment
+                    regroove_common_set_pitch(common_state, target_pitch);
+                    pitch_slider = (float)(target_pitch - 1.0);
+
+                    printf("Tap tempo: %.1f BPM (taps: %d, interval: %.0fms, pitch: %.3f)\n",
+                           tapped_bpm, tap_count, avg_interval_ms, target_pitch);
+                }
+            } else {
+                printf("Tap tempo: first tap (need 2+ taps to calculate BPM)\n");
+            }
+            break;
+        }
         case ACTION_FX_DISTORTION_DRIVE:
             if (effects) {
                 // Map MIDI value (0-127) to normalized 0.0-1.0
@@ -1718,6 +1787,7 @@ static void format_pad_action_text(InputAction action, int parameter, char *line
         case ACTION_PLAYBACK_MUTE: snprintf(line1, line1_size, "PBACK\nMUTE"); break;
         case ACTION_INPUT_MUTE: snprintf(line1, line1_size, "INPUT\nMUTE"); break;
         case ACTION_RECORD_TOGGLE: snprintf(line1, line1_size, "RECORD"); break;
+        case ACTION_TAP_TEMPO: snprintf(line1, line1_size, "TAP\nTEMPO"); break;
         default:
             snprintf(line1, line1_size, "???");
             break;

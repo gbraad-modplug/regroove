@@ -48,6 +48,7 @@ InputAction parse_action(const char *str) {
     if (strcmp(str, "trigger_phrase") == 0) return ACTION_TRIGGER_PHRASE;
     if (strcmp(str, "trigger_loop") == 0) return ACTION_TRIGGER_LOOP;
     if (strcmp(str, "play_to_loop") == 0) return ACTION_PLAY_TO_LOOP;
+    if (strcmp(str, "tap_tempo") == 0) return ACTION_TAP_TEMPO;
     if (strcmp(str, "fx_distortion_drive") == 0) return ACTION_FX_DISTORTION_DRIVE;
     if (strcmp(str, "fx_distortion_mix") == 0) return ACTION_FX_DISTORTION_MIX;
     if (strcmp(str, "fx_filter_cutoff") == 0) return ACTION_FX_FILTER_CUTOFF;
@@ -117,6 +118,7 @@ const char* input_action_name(InputAction action) {
         case ACTION_TRIGGER_PHRASE: return "trigger_phrase";
         case ACTION_TRIGGER_LOOP: return "trigger_loop";
         case ACTION_PLAY_TO_LOOP: return "play_to_loop";
+        case ACTION_TAP_TEMPO: return "tap_tempo";
         case ACTION_FX_DISTORTION_DRIVE: return "fx_distortion_drive";
         case ACTION_FX_DISTORTION_MIX: return "fx_distortion_mix";
         case ACTION_FX_FILTER_CUTOFF: return "fx_filter_cutoff";
