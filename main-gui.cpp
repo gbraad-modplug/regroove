@@ -5152,7 +5152,8 @@ static void ShowMainUI() {
                     if (program == -1) {
                         snprintf(prog_label, sizeof(prog_label), "None");
                     } else {
-                        snprintf(prog_label, sizeof(prog_label), "%d", program);
+                        // Display as 1-based (1-128) for MIDI convention
+                        snprintf(prog_label, sizeof(prog_label), "%d", program + 1);
                     }
 
                     ImGui::SetNextItemWidth(80.0f);
@@ -5161,9 +5162,10 @@ static void ShowMainUI() {
                             regroove_metadata_set_program(common_state->metadata, i, -1);
                             save_rgx_metadata();
                         }
+                        // Display programs 1-128 (stored internally as 0-127)
                         for (int p = 0; p <= 127; p++) {
                             char p_label[16];
-                            snprintf(p_label, sizeof(p_label), "%d", p);
+                            snprintf(p_label, sizeof(p_label), "%d", p + 1);
                             if (ImGui::Selectable(p_label, program == p)) {
                                 regroove_metadata_set_program(common_state->metadata, i, p);
                                 save_rgx_metadata();
@@ -5274,7 +5276,8 @@ static void ShowMainUI() {
                     if (program == -1) {
                         snprintf(prog_label, sizeof(prog_label), "None");
                     } else {
-                        snprintf(prog_label, sizeof(prog_label), "%d", program);
+                        // Display as 1-based (1-128) for MIDI convention
+                        snprintf(prog_label, sizeof(prog_label), "%d", program + 1);
                     }
 
                     ImGui::SetNextItemWidth(80.0f);
@@ -5283,9 +5286,10 @@ static void ShowMainUI() {
                             regroove_metadata_set_program(common_state->metadata, i, -1);
                             save_rgx_metadata();
                         }
+                        // Display programs 1-128 (stored internally as 0-127)
                         for (int p = 0; p <= 127; p++) {
                             char p_label[16];
-                            snprintf(p_label, sizeof(p_label), "%d", p);
+                            snprintf(p_label, sizeof(p_label), "%d", p + 1);
                             if (ImGui::Selectable(p_label, program == p)) {
                                 regroove_metadata_set_program(common_state->metadata, i, p);
                                 save_rgx_metadata();
