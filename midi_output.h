@@ -10,6 +10,17 @@ extern "C" {
 // Maximum number of MIDI output devices
 #define MIDI_OUT_MAX_DEVICES 1  // Single device for now
 
+// List available MIDI output ports
+// Returns the number of output ports found
+int midi_output_list_ports(void);
+
+// Get the name of a MIDI output port
+// port: port index
+// name_out: buffer to store the port name
+// bufsize: size of name_out buffer
+// Returns 0 on success, -1 on failure
+int midi_output_get_port_name(int port, char *name_out, int bufsize);
+
 // Initialize MIDI output device
 // Returns 0 on success, -1 on failure
 int midi_output_init(int device_id);
