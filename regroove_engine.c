@@ -1199,61 +1199,7 @@ int regroove_get_pattern_num_rows(const Regroove* g, int pattern) {
 }
 double regroove_get_current_bpm(const Regroove* g) {
     if (!g || !g->mod) return 0.0;
-    double bpm = openmpt_module_get_current_estimated_bpm(g->mod);
-
-    // OctaMED/MED modules report BPM at 2x the actual tempo due to CIA timing
-    // Check if this is a MED module and adjust accordingly
-    const char* container = openmpt_module_get_metadata(g->mod, "container");
-    const char* type = openmpt_module_get_metadata(g->mod, "type");
-    const char* type_long = openmpt_module_get_metadata(g->mod, "type_long");
-    const char* title = openmpt_module_get_metadata(g->mod, "title");
-
-    // Debug output to help diagnose BPM issues
-    // Track which module we've printed debug for using module pointer
-    static const void* last_debug_mod = NULL;
-    if (g->mod != last_debug_mod) {
-        printf("\n=== Module BPM Debug Info ===\n");
-        if (title) printf("Title: %s\n", title);
-
-        // Print all available metadata keys
-        const char* keys = openmpt_module_get_metadata_keys(g->mod);
-        printf("Available metadata keys: %s\n\n", keys ? keys : "NULL");
-
-        printf("Container: %s\n", container ? container : "NULL");
-        printf("Type: %s\n", type ? type : "NULL");
-        printf("Type Long: %s\n", type_long ? type_long : "NULL");
-        printf("Raw BPM from libopenmpt: %.3f\n", bpm);
-
-        // Also print tracker info if available
-        const char* tracker = openmpt_module_get_metadata(g->mod, "tracker");
-        if (tracker) printf("Tracker: %s\n", tracker);
-
-        printf("=============================\n\n");
-        last_debug_mod = g->mod;
-    }
-
-    // Note: Some OctaMED/MED modules report BPM at 2x due to CIA timing differences,
-    // but this is inconsistent across different MED files. Cannot apply blanket correction.
-    // TODO: Investigate if there's a reliable way to detect which MED files need correction.
-    // For now, just log detection for debugging purposes.
-    int is_med = 0;
-    if (container && (strstr(container, "med") != NULL || strstr(container, "MED") != NULL)) {
-        is_med = 1;
-    }
-    if (!is_med && type && (strstr(type, "med") != NULL || strstr(type, "MED") != NULL)) {
-        is_med = 1;
-    }
-    if (!is_med && type_long && (strstr(type_long, "MMD") != NULL || strstr(type_long, "OctaMED") != NULL)) {
-        is_med = 1;
-    }
-
-    if (is_med && bpm > 200.0) {
-        // Only warn about potentially incorrect BPM for MED files
-        printf("WARNING: MED/OctaMED module reporting high BPM (%.3f). Some MED files report 2x tempo.\n", bpm);
-        printf("If this seems wrong, the correct BPM might be: %.3f\n", bpm / 2.0);
-    }
-
-    return bpm;
+    return openmpt_module_get_current_estimated_bpm(g->mod);
 }
 
 int regroove_get_pattern_cell(const Regroove *g, int pattern, int row, int channel, char *buffer, size_t buffer_size) {
