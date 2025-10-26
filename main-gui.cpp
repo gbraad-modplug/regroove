@@ -2624,7 +2624,10 @@ static void ShowMainUI() {
     ImGui::PushStyleColor(ImGuiCol_Button, prevCol);
     if (ImGui::Button("<<", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
         if (learn_mode_active) start_learn_for_action(ACTION_QUEUE_PREV_ORDER);
-        else dispatch_action(ACT_JUMP_PREV_ORDER);
+        else {
+            // Pattern mode: queued jump (beat-synced), Song mode: immediate jump (scrubbing)
+            dispatch_action(loop_enabled ? ACT_QUEUE_PREV_ORDER : ACT_JUMP_PREV_ORDER);
+        }
     }
     ImGui::PopStyleColor();
     ImGui::SameLine();
@@ -2641,7 +2644,10 @@ static void ShowMainUI() {
     ImGui::PushStyleColor(ImGuiCol_Button, nextCol);
     if (ImGui::Button(">>", ImVec2(BUTTON_SIZE, BUTTON_SIZE))) {
         if (learn_mode_active) start_learn_for_action(ACTION_QUEUE_NEXT_ORDER);
-        else dispatch_action(ACT_JUMP_NEXT_ORDER);
+        else {
+            // Pattern mode: queued jump (beat-synced), Song mode: immediate jump (scrubbing)
+            dispatch_action(loop_enabled ? ACT_QUEUE_NEXT_ORDER : ACT_JUMP_NEXT_ORDER);
+        }
     }
     ImGui::PopStyleColor();
     ImGui::SameLine();
