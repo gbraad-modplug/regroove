@@ -2368,11 +2368,25 @@ static void ShowMainUI() {
                 double pitch = regroove_get_pitch(common_state->player);
                 double effective_bpm = bpm / pitch;
 
-                // Show both original and effective BPM if pitch is not 1.0
+                // Check for incoming MIDI Clock tempo (always displayed if present as a hint)
+                double midi_tempo = midi_get_clock_tempo();
+
+                // Always show module BPM first (primary information)
+                // Add incoming MIDI Clock tempo as a hint with ">" prefix
                 if (pitch > 0.99 && pitch < 1.01) {
-                    std::snprintf(bpm_str, sizeof(bpm_str), "%.0f", bpm);
+                    // Normal pitch
+                    if (midi_tempo > 0.0) {
+                        std::snprintf(bpm_str, sizeof(bpm_str), "%.0f >%.0f", bpm, midi_tempo);
+                    } else {
+                        std::snprintf(bpm_str, sizeof(bpm_str), "%.0f", bpm);
+                    }
                 } else {
-                    std::snprintf(bpm_str, sizeof(bpm_str), "%.0f->%.0f", bpm, effective_bpm);
+                    // Pitch adjusted - show effective BPM
+                    if (midi_tempo > 0.0) {
+                        std::snprintf(bpm_str, sizeof(bpm_str), "%.0f->%.0f >%.0f", bpm, effective_bpm, midi_tempo);
+                    } else {
+                        std::snprintf(bpm_str, sizeof(bpm_str), "%.0f->%.0f", bpm, effective_bpm);
+                    }
                 }
             }
 
