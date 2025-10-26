@@ -912,6 +912,11 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
     if (g->on_note && g->last_msg_row != final_row) {
         // Process all channels for note events at the current row
         for (int ch = 0; ch < g->num_channels; ch++) {
+            // Skip muted channels - don't send MIDI notes for muted channels
+            if (g->mute_states && g->mute_states[ch]) {
+                continue;
+            }
+
             // Get pattern cell data for this channel
             const char *note_str = openmpt_module_format_pattern_row_channel(
                 g->mod, final_pattern, final_row, ch, 0, 1);
@@ -976,7 +981,18 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
 
                 // Only call callback if there's a note or an effect command
                 if (note >= -2 || effect_cmd != 0) {
-                    g->on_note(ch, note, instrument, volume, effect_cmd, effect_param,
+                    // Apply channel volume slider to the velocity
+                    int adjusted_volume = volume;
+                    if (g->channel_volumes) {
+                        if (volume >= 0) {
+                            // Apply channel volume slider (0.0-1.0) directly to tracker volume
+                            adjusted_volume = (int)(volume * g->channel_volumes[ch]);
+                        } else {
+                            // No volume specified in pattern - use default max (64) and apply slider
+                            adjusted_volume = (int)(64 * g->channel_volumes[ch]);
+                        }
+                    }
+                    g->on_note(ch, note, instrument, adjusted_volume, effect_cmd, effect_param,
                               g->callback_userdata);
                 }
             }
