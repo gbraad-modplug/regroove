@@ -789,6 +789,19 @@ int main(int argc, char *argv[]) {
     }
     printf("\n");
 
+    // Check if config file exists, if not create it with defaults
+    FILE *config_check = fopen(config_file, "r");
+    if (!config_check) {
+        printf("Config file %s not found, creating with default settings...\n", config_file);
+        if (regroove_common_save_default_config(config_file) == 0) {
+            printf("Created default config: %s\n", config_file);
+        } else {
+            fprintf(stderr, "Warning: Failed to create default config file\n");
+        }
+    } else {
+        fclose(config_check);
+    }
+
     // Try to load custom mappings from config file
     if (regroove_common_load_mappings(common_state, config_file) != 0) {
         printf("No %s found, using default mappings\n", config_file);

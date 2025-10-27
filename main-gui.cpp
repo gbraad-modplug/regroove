@@ -6785,16 +6785,17 @@ static void ShowMainUI() {
         // Stereo Separation Section
         ImGui::Text("Stereo Separation:");
         ImGui::SameLine(150.0f);
-        if (common_state && common_state->player) {
-            int stereo_sep = regroove_get_stereo_separation(common_state->player);
+        if (common_state) {
+            int stereo_sep = common_state->device_config.stereo_separation;
             ImGui::SetNextItemWidth(200);
             if (ImGui::SliderInt("##stereo_sep", &stereo_sep, 0, 200, "%d%%")) {
-                regroove_set_stereo_separation(common_state->player, stereo_sep);
                 common_state->device_config.stereo_separation = stereo_sep;
                 regroove_common_save_device_config(common_state, current_config_file);
+                // Apply immediately if module is loaded
+                if (common_state->player) {
+                    regroove_set_stereo_separation(common_state->player, stereo_sep);
+                }
             }
-        } else {
-            ImGui::TextDisabled("(No module loaded)");
         }
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "0=mono, 100=default, 200=wide");
@@ -6804,8 +6805,8 @@ static void ShowMainUI() {
         // Dither Section
         ImGui::Text("Dither:");
         ImGui::SameLine(150.0f);
-        if (common_state && common_state->player) {
-            int current_dither = regroove_get_dither(common_state->player);
+        if (common_state) {
+            int current_dither = common_state->device_config.dither;
             const char* dither_names[] = { "None", "Default", "Rectangular 0.5bit", "Rectangular 1bit" };
             const char* current_dither_name = "Default";
             if (current_dither >= 0 && current_dither <= 3) {
@@ -6816,9 +6817,12 @@ static void ShowMainUI() {
                 for (int i = 0; i < 4; i++) {
                     bool is_selected = (i == current_dither);
                     if (ImGui::Selectable(dither_names[i], is_selected)) {
-                        regroove_set_dither(common_state->player, i);
                         common_state->device_config.dither = i;
                         regroove_common_save_device_config(common_state, current_config_file);
+                        // Apply immediately if module is loaded
+                        if (common_state->player) {
+                            regroove_set_dither(common_state->player, i);
+                        }
                     }
                     if (is_selected) {
                         ImGui::SetItemDefaultFocus();
@@ -6826,8 +6830,6 @@ static void ShowMainUI() {
                 }
                 ImGui::EndCombo();
             }
-        } else {
-            ImGui::TextDisabled("(No module loaded)");
         }
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "16-bit output noise shaping");
@@ -6837,15 +6839,16 @@ static void ShowMainUI() {
         // Amiga Resampler Section
         ImGui::Text("Amiga Resampler:");
         ImGui::SameLine(150.0f);
-        if (common_state && common_state->player) {
-            bool amiga_enabled = regroove_get_amiga_resampler(common_state->player) != 0;
+        if (common_state) {
+            bool amiga_enabled = common_state->device_config.amiga_resampler != 0;
             if (ImGui::Checkbox("##amiga_resampler", &amiga_enabled)) {
-                regroove_set_amiga_resampler(common_state->player, amiga_enabled ? 1 : 0);
                 common_state->device_config.amiga_resampler = amiga_enabled ? 1 : 0;
                 regroove_common_save_device_config(common_state, current_config_file);
+                // Apply immediately if module is loaded
+                if (common_state->player) {
+                    regroove_set_amiga_resampler(common_state->player, amiga_enabled ? 1 : 0);
+                }
             }
-        } else {
-            ImGui::TextDisabled("(No module loaded)");
         }
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Paula chip emulation (4-channel MODs only)");
@@ -6855,8 +6858,8 @@ static void ShowMainUI() {
         // Amiga Filter Type Section
         ImGui::Text("Amiga Filter Type:");
         ImGui::SameLine(150.0f);
-        if (common_state && common_state->player) {
-            int current_amiga_filter = regroove_get_amiga_filter_type(common_state->player);
+        if (common_state) {
+            int current_amiga_filter = common_state->device_config.amiga_filter_type;
             const char* amiga_filter_names[] = { "Auto", "A500", "A1200", "Unfiltered" };
             const char* current_amiga_filter_name = "Auto";
             if (current_amiga_filter >= 0 && current_amiga_filter <= 3) {
@@ -6867,9 +6870,12 @@ static void ShowMainUI() {
                 for (int i = 0; i < 4; i++) {
                     bool is_selected = (i == current_amiga_filter);
                     if (ImGui::Selectable(amiga_filter_names[i], is_selected)) {
-                        regroove_set_amiga_filter_type(common_state->player, i);
                         common_state->device_config.amiga_filter_type = i;
                         regroove_common_save_device_config(common_state, current_config_file);
+                        // Apply immediately if module is loaded
+                        if (common_state->player) {
+                            regroove_set_amiga_filter_type(common_state->player, i);
+                        }
                     }
                     if (is_selected) {
                         ImGui::SetItemDefaultFocus();
@@ -6877,8 +6883,6 @@ static void ShowMainUI() {
                 }
                 ImGui::EndCombo();
             }
-        } else {
-            ImGui::TextDisabled("(No module loaded)");
         }
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Filter model for Amiga resampler");
@@ -7469,6 +7473,19 @@ int main(int argc, char* argv[]) {
 
     // Track the config file for saving learned mappings
     current_config_file = config_file;
+
+    // Check if config file exists, if not create it with defaults
+    FILE *config_check = fopen(config_file, "r");
+    if (!config_check) {
+        printf("Config file %s not found, creating with default settings...\n", config_file);
+        if (regroove_common_save_default_config(config_file) == 0) {
+            printf("Created default config: %s\n", config_file);
+        } else {
+            fprintf(stderr, "Warning: Failed to create default config file\n");
+        }
+    } else {
+        fclose(config_check);
+    }
 
     // Load input mappings from config file
     if (regroove_common_load_mappings(common_state, config_file) != 0) {
