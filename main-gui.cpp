@@ -4543,7 +4543,10 @@ static void ShowMainUI() {
             double pitch = regroove_get_pitch(mod);
             ImGui::Text("Pitch:");
             ImGui::SameLine(150.0f);
-            ImGui::Text("%.2fx", pitch);
+            // Display as playback speed: 1/pitch_factor
+            // pitch_factor < 1.0 = lower sample rate = faster playback
+            double playback_speed = (pitch > 0.0) ? (1.0 / pitch) : 1.0;
+            ImGui::Text("%.2fx", playback_speed);
 
             int custom_loop_rows = regroove_get_custom_loop_rows(mod);
             if (custom_loop_rows > 0) {
@@ -6741,6 +6744,13 @@ static void ShowMainUI() {
         }
 
         ImGui::Dummy(ImVec2(0, 20.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 20.0f));
+
+        // Playback Configuration Section
+        ImGui::TextColored(COLOR_SECTION_HEADING, "PLAYBACK CONFIGURATION");
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 12.0f));
 
         // Interpolation Filter Section
         ImGui::Text("Interpolation Filter:");
