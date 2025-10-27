@@ -53,6 +53,10 @@ struct Regroove {
     double samplerate;
     double pitch_factor;
     int interpolation_filter;  // 0=none, 1=linear, 2=cubic, 4=FIR
+    int stereo_separation;     // 0-200, percentage
+    int dither;                // 0=none, 1=default, 2=rect 0.5bit, 3=rect 1bit
+    int amiga_resampler;       // 0=disabled, 1=enabled
+    int amiga_filter_type;     // 0=auto, 1=a500, 2=a1200, 3=unfiltered
     int num_channels;
     int* mute_states;
     double* channel_volumes;
@@ -515,6 +519,10 @@ Regroove *regroove_create(const char *filename, double samplerate) {
     g->samplerate = samplerate;
     g->pitch_factor = 1.0;
     g->interpolation_filter = 1;  // Default to linear
+    g->stereo_separation = 100;   // Default to 100%
+    g->dither = 1;                // Default to library default
+    g->amiga_resampler = 0;       // Default to disabled
+    g->amiga_filter_type = 0;     // Default to auto
     g->pattern_mode = 0;
     g->pending_pattern_mode_order = -1;
     g->queued_jump_type = 0;
@@ -570,6 +578,23 @@ Regroove *regroove_create(const char *filename, double samplerate) {
 
     // Set interpolation filter (OPENMPT_MODULE_RENDER_INTERPOLATIONFILTER_LENGTH = 3)
     openmpt_module_set_render_param(g->mod, 3, g->interpolation_filter);
+
+    // Set stereo separation (OPENMPT_MODULE_RENDER_STEREOSEPARATION_PERCENT = 2)
+    openmpt_module_set_render_param(g->mod, 2, g->stereo_separation);
+
+    // Set dither
+    char dither_str[8];
+    snprintf(dither_str, sizeof(dither_str), "%d", g->dither);
+    openmpt_module_ctl_set(g->mod, "dither", dither_str);
+
+    // Set Amiga resampler (only affects 4-channel Amiga modules)
+    openmpt_module_ctl_set(g->mod, "render.resampler.emulate_amiga", g->amiga_resampler ? "1" : "0");
+
+    // Set Amiga filter type
+    const char* amiga_filter_names[] = {"auto", "a500", "a1200", "unfiltered"};
+    if (g->amiga_filter_type >= 0 && g->amiga_filter_type <= 3) {
+        openmpt_module_ctl_set(g->mod, "render.resampler.emulate_amiga_type", amiga_filter_names[g->amiga_filter_type]);
+    }
 
     // Disable automatic looping - we'll handle it manually for cleaner loop points
     openmpt_module_set_repeat_count(g->mod, 0);
@@ -1186,6 +1211,61 @@ void regroove_set_interpolation_filter(Regroove* g, int filter) {
 int regroove_get_interpolation_filter(const Regroove* g) {
     if (!g) return 1;  // Default to linear
     return g->interpolation_filter;
+}
+
+void regroove_set_stereo_separation(Regroove* g, int separation) {
+    if (!g || !g->mod) return;
+    // Clamp to valid range 0-200
+    if (separation < 0) separation = 0;
+    if (separation > 200) separation = 200;
+    g->stereo_separation = separation;
+    // OPENMPT_MODULE_RENDER_STEREOSEPARATION_PERCENT = 2
+    openmpt_module_set_render_param(g->mod, 2, separation);
+}
+
+int regroove_get_stereo_separation(const Regroove* g) {
+    if (!g) return 100;  // Default
+    return g->stereo_separation;
+}
+
+void regroove_set_dither(Regroove* g, int dither) {
+    if (!g || !g->mod) return;
+    // Validate dither value: 0-3
+    if (dither < 0 || dither > 3) return;
+    g->dither = dither;
+    char dither_str[8];
+    snprintf(dither_str, sizeof(dither_str), "%d", dither);
+    openmpt_module_ctl_set(g->mod, "dither", dither_str);
+}
+
+int regroove_get_dither(const Regroove* g) {
+    if (!g) return 1;  // Default to library default
+    return g->dither;
+}
+
+void regroove_set_amiga_resampler(Regroove* g, int enabled) {
+    if (!g || !g->mod) return;
+    g->amiga_resampler = enabled ? 1 : 0;
+    openmpt_module_ctl_set(g->mod, "render.resampler.emulate_amiga", enabled ? "1" : "0");
+}
+
+int regroove_get_amiga_resampler(const Regroove* g) {
+    if (!g) return 0;  // Default to disabled
+    return g->amiga_resampler;
+}
+
+void regroove_set_amiga_filter_type(Regroove* g, int filter_type) {
+    if (!g || !g->mod) return;
+    // Validate filter type: 0-3
+    if (filter_type < 0 || filter_type > 3) return;
+    g->amiga_filter_type = filter_type;
+    const char* amiga_filter_names[] = {"auto", "a500", "a1200", "unfiltered"};
+    openmpt_module_ctl_set(g->mod, "render.resampler.emulate_amiga_type", amiga_filter_names[filter_type]);
+}
+
+int regroove_get_amiga_filter_type(const Regroove* g) {
+    if (!g) return 0;  // Default to auto
+    return g->amiga_filter_type;
 }
 
 // --- Info getters ---

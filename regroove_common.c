@@ -168,6 +168,10 @@ RegrooveCommonState* regroove_common_create(void) {
     state->device_config.midi_clock_sync = 0;     // Disabled (default)
     state->device_config.midi_clock_master = 0;   // Disabled (default)
     state->device_config.interpolation_filter = 1; // Linear (default)
+    state->device_config.stereo_separation = 100;  // 100% (default)
+    state->device_config.dither = 1;               // Library default
+    state->device_config.amiga_resampler = 0;      // Disabled (default)
+    state->device_config.amiga_filter_type = 0;    // Auto (default)
     state->device_config.expanded_pads = 0;       // Combined layout (default)
 
     // Initialize default effect parameters (same as regroove_effects_create)
@@ -274,6 +278,14 @@ int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_pa
                     state->device_config.midi_clock_master = atoi(value);
                 } else if (strcmp(key, "interpolation_filter") == 0) {
                     state->device_config.interpolation_filter = atoi(value);
+                } else if (strcmp(key, "stereo_separation") == 0) {
+                    state->device_config.stereo_separation = atoi(value);
+                } else if (strcmp(key, "dither") == 0) {
+                    state->device_config.dither = atoi(value);
+                } else if (strcmp(key, "amiga_resampler") == 0) {
+                    state->device_config.amiga_resampler = atoi(value);
+                } else if (strcmp(key, "amiga_filter_type") == 0) {
+                    state->device_config.amiga_filter_type = atoi(value);
                 } else if (strcmp(key, "expanded_pads") == 0) {
                     state->device_config.expanded_pads = atoi(value);
                 } else if (strcmp(key, "fx_distortion_drive") == 0) {
@@ -400,8 +412,12 @@ int regroove_common_load_module(RegrooveCommonState *state, const char *path,
         return -1;
     }
 
-    // Apply interpolation filter from config
+    // Apply audio quality settings from config
     regroove_set_interpolation_filter(mod, state->device_config.interpolation_filter);
+    regroove_set_stereo_separation(mod, state->device_config.stereo_separation);
+    regroove_set_dither(mod, state->device_config.dither);
+    regroove_set_amiga_resampler(mod, state->device_config.amiga_resampler);
+    regroove_set_amiga_filter_type(mod, state->device_config.amiga_filter_type);
 
     // Lock audio and assign new module
     if (state->audio_device_id) {
@@ -692,6 +708,10 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_clock_sync = %d\n", state->device_config.midi_clock_sync);
         fprintf(f, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
         fprintf(f, "interpolation_filter = %d\n", state->device_config.interpolation_filter);
+        fprintf(f, "stereo_separation = %d\n", state->device_config.stereo_separation);
+        fprintf(f, "dither = %d\n", state->device_config.dither);
+        fprintf(f, "amiga_resampler = %d\n", state->device_config.amiga_resampler);
+        fprintf(f, "amiga_filter_type = %d\n", state->device_config.amiga_filter_type);
         fprintf(f, "expanded_pads = %d\n", state->device_config.expanded_pads);
         fprintf(f, "fx_distortion_drive = %.2f\n", state->device_config.fx_distortion_drive);
         fprintf(f, "fx_distortion_mix = %.2f\n", state->device_config.fx_distortion_mix);
@@ -729,6 +749,10 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_clock_sync = %d\n", state->device_config.midi_clock_sync);
         fprintf(f, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
         fprintf(f, "interpolation_filter = %d\n", state->device_config.interpolation_filter);
+        fprintf(f, "stereo_separation = %d\n", state->device_config.stereo_separation);
+        fprintf(f, "dither = %d\n", state->device_config.dither);
+        fprintf(f, "amiga_resampler = %d\n", state->device_config.amiga_resampler);
+        fprintf(f, "amiga_filter_type = %d\n", state->device_config.amiga_filter_type);
         fprintf(f, "expanded_pads = %d\n", state->device_config.expanded_pads);
         fprintf(f, "fx_distortion_drive = %.2f\n", state->device_config.fx_distortion_drive);
         fprintf(f, "fx_distortion_mix = %.2f\n", state->device_config.fx_distortion_mix);
@@ -869,7 +893,15 @@ int regroove_common_save_default_config(const char *filepath) {
     fprintf(f, "# MIDI Clock master: 0=disabled, 1=send MIDI clock as master\n");
     fprintf(f, "midi_clock_master = 0\n");
     fprintf(f, "# Interpolation filter: 0=none, 1=linear, 2=cubic, 4=FIR\n");
-    fprintf(f, "interpolation_filter = 1\n\n");
+    fprintf(f, "interpolation_filter = 1\n");
+    fprintf(f, "# Stereo separation: 0-200 (0=mono, 100=default, 200=extra wide)\n");
+    fprintf(f, "stereo_separation = 100\n");
+    fprintf(f, "# Dither: 0=none, 1=default, 2=rectangular 0.5bit, 3=rectangular 1bit\n");
+    fprintf(f, "dither = 1\n");
+    fprintf(f, "# Amiga resampler (only affects 4-channel Amiga modules): 0=disabled, 1=enabled\n");
+    fprintf(f, "amiga_resampler = 0\n");
+    fprintf(f, "# Amiga filter type: 0=auto, 1=a500, 2=a1200, 3=unfiltered\n");
+    fprintf(f, "amiga_filter_type = 0\n\n");
     fprintf(f, "# Default effect parameters (applied when loading songs)\n");
     fprintf(f, "fx_distortion_drive = 0.50\n");
     fprintf(f, "fx_distortion_mix = 0.50\n");

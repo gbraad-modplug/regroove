@@ -51,6 +51,10 @@ typedef struct {
     int midi_clock_sync;    // 0 = disabled, 1 = sync tempo to incoming MIDI clock (default: 0)
     int midi_clock_master;  // 0 = disabled, 1 = send MIDI clock as master (default: 0)
     int interpolation_filter; // 0=none, 1=linear, 2=cubic, 4=FIR (default: 2)
+    int stereo_separation;    // 0-200, stereo separation percentage (default: 100)
+    int dither;               // 0=none, 1=default, 2=rectangular 0.5bit, 3=rectangular 1bit (default: 1)
+    int amiga_resampler;      // 0=disabled, 1=enabled (default: 0)
+    int amiga_filter_type;    // 0=auto, 1=a500, 2=a1200, 3=unfiltered (default: 0)
     int expanded_pads;      // 0 = combined 8+8 layout, 1 = separate 16+16 panels (default: 0)
 
     // Default effect parameters (applied on song load)

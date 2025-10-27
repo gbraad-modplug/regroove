@@ -6780,6 +6780,109 @@ static void ShowMainUI() {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Audio quality vs CPU usage");
 
+        ImGui::Dummy(ImVec2(0, 8.0f));
+
+        // Stereo Separation Section
+        ImGui::Text("Stereo Separation:");
+        ImGui::SameLine(150.0f);
+        if (common_state && common_state->player) {
+            int stereo_sep = regroove_get_stereo_separation(common_state->player);
+            ImGui::SetNextItemWidth(200);
+            if (ImGui::SliderInt("##stereo_sep", &stereo_sep, 0, 200, "%d%%")) {
+                regroove_set_stereo_separation(common_state->player, stereo_sep);
+                common_state->device_config.stereo_separation = stereo_sep;
+                regroove_common_save_device_config(common_state, current_config_file);
+            }
+        } else {
+            ImGui::TextDisabled("(No module loaded)");
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "0=mono, 100=default, 200=wide");
+
+        ImGui::Dummy(ImVec2(0, 8.0f));
+
+        // Dither Section
+        ImGui::Text("Dither:");
+        ImGui::SameLine(150.0f);
+        if (common_state && common_state->player) {
+            int current_dither = regroove_get_dither(common_state->player);
+            const char* dither_names[] = { "None", "Default", "Rectangular 0.5bit", "Rectangular 1bit" };
+            const char* current_dither_name = "Default";
+            if (current_dither >= 0 && current_dither <= 3) {
+                current_dither_name = dither_names[current_dither];
+            }
+
+            if (ImGui::BeginCombo("##dither", current_dither_name)) {
+                for (int i = 0; i < 4; i++) {
+                    bool is_selected = (i == current_dither);
+                    if (ImGui::Selectable(dither_names[i], is_selected)) {
+                        regroove_set_dither(common_state->player, i);
+                        common_state->device_config.dither = i;
+                        regroove_common_save_device_config(common_state, current_config_file);
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        } else {
+            ImGui::TextDisabled("(No module loaded)");
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "16-bit output noise shaping");
+
+        ImGui::Dummy(ImVec2(0, 8.0f));
+
+        // Amiga Resampler Section
+        ImGui::Text("Amiga Resampler:");
+        ImGui::SameLine(150.0f);
+        if (common_state && common_state->player) {
+            bool amiga_enabled = regroove_get_amiga_resampler(common_state->player) != 0;
+            if (ImGui::Checkbox("##amiga_resampler", &amiga_enabled)) {
+                regroove_set_amiga_resampler(common_state->player, amiga_enabled ? 1 : 0);
+                common_state->device_config.amiga_resampler = amiga_enabled ? 1 : 0;
+                regroove_common_save_device_config(common_state, current_config_file);
+            }
+        } else {
+            ImGui::TextDisabled("(No module loaded)");
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Paula chip emulation (4-channel MODs only)");
+
+        ImGui::Dummy(ImVec2(0, 8.0f));
+
+        // Amiga Filter Type Section
+        ImGui::Text("Amiga Filter Type:");
+        ImGui::SameLine(150.0f);
+        if (common_state && common_state->player) {
+            int current_amiga_filter = regroove_get_amiga_filter_type(common_state->player);
+            const char* amiga_filter_names[] = { "Auto", "A500", "A1200", "Unfiltered" };
+            const char* current_amiga_filter_name = "Auto";
+            if (current_amiga_filter >= 0 && current_amiga_filter <= 3) {
+                current_amiga_filter_name = amiga_filter_names[current_amiga_filter];
+            }
+
+            if (ImGui::BeginCombo("##amiga_filter", current_amiga_filter_name)) {
+                for (int i = 0; i < 4; i++) {
+                    bool is_selected = (i == current_amiga_filter);
+                    if (ImGui::Selectable(amiga_filter_names[i], is_selected)) {
+                        regroove_set_amiga_filter_type(common_state->player, i);
+                        common_state->device_config.amiga_filter_type = i;
+                        regroove_common_save_device_config(common_state, current_config_file);
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        } else {
+            ImGui::TextDisabled("(No module loaded)");
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Filter model for Amiga resampler");
+
         ImGui::Dummy(ImVec2(0, 20.0f));
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 20.0f));

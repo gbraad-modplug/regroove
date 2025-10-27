@@ -85,6 +85,24 @@ void regroove_set_pitch(Regroove *g, double pitch);
 void regroove_set_interpolation_filter(Regroove *g, int filter);
 int regroove_get_interpolation_filter(const Regroove *g);
 
+// Audio quality settings
+// stereo_separation: 0-200 (0=mono, 100=default, 200=extra wide)
+void regroove_set_stereo_separation(Regroove *g, int separation);
+int regroove_get_stereo_separation(const Regroove *g);
+
+// dither: 0=none, 1=default, 2=rectangular 0.5bit, 3=rectangular 1bit with noise shaping
+void regroove_set_dither(Regroove *g, int dither);
+int regroove_get_dither(const Regroove *g);
+
+// Amiga resampler (only affects 4-channel Amiga modules)
+// enabled: 0=disabled, 1=enabled
+void regroove_set_amiga_resampler(Regroove *g, int enabled);
+int regroove_get_amiga_resampler(const Regroove *g);
+
+// filter_type: 0=auto, 1=a500, 2=a1200, 3=unfiltered
+void regroove_set_amiga_filter_type(Regroove *g, int filter_type);
+int regroove_get_amiga_filter_type(const Regroove *g);
+
 // State queries
 int regroove_get_num_orders(const Regroove *g);
 int regroove_get_num_patterns(const Regroove *g);
