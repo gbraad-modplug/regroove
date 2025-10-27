@@ -114,3 +114,67 @@ if [ ! -f "$INSTALL_PREFIX/lib/librtmidi.a" ]; then
 else
     echo "RtMidi already built (skipping)"
 fi
+
+# Build SDL2 for Android
+echo ""
+echo "=== Building SDL2 for Android ==="
+if [ ! -f "$INSTALL_PREFIX/lib/libSDL2.so" ]; then
+    SDL2_BUILD="build-sdl2-android-${ANDROID_ABI}"
+    mkdir -p "$SDL2_BUILD"
+    cd "$SDL2_BUILD"
+
+    # Download SDL2 if needed
+    SDL2_VERSION="2.30.0"
+    if [ ! -f "SDL2-${SDL2_VERSION}.tar.gz" ]; then
+        wget "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-${SDL2_VERSION}.tar.gz"
+        tar xzf "SDL2-${SDL2_VERSION}.tar.gz"
+    fi
+
+    cd "SDL2-${SDL2_VERSION}"
+    mkdir -p build-android
+    cd build-android
+
+    cmake .. \
+        -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
+        -DANDROID_ABI="$ANDROID_ABI" \
+        -DANDROID_PLATFORM="android-${ANDROID_API_LEVEL}" \
+        -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON
+
+    make -j$(nproc)
+    make install
+    cd ../../..
+else
+    echo "SDL2 already built (skipping)"
+fi
+
+# Build regroove for Android
+echo ""
+echo "=== Building regroove for Android ==="
+mkdir -p "$BUILD_DIR"
+cd "$BUILD_DIR"
+
+cmake .. \
+    -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
+    -DANDROID_ABI="$ANDROID_ABI" \
+    -DANDROID_PLATFORM="android-${ANDROID_API_LEVEL}" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH="$INSTALL_PREFIX" \
+    -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+    -DANDROID_BUILD=ON \
+    -DBUILD_SHARED_LIBS=ON
+
+make -j$(nproc)
+make install
+
+cd ..
+
+echo ""
+echo "=== Android Build Complete ==="
+echo "Library: $INSTALL_PREFIX/lib/libregroove.so"
+echo "ABI: $ANDROID_ABI"
+echo ""
+echo "To use in Android Studio:"
+echo "1. Copy $INSTALL_PREFIX/lib/*.so to app/src/main/jniLibs/$ANDROID_ABI/"
+echo "2. Copy $INSTALL_PREFIX/include/ headers for JNI wrapper"

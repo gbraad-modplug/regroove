@@ -6,7 +6,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Add /usr/local to search paths
+# Detect Android build
+if(ANDROID)
+    set(ANDROID_BUILD ON)
+    message(STATUS "Building for Android: ABI=${ANDROID_ABI}, API=${ANDROID_PLATFORM}")
+endif()
+
+# Add /usr/local to search paths (non-Android)
 set(CMAKE_PREFIX_PATH "/usr/local;${CMAKE_PREFIX_PATH}")
 list(APPEND CMAKE_LIBRARY_PATH /usr/local/lib)
 list(APPEND CMAKE_INCLUDE_PATH /usr/local/include)
@@ -56,8 +62,15 @@ if(NOT WIN32)
     )
 endif()
 
-# GUI version
-add_executable(regroove-gui
+# Choose OpenGL backend based on platform
+if(ANDROID)
+    set(IMGUI_OPENGL_BACKEND imgui/backends/imgui_impl_opengl3.cpp)
+else()
+    set(IMGUI_OPENGL_BACKEND imgui/backends/imgui_impl_opengl2.cpp)
+endif()
+
+# Common source files
+set(REGROOVE_SOURCES
     main-gui.cpp
     regroove_engine.c
     regroove_common.c
@@ -74,10 +87,26 @@ add_executable(regroove-gui
     imgui/imgui_tables.cpp
     imgui/imgui_widgets.cpp
     imgui/backends/imgui_impl_sdl2.cpp
-    imgui/backends/imgui_impl_opengl2.cpp
+    ${IMGUI_OPENGL_BACKEND}
 )
 
-target_include_directories(regroove-gui PRIVATE
+# GUI version
+# For Android, build as shared library, otherwise as executable
+if(ANDROID)
+    add_library(regroove SHARED ${REGROOVE_SOURCES})
+    set_target_properties(regroove PROPERTIES OUTPUT_NAME "regroove")
+else()
+    add_executable(regroove-gui ${REGROOVE_SOURCES})
+endif()
+
+# Set target name based on platform
+if(ANDROID)
+    set(GUI_TARGET regroove)
+else()
+    set(GUI_TARGET regroove-gui)
+endif()
+
+target_include_directories(${GUI_TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     imgui
     imgui/backends
@@ -86,15 +115,25 @@ target_include_directories(regroove-gui PRIVATE
     ${RTMIDI_INCLUDE_DIRS}
 )
 
-target_link_libraries(regroove-gui PRIVATE
+target_link_libraries(${GUI_TARGET} PRIVATE
     ${SDL2_LIBRARIES}
     ${OPENMPT_LIBRARIES}
     ${RTMIDI_LIBRARIES}
 )
 
-# Platform-specific libraries
-if(WIN32)
-    target_link_libraries(regroove-gui PRIVATE
+# Platform-specific libraries and definitions
+if(ANDROID)
+    # Android-specific libraries
+    target_link_libraries(${GUI_TARGET} PRIVATE
+        GLESv3    # OpenGL ES 3
+        log       # Android logging
+        android   # Android native API
+    )
+    # Use OpenGL ES3 backend
+    target_compile_definitions(${GUI_TARGET} PRIVATE IMGUI_IMPL_OPENGL_ES3)
+elseif(WIN32)
+    # Windows-specific libraries
+    target_link_libraries(${GUI_TARGET} PRIVATE
         opengl32
         winmm
         imm32
@@ -103,7 +142,8 @@ if(WIN32)
         z
     )
 else()
-    target_link_libraries(regroove-gui PRIVATE
+    # Linux/Unix-specific libraries
+    target_link_libraries(${GUI_TARGET} PRIVATE
         GL
         dl
         pthread
@@ -111,14 +151,18 @@ else()
     )
 endif()
 
-target_compile_options(regroove-gui PRIVATE
+target_compile_options(${GUI_TARGET} PRIVATE
     ${SDL2_CFLAGS_OTHER}
     ${OPENMPT_CFLAGS_OTHER}
     ${RTMIDI_CFLAGS_OTHER}
 )
 
 # Installation rules
-if(WIN32)
+if(ANDROID)
+    install(TARGETS ${GUI_TARGET}
+        LIBRARY DESTINATION lib
+    )
+elseif(WIN32)
     install(TARGETS regroove-gui
         RUNTIME DESTINATION bin
     )
