@@ -171,10 +171,38 @@ make install
 cd ..
 
 echo ""
+echo "=== Copying libraries to Android app ==="
+
+# Copy native libraries to jniLibs
+ANDROID_APP_DIR="$(pwd)/android/app/src/main"
+mkdir -p "$ANDROID_APP_DIR/jniLibs/$ANDROID_ABI"
+
+cp "$INSTALL_PREFIX/lib/libSDL2.so" "$ANDROID_APP_DIR/jniLibs/$ANDROID_ABI/"
+cp "$INSTALL_PREFIX/lib/libregroove.so" "$ANDROID_APP_DIR/jniLibs/$ANDROID_ABI/"
+echo "Copied libraries to $ANDROID_APP_DIR/jniLibs/$ANDROID_ABI/"
+
+# Copy SDL2 Java files if they exist
+SDL2_JAVA_SRC="$SDL2_BUILD/SDL2-$SDL2_VERSION/android-project/app/src/main/java/org/libsdl/app"
+SDL2_JAVA_DST="$ANDROID_APP_DIR/java/org/libsdl/app"
+
+if [ -d "$SDL2_JAVA_SRC" ]; then
+    mkdir -p "$SDL2_JAVA_DST"
+    cp "$SDL2_JAVA_SRC"/*.java "$SDL2_JAVA_DST/"
+    echo "Copied SDL2 Java files to $SDL2_JAVA_DST/"
+else
+    echo ""
+    echo "WARNING: SDL2 Java files not found at $SDL2_JAVA_SRC"
+    echo "You need to manually copy SDL Java files from SDL2 source:"
+    echo "  cp -r SDL2-$SDL2_VERSION/android-project/app/src/main/java/org/libsdl/app/*.java \\"
+    echo "    $ANDROID_APP_DIR/java/org/libsdl/app/"
+fi
+
+echo ""
 echo "=== Android Build Complete ==="
-echo "Library: $INSTALL_PREFIX/lib/libregroove.so"
+echo "Native libraries: $ANDROID_APP_DIR/jniLibs/$ANDROID_ABI/"
 echo "ABI: $ANDROID_ABI"
 echo ""
-echo "To use in Android Studio:"
-echo "1. Copy $INSTALL_PREFIX/lib/*.so to app/src/main/jniLibs/$ANDROID_ABI/"
-echo "2. Copy $INSTALL_PREFIX/include/ headers for JNI wrapper"
+echo "Next steps:"
+echo "1. Ensure SDL2 Java files are in $ANDROID_APP_DIR/java/org/libsdl/app/"
+echo "2. Open android/ directory in Android Studio"
+echo "3. Build and run the app"
