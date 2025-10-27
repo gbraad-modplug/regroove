@@ -127,7 +127,9 @@ static void reapply_mutes(struct Regroove* g) {
 static void reapply_pannings(struct Regroove* g) {
     if (!g->interactive2_ok || !g->interactive2) return;
     for (int ch = 0; ch < g->num_channels; ++ch) {
-        g->interactive2->set_channel_panning(g->modext, ch, g->channel_pannings[ch]);
+        // Convert 0.0..1.0 to -1.0..1.0 for libopenmpt
+        double libopenmpt_pan = (g->channel_pannings[ch] * 2.0) - 1.0;
+        g->interactive2->set_channel_panning(g->modext, ch, libopenmpt_pan);
     }
 }
 
@@ -235,9 +237,11 @@ static void process_commands(struct Regroove* g) {
                     if (pan < 0.0) pan = 0.0;
                     if (pan > 1.0) pan = 1.0;
                     g->channel_pannings[ch] = pan;
-                    if (g->interactive2_ok && g->interactive2)
-                        g->interactive2->set_channel_panning(
-                            g->modext, ch, pan);
+                    if (g->interactive2_ok && g->interactive2) {
+                        // Convert 0.0..1.0 to -1.0..1.0 for libopenmpt
+                        double libopenmpt_pan = (pan * 2.0) - 1.0;
+                        g->interactive2->set_channel_panning(g->modext, ch, libopenmpt_pan);
+                    }
                 }
                 break;
             }
@@ -575,8 +579,11 @@ Regroove *regroove_create(const char *filename, double samplerate) {
             g->interactive2_ok = 1;
 
             // Read module's default panning for each channel
+            // libopenmpt returns -1.0 to 1.0, convert to 0.0 to 1.0
             for (int i = 0; i < g->num_channels; ++i) {
-                g->channel_pannings[i] = g->interactive2->get_channel_panning(g->modext, i);
+                double libopenmpt_pan = g->interactive2->get_channel_panning(g->modext, i);
+                g->channel_pannings[i] = (libopenmpt_pan + 1.0) / 2.0;  // Convert -1.0..1.0 to 0.0..1.0
+                printf("Channel %d initial panning from libopenmpt: %f -> converted to %f\n", i, libopenmpt_pan, g->channel_pannings[i]);
             }
         }
     }
