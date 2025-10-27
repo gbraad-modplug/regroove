@@ -573,6 +573,11 @@ Regroove *regroove_create(const char *filename, double samplerate) {
         if (g->interactive2) {
             memcpy(g->interactive2, &interactive2_temp, sizeof(interactive2_temp));
             g->interactive2_ok = 1;
+
+            // Read module's default panning for each channel
+            for (int i = 0; i < g->num_channels; ++i) {
+                g->channel_pannings[i] = g->interactive2->get_channel_panning(g->modext, i);
+            }
         }
     }
 
