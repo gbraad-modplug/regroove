@@ -168,7 +168,8 @@ RegrooveCommonState* regroove_common_create(void) {
     state->device_config.midi_clock_sync = 0;     // Disabled (default)
     state->device_config.midi_clock_master = 0;   // Disabled (default)
     state->device_config.midi_clock_send_transport = 0; // Disabled (default)
-    state->device_config.midi_clock_send_spp = 1; // Enabled (default) - SPP is more reliable than clock sync
+    state->device_config.midi_clock_send_spp = 2; // During playback (default) - regroove-to-regroove sync
+    state->device_config.midi_clock_spp_interval = 64; // Every pattern (default)
     state->device_config.midi_transport_control = 0; // Disabled (default)
     state->device_config.interpolation_filter = 1; // Linear (default)
     state->device_config.stereo_separation = 100;  // 100% (default)
@@ -283,6 +284,8 @@ int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_pa
                     state->device_config.midi_clock_send_transport = atoi(value);
                 } else if (strcmp(key, "midi_clock_send_spp") == 0) {
                     state->device_config.midi_clock_send_spp = atoi(value);
+                } else if (strcmp(key, "midi_clock_spp_interval") == 0) {
+                    state->device_config.midi_clock_spp_interval = atoi(value);
                 } else if (strcmp(key, "midi_transport_control") == 0) {
                     state->device_config.midi_transport_control = atoi(value);
                 } else if (strcmp(key, "interpolation_filter") == 0) {
@@ -718,6 +721,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
         fprintf(f, "midi_clock_send_transport = %d\n", state->device_config.midi_clock_send_transport);
         fprintf(f, "midi_clock_send_spp = %d\n", state->device_config.midi_clock_send_spp);
+        fprintf(f, "midi_clock_spp_interval = %d\n", state->device_config.midi_clock_spp_interval);
         fprintf(f, "midi_transport_control = %d\n", state->device_config.midi_transport_control);
         fprintf(f, "interpolation_filter = %d\n", state->device_config.interpolation_filter);
         fprintf(f, "stereo_separation = %d\n", state->device_config.stereo_separation);
@@ -762,6 +766,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
         fprintf(f, "midi_clock_send_transport = %d\n", state->device_config.midi_clock_send_transport);
         fprintf(f, "midi_clock_send_spp = %d\n", state->device_config.midi_clock_send_spp);
+        fprintf(f, "midi_clock_spp_interval = %d\n", state->device_config.midi_clock_spp_interval);
         fprintf(f, "midi_transport_control = %d\n", state->device_config.midi_transport_control);
         fprintf(f, "interpolation_filter = %d\n", state->device_config.interpolation_filter);
         fprintf(f, "stereo_separation = %d\n", state->device_config.stereo_separation);
@@ -822,6 +827,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
                 fprintf(f_write, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
                 fprintf(f_write, "midi_clock_send_transport = %d\n", state->device_config.midi_clock_send_transport);
                 fprintf(f_write, "midi_clock_send_spp = %d\n", state->device_config.midi_clock_send_spp);
+                fprintf(f_write, "midi_clock_spp_interval = %d\n", state->device_config.midi_clock_spp_interval);
                 fprintf(f_write, "midi_transport_control = %d\n", state->device_config.midi_transport_control);
                 fprintf(f_write, "interpolation_filter = %d\n", state->device_config.interpolation_filter);
                 fprintf(f_write, "stereo_separation = %d\n", state->device_config.stereo_separation);
@@ -866,6 +872,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
                 fprintf(f_write, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
                 fprintf(f_write, "midi_clock_send_transport = %d\n", state->device_config.midi_clock_send_transport);
                 fprintf(f_write, "midi_clock_send_spp = %d\n", state->device_config.midi_clock_send_spp);
+                fprintf(f_write, "midi_clock_spp_interval = %d\n", state->device_config.midi_clock_spp_interval);
                 fprintf(f_write, "midi_transport_control = %d\n", state->device_config.midi_transport_control);
                 fprintf(f_write, "interpolation_filter = %d\n", state->device_config.interpolation_filter);
                 fprintf(f_write, "stereo_separation = %d\n", state->device_config.stereo_separation);
@@ -933,8 +940,10 @@ int regroove_common_save_default_config(const char *filepath) {
     fprintf(f, "midi_clock_master = 0\n");
     fprintf(f, "# MIDI transport messages: 0=disabled, 1=send Start/Stop when master\n");
     fprintf(f, "midi_clock_send_transport = 0\n");
-    fprintf(f, "# MIDI Song Position Pointer: 0=disabled, 1=send SPP at pattern boundaries (default)\n");
-    fprintf(f, "midi_clock_send_spp = 1\n");
+    fprintf(f, "# MIDI Song Position Pointer: 0=disabled, 1=on stop only (standard), 2=during playback (regroove-to-regroove)\n");
+    fprintf(f, "midi_clock_send_spp = 2\n");
+    fprintf(f, "# MIDI SPP interval in rows when sending during playback: 64=pattern, 32, 16, 8, 4\n");
+    fprintf(f, "midi_clock_spp_interval = 64\n");
     fprintf(f, "# MIDI transport control: 0=disabled, 1=respond to Start/Stop/Continue\n");
     fprintf(f, "midi_transport_control = 0\n");
     fprintf(f, "# Interpolation filter: 0=none, 1=linear, 2=cubic, 4=FIR\n");

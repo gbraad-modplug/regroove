@@ -249,6 +249,22 @@ void update_channel_mute_states() {
 static void my_row_callback(int ord, int row, void *userdata) {
     //printf("[ROW] Order %d, Row %d\n", ord, row);
 
+    // Send MIDI Song Position Pointer at configured intervals (if "during playback" mode and interval < 64)
+    // For interval == 64 (every pattern), this is handled more efficiently in the order callback
+    if (common_state && common_state->device_config.midi_clock_send_spp == 2 && midi_output_enabled) {
+        int interval = common_state->device_config.midi_clock_spp_interval;
+        if (interval <= 0) interval = 64; // Safety check
+
+        // Only use row callback for intervals smaller than 64 (within-pattern sync)
+        if (interval < 64 && row % interval == 0) {
+            // Get current pattern's row count for accurate position calculation
+            int pattern_rows = total_rows > 0 ? total_rows : 64;
+            // Calculate SPP position: 64 MIDI beats per pattern, scale by actual row count
+            int spp_position = (ord * 64) + ((row * 64) / pattern_rows);
+            midi_output_send_song_position(spp_position);
+        }
+    }
+
     // Update MIDI Clock BPM if master mode is enabled
     // (Actual clock pulses are sent from audio callback for precise timing)
     if (common_state && common_state->player && midi_output_is_clock_master()) {
@@ -312,13 +328,18 @@ static void my_order_callback(int ord, int pat, void *userdata) {
         midi_output_reset_programs();
     }
 
-    // Send MIDI Song Position Pointer at pattern boundaries (if SPP sync enabled)
-    if (common_state && common_state->device_config.midi_clock_send_spp && midi_output_enabled) {
-        // Simple calculation: assume 64 MIDI beats (16th notes) per pattern
-        // This is approximate but good enough for pattern-boundary sync
-        // 64 MIDI beats = 16 quarter notes = 4 measures in 4/4
-        int spp_position = ord * 64;
-        midi_output_send_song_position(spp_position);
+    // Send MIDI Song Position Pointer at pattern boundaries (if "during playback" mode and interval == 64)
+    // For smaller intervals, SPP is sent from row callback
+    if (common_state && common_state->device_config.midi_clock_send_spp == 2 && midi_output_enabled) {
+        int interval = common_state->device_config.midi_clock_spp_interval;
+        if (interval <= 0) interval = 64; // Safety check
+
+        // Use order callback for pattern-boundary sync (interval == 64, most efficient)
+        if (interval >= 64) {
+            // Calculate SPP position: 64 MIDI beats per pattern
+            int spp_position = ord * 64;
+            midi_output_send_song_position(spp_position);
+        }
     }
 }
 
@@ -2076,15 +2097,31 @@ void my_midi_transport_callback(unsigned char message_type, void* userdata) {
 void my_midi_spp_callback(int position, void* userdata) {
     (void)userdata;
 
-    // Convert MIDI beats (position) to pattern/order number
-    // We use 64 MIDI beats per pattern (approximate)
+    if (!common_state || !common_state->player) return;
+
+    // Convert MIDI beats (position) to order and row
+    // We use 64 MIDI beats per pattern (standard assumption)
     int target_order = position / 64;
+    int beats_within_pattern = position % 64;  // 0-63
 
-    printf("[MIDI SPP] Jumping to order %d (from SPP position %d)\n", target_order, position);
+    // Get the actual row count for current pattern
+    int pattern_rows = total_rows > 0 ? total_rows : 64;
 
-    if (common_state && common_state->player) {
-        regroove_jump_to_order(common_state->player, target_order);
+    // Convert beats to rows: scale 64 beats to actual pattern row count
+    int target_row = (beats_within_pattern * pattern_rows) / 64;
+    if (target_row >= pattern_rows) target_row = pattern_rows - 1;
+
+    // Always sync row position to keep timing aligned
+    // Never jump orders - that would mess up the performance!
+    // But DO sync the row within the current pattern
+    if (order == target_order) {
+        printf("[MIDI SPP] Syncing row to %d (from SPP position %d, same order %d)\n",
+               target_row, position, target_order);
+    } else {
+        printf("[MIDI SPP] Syncing row to %d (from SPP position %d, order mismatch: slave=%d, master=%d)\n",
+               target_row, position, order, target_order);
     }
+    regroove_set_position_row(common_state->player, target_row);
 }
 
 void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned char value, int device_id, void *userdata) {
@@ -5089,16 +5126,53 @@ static void ShowMainUI() {
                 ImGui::SetTooltip("When enabled, sends MIDI Start/Stop messages to control external device playback.\nDisable if you only want to sync tempo, not transport.");
             }
 
-            // Send SPP (Song Position Pointer) when master
-            bool send_spp = (common_state->device_config.midi_clock_send_spp == 1);
-            if (ImGui::Checkbox("Send MIDI SPP (position sync)", &send_spp)) {
-                common_state->device_config.midi_clock_send_spp = send_spp ? 1 : 0;
+            // Send SPP (Song Position Pointer) mode
+            ImGui::Text("MIDI SPP (position sync):");
+            const char* spp_modes[] = {"Disabled", "On Stop Only (standard)", "During Playback (regroove)"};
+            int spp_mode = common_state->device_config.midi_clock_send_spp;
+            if (spp_mode < 0 || spp_mode > 2) spp_mode = 0;
+            if (ImGui::Combo("##spp_mode", &spp_mode, spp_modes, 3)) {
+                common_state->device_config.midi_clock_send_spp = spp_mode;
                 save_mappings_to_config();
             }
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("When enabled, sends MIDI Song Position Pointer at pattern boundaries.\nThis syncs playback position between devices and prevents drift.\nMore reliable than tempo sync alone.");
+                ImGui::SetTooltip("Song Position Pointer syncs playback position:\n"
+                                  "- Disabled: No position sync\n"
+                                  "- On Stop Only: Standard MIDI behavior (DAW/hardware compatible)\n"
+                                  "- During Playback: Real-time sync (regroove-to-regroove only)");
+            }
+
+            // SPP interval (only when "During Playback" mode is selected)
+            if (common_state->device_config.midi_clock_send_spp == 2) {
+                ImGui::Indent(20.0f);
+                ImGui::Text("SPP Sync Interval:");
+                const char* intervals[] = {"Every 4 rows", "Every 8 rows", "Every 16 rows", "Every 32 rows", "Every Pattern (64 rows)"};
+                int interval_values[] = {4, 8, 16, 32, 64};
+
+                // Find current selection
+                int current_interval = common_state->device_config.midi_clock_spp_interval;
+                int selected = 4; // Default to "Every Pattern"
+                for (int i = 0; i < 5; i++) {
+                    if (interval_values[i] == current_interval) {
+                        selected = i;
+                        break;
+                    }
+                }
+
+                if (ImGui::Combo("##spp_interval", &selected, intervals, 5)) {
+                    common_state->device_config.midi_clock_spp_interval = interval_values[selected];
+                    save_mappings_to_config();
+                }
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("How often to send position updates during playback.\n"
+                                      "More frequent = tighter sync but more MIDI traffic.\n"
+                                      "Every Pattern (64 rows) is usually sufficient.");
+                }
+                ImGui::Unindent(20.0f);
             }
         }
 
