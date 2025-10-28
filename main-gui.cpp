@@ -96,6 +96,10 @@ static int input_buffer_size = 0;
 static int cached_midi_port_count = -1;
 static UIMode last_ui_mode = UI_MODE_VOLUME;
 
+// MIDI SPP sync state (for LCD display)
+static bool spp_active = false;
+static double spp_last_received_time = 0.0;
+
 // Pad expansion setting
 static bool expanded_pads = false;
 
@@ -2078,11 +2082,8 @@ void my_midi_transport_callback(unsigned char message_type, void* userdata) {
     (void)userdata;
 
     if (message_type == 0xFA) {  // MIDI Start
-        printf("MIDI Start received - resetting to order 0\n");
-        // Reset to beginning for sync
-        if (common_state && common_state->player) {
-            regroove_jump_to_order(common_state->player, 0);
-        }
+        printf("MIDI Start received - starting playback from current position\n");
+        // Start playing from current position (don't jump to order 0)
         dispatch_action(ACT_PLAY);
     } else if (message_type == 0xFC) {  // MIDI Stop
         printf("MIDI Stop received\n");
@@ -2099,6 +2100,11 @@ void my_midi_spp_callback(int position, void* userdata) {
 
     if (!common_state || !common_state->player) return;
 
+    // Check if SPP receive is enabled
+    if (common_state->device_config.midi_spp_receive == 0) {
+        return; // Ignore incoming SPP
+    }
+
     // Convert MIDI beats (position) to order and row
     // We use 64 MIDI beats per pattern (standard assumption)
     int target_order = position / 64;
@@ -2111,17 +2117,26 @@ void my_midi_spp_callback(int position, void* userdata) {
     int target_row = (beats_within_pattern * pattern_rows) / 64;
     if (target_row >= pattern_rows) target_row = pattern_rows - 1;
 
-    // Always sync row position to keep timing aligned
-    // Never jump orders - that would mess up the performance!
-    // But DO sync the row within the current pattern
-    if (order == target_order) {
-        printf("[MIDI SPP] Syncing row to %d (from SPP position %d, same order %d)\n",
-               target_row, position, target_order);
-    } else {
-        printf("[MIDI SPP] Syncing row to %d (from SPP position %d, order mismatch: slave=%d, master=%d)\n",
-               target_row, position, order, target_order);
+    // Get current row to check if sync is needed
+    int current_row = regroove_get_current_row(common_state->player);
+    int row_diff = target_row - current_row;
+
+    // Mark SPP as active (for LCD display)
+    spp_active = true;
+    spp_last_received_time = SDL_GetTicks() / 1000.0;
+
+    // Only sync if we're more than 2 rows off (avoids constant micro-adjustments)
+    // This prevents "halting" caused by unnecessary row jumps
+    if (row_diff < -2 || row_diff > 2) {
+        if (order == target_order) {
+            printf("[MIDI SPP] Syncing row %d->%d (diff=%d, SPP pos %d, same order %d)\n",
+                   current_row, target_row, row_diff, position, target_order);
+        } else {
+            printf("[MIDI SPP] Syncing row %d->%d (diff=%d, SPP pos %d, order mismatch: slave=%d, master=%d)\n",
+                   current_row, target_row, row_diff, position, order, target_order);
+        }
+        regroove_set_position_row(common_state->player, target_row);
     }
-    regroove_set_position_row(common_state->player, target_row);
 }
 
 void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned char value, int device_id, void *userdata) {
@@ -2529,13 +2544,23 @@ static void ShowMainUI() {
                 double midi_tempo = midi_get_clock_tempo();
                 bool clock_syncing = midi_is_clock_sync_enabled() && (midi_tempo > 0.0);
 
+                // Check if SPP is active (received within last 2 seconds)
+                double current_time = SDL_GetTicks() / 1000.0;
+                bool spp_syncing = spp_active && (current_time - spp_last_received_time < 2.0);
+                if (!spp_syncing && spp_active) {
+                    spp_active = false; // Timeout - no longer receiving SPP
+                }
 
-                // Show BPM with visual indicator when clock syncing
-                // [SYNC] indicator shows when clock sync is enabled AND receiving clock
+                // Show BPM with visual indicator when clock syncing or SPP syncing
+                // [SYNC] = MIDI Clock sync, [SPP] = Song Position Pointer sync
                 if (pitch > 0.99 && pitch < 1.01) {
                     // Normal pitch
-                    if (clock_syncing) {
+                    if (clock_syncing && spp_syncing) {
+                        std::snprintf(bpm_str, sizeof(bpm_str), "%.0f [SYNC+SPP]", midi_tempo);
+                    } else if (clock_syncing) {
                         std::snprintf(bpm_str, sizeof(bpm_str), "%.0f [SYNC]", midi_tempo);
+                    } else if (spp_syncing) {
+                        std::snprintf(bpm_str, sizeof(bpm_str), "%.0f [SPP]", bpm);
                     } else if (midi_tempo > 0.0) {
                         std::snprintf(bpm_str, sizeof(bpm_str), "%.0f >%.0f", bpm, midi_tempo);
                     } else {
@@ -2543,8 +2568,12 @@ static void ShowMainUI() {
                     }
                 } else {
                     // Pitch adjusted - show effective BPM
-                    if (clock_syncing) {
+                    if (clock_syncing && spp_syncing) {
+                        std::snprintf(bpm_str, sizeof(bpm_str), "%.0f [SYNC+SPP]", midi_tempo);
+                    } else if (clock_syncing) {
                         std::snprintf(bpm_str, sizeof(bpm_str), "%.0f [SYNC]", midi_tempo);
+                    } else if (spp_syncing) {
+                        std::snprintf(bpm_str, sizeof(bpm_str), "%.0f->%.0f [SPP]", bpm, effective_bpm);
                     } else if (midi_tempo > 0.0) {
                         std::snprintf(bpm_str, sizeof(bpm_str), "%.0f->%.0f >%.0f", bpm, effective_bpm, midi_tempo);
                     } else {
@@ -5207,6 +5236,18 @@ static void ShowMainUI() {
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("When enabled, incoming MIDI Start/Stop messages will control playback.\nDisable if you only want tempo sync, not transport control.");
+            }
+
+            // MIDI SPP receive toggle
+            bool spp_receive = (common_state->device_config.midi_spp_receive == 1);
+            if (ImGui::Checkbox("Sync position to MIDI SPP", &spp_receive)) {
+                common_state->device_config.midi_spp_receive = spp_receive ? 1 : 0;
+                save_mappings_to_config();
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, incoming MIDI Song Position Pointer messages sync row position.\nDisable if you want independent playback position (only tempo/transport sync).");
             }
         }
 
