@@ -99,6 +99,7 @@ static UIMode last_ui_mode = UI_MODE_VOLUME;
 // MIDI SPP sync state (for LCD display)
 static bool spp_active = false;
 static double spp_last_received_time = 0.0;
+static double spp_last_sent_time = 0.0;  // Track when SPP was last sent (to avoid spam on Start)
 
 // Pad expansion setting
 static bool expanded_pads = false;
@@ -261,11 +262,16 @@ static void my_row_callback(int ord, int row, void *userdata) {
 
         // Only use row callback for intervals smaller than 64 (within-pattern sync)
         if (interval < 64 && row % interval == 0) {
-            // Get current pattern's row count for accurate position calculation
-            int pattern_rows = total_rows > 0 ? total_rows : 64;
-            // Calculate SPP position: 64 MIDI beats per pattern, scale by actual row count
-            int spp_position = (ord * 64) + ((row * 64) / pattern_rows);
-            midi_output_send_song_position(spp_position);
+            // Throttle SPP sending - don't send more than once per 100ms
+            double current_time = SDL_GetTicks() / 1000.0;
+            if (current_time - spp_last_sent_time >= 0.1) {
+                // Get current pattern's row count for accurate position calculation
+                int pattern_rows = total_rows > 0 ? total_rows : 64;
+                // Calculate SPP position: 64 MIDI beats per pattern, scale by actual row count
+                int spp_position = (ord * 64) + ((row * 64) / pattern_rows);
+                midi_output_send_song_position(spp_position);
+                spp_last_sent_time = current_time;
+            }
         }
     }
 
@@ -340,9 +346,15 @@ static void my_order_callback(int ord, int pat, void *userdata) {
 
         // Use order callback for pattern-boundary sync (interval == 64, most efficient)
         if (interval >= 64) {
-            // Calculate SPP position: 64 MIDI beats per pattern
-            int spp_position = ord * 64;
-            midi_output_send_song_position(spp_position);
+            // Throttle SPP sending - don't send more than once per 100ms
+            // This prevents spam when playback starts (order callback fires immediately)
+            double current_time = SDL_GetTicks() / 1000.0;
+            if (current_time - spp_last_sent_time >= 0.1) {
+                // Calculate SPP position: 64 MIDI beats per pattern
+                int spp_position = ord * 64;
+                midi_output_send_song_position(spp_position);
+                spp_last_sent_time = current_time;
+            }
         }
     }
 }
