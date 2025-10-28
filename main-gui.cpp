@@ -311,6 +311,15 @@ static void my_order_callback(int ord, int pat, void *userdata) {
     if (midi_output_enabled) {
         midi_output_reset_programs();
     }
+
+    // Send MIDI Song Position Pointer at pattern boundaries (if SPP sync enabled)
+    if (common_state && common_state->device_config.midi_clock_send_spp && midi_output_enabled) {
+        // Simple calculation: assume 64 MIDI beats (16th notes) per pattern
+        // This is approximate but good enough for pattern-boundary sync
+        // 64 MIDI beats = 16 quarter notes = 4 measures in 4/4
+        int spp_position = ord * 64;
+        midi_output_send_song_position(spp_position);
+    }
 }
 
 static void my_loop_pattern_callback(int order, int pattern, void *userdata) {
@@ -2048,14 +2057,33 @@ void my_midi_transport_callback(unsigned char message_type, void* userdata) {
     (void)userdata;
 
     if (message_type == 0xFA) {  // MIDI Start
-        printf("MIDI Start received\n");
+        printf("MIDI Start received - resetting to order 0\n");
+        // Reset to beginning for sync
+        if (common_state && common_state->player) {
+            regroove_jump_to_order(common_state->player, 0);
+        }
         dispatch_action(ACT_PLAY);
     } else if (message_type == 0xFC) {  // MIDI Stop
         printf("MIDI Stop received\n");
         dispatch_action(ACT_STOP);
     } else if (message_type == 0xFB) {  // MIDI Continue
         printf("MIDI Continue received\n");
-        dispatch_action(ACT_PLAY);  // Treat continue as play
+        dispatch_action(ACT_PLAY);  // Treat continue as play from current position
+    }
+}
+
+// MIDI Song Position Pointer callback (for position sync at pattern boundaries)
+void my_midi_spp_callback(int position, void* userdata) {
+    (void)userdata;
+
+    // Convert MIDI beats (position) to pattern/order number
+    // We use 64 MIDI beats per pattern (approximate)
+    int target_order = position / 64;
+
+    printf("[MIDI SPP] Jumping to order %d (from SPP position %d)\n", target_order, position);
+
+    if (common_state && common_state->player) {
+        regroove_jump_to_order(common_state->player, target_order);
     }
 }
 
@@ -4828,8 +4856,9 @@ static void ShowMainUI() {
             if (num_devices > 0) {
                 midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
                 midi_input_enabled = true;
-                // Re-register MIDI transport control callback
+                // Re-register MIDI callbacks
                 midi_set_transport_callback(my_midi_transport_callback, NULL);
+                midi_set_spp_callback(my_midi_spp_callback, NULL);
                 // Re-enable MIDI clock sync if configured
                 if (common_state->device_config.midi_clock_sync) {
                     midi_set_clock_sync_enabled(1);
@@ -5058,6 +5087,18 @@ static void ShowMainUI() {
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("When enabled, sends MIDI Start/Stop messages to control external device playback.\nDisable if you only want to sync tempo, not transport.");
+            }
+
+            // Send SPP (Song Position Pointer) when master
+            bool send_spp = (common_state->device_config.midi_clock_send_spp == 1);
+            if (ImGui::Checkbox("Send MIDI SPP (position sync)", &send_spp)) {
+                common_state->device_config.midi_clock_send_spp = send_spp ? 1 : 0;
+                save_mappings_to_config();
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, sends MIDI Song Position Pointer at pattern boundaries.\nThis syncs playback position between devices and prevents drift.\nMore reliable than tempo sync alone.");
             }
         }
 
@@ -7689,6 +7730,8 @@ int main(int argc, char* argv[]) {
             }
             // Set up MIDI transport control callback
             midi_set_transport_callback(my_midi_transport_callback, NULL);
+            // Set up MIDI SPP callback for position sync
+            midi_set_spp_callback(my_midi_spp_callback, NULL);
             // Enable MIDI transport control if configured
             if (common_state && common_state->device_config.midi_transport_control) {
                 midi_set_transport_control_enabled(1);

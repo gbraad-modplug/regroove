@@ -168,6 +168,7 @@ RegrooveCommonState* regroove_common_create(void) {
     state->device_config.midi_clock_sync = 0;     // Disabled (default)
     state->device_config.midi_clock_master = 0;   // Disabled (default)
     state->device_config.midi_clock_send_transport = 0; // Disabled (default)
+    state->device_config.midi_clock_send_spp = 1; // Enabled (default) - SPP is more reliable than clock sync
     state->device_config.midi_transport_control = 0; // Disabled (default)
     state->device_config.interpolation_filter = 1; // Linear (default)
     state->device_config.stereo_separation = 100;  // 100% (default)
@@ -278,6 +279,12 @@ int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_pa
                     state->device_config.midi_clock_sync = atoi(value);
                 } else if (strcmp(key, "midi_clock_master") == 0) {
                     state->device_config.midi_clock_master = atoi(value);
+                } else if (strcmp(key, "midi_clock_send_transport") == 0) {
+                    state->device_config.midi_clock_send_transport = atoi(value);
+                } else if (strcmp(key, "midi_clock_send_spp") == 0) {
+                    state->device_config.midi_clock_send_spp = atoi(value);
+                } else if (strcmp(key, "midi_transport_control") == 0) {
+                    state->device_config.midi_transport_control = atoi(value);
                 } else if (strcmp(key, "interpolation_filter") == 0) {
                     state->device_config.interpolation_filter = atoi(value);
                 } else if (strcmp(key, "stereo_separation") == 0) {
@@ -709,6 +716,9 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
         fprintf(f, "midi_clock_sync = %d\n", state->device_config.midi_clock_sync);
         fprintf(f, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
+        fprintf(f, "midi_clock_send_transport = %d\n", state->device_config.midi_clock_send_transport);
+        fprintf(f, "midi_clock_send_spp = %d\n", state->device_config.midi_clock_send_spp);
+        fprintf(f, "midi_transport_control = %d\n", state->device_config.midi_transport_control);
         fprintf(f, "interpolation_filter = %d\n", state->device_config.interpolation_filter);
         fprintf(f, "stereo_separation = %d\n", state->device_config.stereo_separation);
         fprintf(f, "dither = %d\n", state->device_config.dither);
@@ -750,6 +760,9 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
         fprintf(f, "midi_clock_sync = %d\n", state->device_config.midi_clock_sync);
         fprintf(f, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
+        fprintf(f, "midi_clock_send_transport = %d\n", state->device_config.midi_clock_send_transport);
+        fprintf(f, "midi_clock_send_spp = %d\n", state->device_config.midi_clock_send_spp);
+        fprintf(f, "midi_transport_control = %d\n", state->device_config.midi_transport_control);
         fprintf(f, "interpolation_filter = %d\n", state->device_config.interpolation_filter);
         fprintf(f, "stereo_separation = %d\n", state->device_config.stereo_separation);
         fprintf(f, "dither = %d\n", state->device_config.dither);
@@ -807,6 +820,9 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
                 fprintf(f_write, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
                 fprintf(f_write, "midi_clock_sync = %d\n", state->device_config.midi_clock_sync);
                 fprintf(f_write, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
+                fprintf(f_write, "midi_clock_send_transport = %d\n", state->device_config.midi_clock_send_transport);
+                fprintf(f_write, "midi_clock_send_spp = %d\n", state->device_config.midi_clock_send_spp);
+                fprintf(f_write, "midi_transport_control = %d\n", state->device_config.midi_transport_control);
                 fprintf(f_write, "interpolation_filter = %d\n", state->device_config.interpolation_filter);
                 fprintf(f_write, "stereo_separation = %d\n", state->device_config.stereo_separation);
                 fprintf(f_write, "dither = %d\n", state->device_config.dither);
@@ -848,6 +864,9 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
                 fprintf(f_write, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
                 fprintf(f_write, "midi_clock_sync = %d\n", state->device_config.midi_clock_sync);
                 fprintf(f_write, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
+                fprintf(f_write, "midi_clock_send_transport = %d\n", state->device_config.midi_clock_send_transport);
+                fprintf(f_write, "midi_clock_send_spp = %d\n", state->device_config.midi_clock_send_spp);
+                fprintf(f_write, "midi_transport_control = %d\n", state->device_config.midi_transport_control);
                 fprintf(f_write, "interpolation_filter = %d\n", state->device_config.interpolation_filter);
                 fprintf(f_write, "stereo_separation = %d\n", state->device_config.stereo_separation);
                 fprintf(f_write, "dither = %d\n", state->device_config.dither);
@@ -912,6 +931,12 @@ int regroove_common_save_default_config(const char *filepath) {
     fprintf(f, "midi_clock_sync = 0\n");
     fprintf(f, "# MIDI Clock master: 0=disabled, 1=send MIDI clock as master\n");
     fprintf(f, "midi_clock_master = 0\n");
+    fprintf(f, "# MIDI transport messages: 0=disabled, 1=send Start/Stop when master\n");
+    fprintf(f, "midi_clock_send_transport = 0\n");
+    fprintf(f, "# MIDI Song Position Pointer: 0=disabled, 1=send SPP at pattern boundaries (default)\n");
+    fprintf(f, "midi_clock_send_spp = 1\n");
+    fprintf(f, "# MIDI transport control: 0=disabled, 1=respond to Start/Stop/Continue\n");
+    fprintf(f, "midi_transport_control = 0\n");
     fprintf(f, "# Interpolation filter: 0=none, 1=linear, 2=cubic, 4=FIR\n");
     fprintf(f, "interpolation_filter = 1\n");
     fprintf(f, "# Stereo separation: 0-200 (0=mono, 100=default, 200=extra wide)\n");

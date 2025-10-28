@@ -88,6 +88,13 @@ int midi_is_transport_control_enabled(void);
 typedef void (*MidiTransportCallback)(unsigned char message_type, void* userdata);
 void midi_set_transport_callback(MidiTransportCallback callback, void* userdata);
 
+/**
+ * Set callback for MIDI Song Position Pointer (SPP) messages.
+ * The callback receives: position (in MIDI beats / 16th notes from start)
+ */
+typedef void (*MidiSPPCallback)(int position, void* userdata);
+void midi_set_spp_callback(MidiSPPCallback callback, void* userdata);
+
 #ifdef __cplusplus
 }
 #endif

@@ -6,6 +6,7 @@
 #include <windows.h>
 #endif
 #include <stdio.h>
+#include <string.h>
 #include <rtmidi_c.h>
 
 static RtMidiInPtr midiin[MIDI_MAX_DEVICES] = {NULL};
@@ -97,6 +98,11 @@ static void process_midi_clock(void) {
     clock_pulse_count++;
 }
 
+// SPP (Song Position Pointer) callback - for position sync
+typedef void (*MidiSPPCallback)(int position, void* userdata);
+static MidiSPPCallback spp_cb = NULL;
+static void *spp_userdata = NULL;
+
 // Device-specific callback wrappers
 static void rtmidi_event_callback_0(double dt, const unsigned char *msg, size_t sz, void *userdata) {
     // Handle single-byte system real-time messages
@@ -117,6 +123,16 @@ static void rtmidi_event_callback_0(double dt, const unsigned char *msg, size_t 
             }
             return;
         }
+    }
+
+    // Handle 3-byte Song Position Pointer (0xF2 + LSB + MSB)
+    if (sz == 3 && msg[0] == 0xF2) {
+        int position = msg[1] | (msg[2] << 7);  // Combine 7-bit bytes
+        printf("[MIDI SPP] Received Song Position: %d MIDI beats\n", position);
+        if (spp_cb) {
+            spp_cb(position, spp_userdata);
+        }
+        return;
     }
 
     // Handle regular 3-byte messages (Note On/Off, CC)
@@ -144,6 +160,16 @@ static void rtmidi_event_callback_1(double dt, const unsigned char *msg, size_t 
             }
             return;
         }
+    }
+
+    // Handle 3-byte Song Position Pointer (0xF2 + LSB + MSB)
+    if (sz == 3 && msg[0] == 0xF2) {
+        int position = msg[1] | (msg[2] << 7);  // Combine 7-bit bytes
+        printf("[MIDI SPP] Received Song Position: %d MIDI beats\n", position);
+        if (spp_cb) {
+            spp_cb(position, spp_userdata);
+        }
+        return;
     }
 
     // Handle regular 3-byte messages (Note On/Off, CC)
@@ -275,4 +301,9 @@ int midi_is_transport_control_enabled(void) {
 void midi_set_transport_callback(MidiTransportCallback callback, void* userdata) {
     transport_cb = callback;
     transport_userdata = userdata;
+}
+
+void midi_set_spp_callback(MidiSPPCallback callback, void* userdata) {
+    spp_cb = callback;
+    spp_userdata = userdata;
 }

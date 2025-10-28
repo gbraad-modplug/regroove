@@ -367,6 +367,25 @@ void midi_output_send_continue(void) {
     rtmidi_out_send_message(midi_out, msg, 1);
 }
 
+void midi_output_send_song_position(int position) {
+    if (!midi_out) return;
+
+    // Clamp position to valid range (0-16383)
+    if (position < 0) position = 0;
+    if (position > 16383) position = 16383;
+
+    // MIDI Song Position Pointer: 0xF2 + LSB + MSB
+    // Position is in MIDI beats (16th notes), split into 7-bit bytes
+    unsigned char msg[3];
+    msg[0] = 0xF2;
+    msg[1] = position & 0x7F;        // LSB (bits 0-6)
+    msg[2] = (position >> 7) & 0x7F; // MSB (bits 7-13)
+
+    printf("[MIDI Output] Sending Song Position: %d MIDI beats (0x%02X 0x%02X 0x%02X)\n",
+           position, msg[0], msg[1], msg[2]);
+    rtmidi_out_send_message(midi_out, msg, 3);
+}
+
 void midi_output_update_clock(double bpm, double row_fraction) {
     if (!midi_out || !clock_master_enabled || bpm <= 0.0) return;
 

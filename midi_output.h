@@ -84,6 +84,10 @@ void midi_output_send_stop(void);
 // Send MIDI Continue message (0xFB)
 void midi_output_send_continue(void);
 
+// Send MIDI Song Position Pointer (0xF2)
+// position: MIDI beats (16th notes) from start of song
+void midi_output_send_song_position(int position);
+
 // Update MIDI Clock based on playback position
 // Call this regularly during playback (e.g., in row callback)
 // bpm: Current tempo in beats per minute
