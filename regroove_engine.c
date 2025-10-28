@@ -595,17 +595,15 @@ Regroove *regroove_create(const char *filename, double samplerate) {
     openmpt_module_set_render_param(g->mod, 2, g->stereo_separation);
 
     // Set dither
-    char dither_str[8];
-    snprintf(dither_str, sizeof(dither_str), "%d", g->dither);
-    openmpt_module_ctl_set(g->mod, "dither", dither_str);
+    openmpt_module_ctl_set_integer(g->mod, "dither", g->dither);
 
     // Set Amiga resampler (only affects 4-channel Amiga modules)
-    openmpt_module_ctl_set(g->mod, "render.resampler.emulate_amiga", g->amiga_resampler ? "1" : "0");
+    openmpt_module_ctl_set_boolean(g->mod, "render.resampler.emulate_amiga", g->amiga_resampler);
 
     // Set Amiga filter type
     const char* amiga_filter_names[] = {"auto", "a500", "a1200", "unfiltered"};
     if (g->amiga_filter_type >= 0 && g->amiga_filter_type <= 3) {
-        openmpt_module_ctl_set(g->mod, "render.resampler.emulate_amiga_type", amiga_filter_names[g->amiga_filter_type]);
+        openmpt_module_ctl_set_text(g->mod, "render.resampler.emulate_amiga_type", amiga_filter_names[g->amiga_filter_type]);
     }
 
     // Disable automatic looping - we'll handle it manually for cleaner loop points
@@ -1245,9 +1243,7 @@ void regroove_set_dither(Regroove* g, int dither) {
     // Validate dither value: 0-3
     if (dither < 0 || dither > 3) return;
     g->dither = dither;
-    char dither_str[8];
-    snprintf(dither_str, sizeof(dither_str), "%d", dither);
-    openmpt_module_ctl_set(g->mod, "dither", dither_str);
+    openmpt_module_ctl_set_integer(g->mod, "dither", dither);
 }
 
 int regroove_get_dither(const Regroove* g) {
@@ -1258,7 +1254,7 @@ int regroove_get_dither(const Regroove* g) {
 void regroove_set_amiga_resampler(Regroove* g, int enabled) {
     if (!g || !g->mod) return;
     g->amiga_resampler = enabled ? 1 : 0;
-    openmpt_module_ctl_set(g->mod, "render.resampler.emulate_amiga", enabled ? "1" : "0");
+    openmpt_module_ctl_set_boolean(g->mod, "render.resampler.emulate_amiga", enabled);
 }
 
 int regroove_get_amiga_resampler(const Regroove* g) {
@@ -1272,7 +1268,7 @@ void regroove_set_amiga_filter_type(Regroove* g, int filter_type) {
     if (filter_type < 0 || filter_type > 3) return;
     g->amiga_filter_type = filter_type;
     const char* amiga_filter_names[] = {"auto", "a500", "a1200", "unfiltered"};
-    openmpt_module_ctl_set(g->mod, "render.resampler.emulate_amiga_type", amiga_filter_names[filter_type]);
+    openmpt_module_ctl_set_text(g->mod, "render.resampler.emulate_amiga_type", amiga_filter_names[filter_type]);
 }
 
 int regroove_get_amiga_filter_type(const Regroove* g) {
