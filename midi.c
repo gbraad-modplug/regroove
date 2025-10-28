@@ -17,8 +17,12 @@ static int clock_sync_enabled = 0;
 static double clock_bpm = 0.0;
 static double last_clock_time = 0.0;
 static int clock_pulse_count = 0;
-static double pulse_interval_sum = 0.0;  // Running sum for average
-static int pulse_interval_count = 0;     // Count for average
+
+// Fixed-size circular buffer for interval averaging
+#define INTERVAL_BUFFER_SIZE 24  // Average over one beat
+static double interval_buffer[INTERVAL_BUFFER_SIZE];
+static int interval_buffer_index = 0;
+static int interval_buffer_filled = 0;
 
 #define MIDI_CLOCK 0xF8
 #define MIDI_START 0xFA
@@ -34,8 +38,14 @@ static void *transport_userdata = NULL;
 // Get current time in microseconds
 static double get_time_us(void) {
 #ifdef _WIN32
-    LARGE_INTEGER frequency, counter;
-    QueryPerformanceFrequency(&frequency);
+    static LARGE_INTEGER frequency = {0};
+    LARGE_INTEGER counter;
+
+    // Query frequency only once (it's constant for the system)
+    if (frequency.QuadPart == 0) {
+        QueryPerformanceFrequency(&frequency);
+    }
+
     QueryPerformanceCounter(&counter);
     return (double)counter.QuadPart * 1000000.0 / (double)frequency.QuadPart;
 #else
@@ -56,26 +66,27 @@ static void process_midi_clock(void) {
 
         // Ignore unrealistic intervals (< 1ms or > 1 second)
         if (interval > 1000.0 && interval < 1000000.0) {
-            // Add to running average (keep last 24 pulses for smooth calculation)
-            pulse_interval_sum += interval;
-            pulse_interval_count++;
+            // Add to circular buffer
+            interval_buffer[interval_buffer_index] = interval;
+            interval_buffer_index = (interval_buffer_index + 1) % INTERVAL_BUFFER_SIZE;
 
-            if (pulse_interval_count > PULSES_PER_QUARTER_NOTE) {
-                // Remove oldest contribution to maintain sliding window
-                pulse_interval_sum = pulse_interval_sum * 0.95;
-                pulse_interval_count = (int)(pulse_interval_count * 0.95);
+            // Mark buffer as filled once we've wrapped around
+            if (interval_buffer_index == 0) {
+                interval_buffer_filled = 1;
             }
+
+            // Calculate average from buffer
+            int count = interval_buffer_filled ? INTERVAL_BUFFER_SIZE : interval_buffer_index;
+            double sum = 0.0;
+            for (int i = 0; i < count; i++) {
+                sum += interval_buffer[i];
+            }
+            double avg_interval = sum / count;
 
             // Calculate BPM from average pulse interval
             // BPM = 60,000,000 microseconds/minute / (avg_interval * 24 pulses/beat)
-            double avg_interval = pulse_interval_sum / pulse_interval_count;
             clock_bpm = 60000000.0 / (avg_interval * PULSES_PER_QUARTER_NOTE);
 
-            // Debug: Print every 24 pulses (once per beat)
-            if (clock_pulse_count % 24 == 0) {
-                printf("[MIDI Clock] Received pulse #%d, BPM: %.1f (sync %s)\n",
-                       clock_pulse_count, clock_bpm, clock_sync_enabled ? "ENABLED" : "disabled");
-            }
         }
     } else {
         printf("[MIDI Clock] First pulse received\n");
@@ -247,9 +258,10 @@ double midi_get_clock_tempo(void) {
 void midi_reset_clock(void) {
     clock_bpm = 0.0;
     clock_pulse_count = 0;
-    pulse_interval_sum = 0.0;
-    pulse_interval_count = 0;
     last_clock_time = 0.0;
+    interval_buffer_index = 0;
+    interval_buffer_filled = 0;
+    memset(interval_buffer, 0, sizeof(interval_buffer));
 }
 
 void midi_set_transport_control_enabled(int enabled) {

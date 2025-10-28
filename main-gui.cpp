@@ -583,13 +583,9 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                 if (common_state) common_state->paused = 0;  // Update paused state
                 printf("ACT_PLAY: playing flag set to true\n");
 
-                // Send MIDI Clock start if master mode and transport sending are both enabled
-                printf("[Transport Debug] clock_master=%d, send_transport=%d\n",
-                       midi_output_is_clock_master(), common_state->device_config.midi_clock_send_transport);
-                if (midi_output_is_clock_master() && common_state->device_config.midi_clock_send_transport) {
+                // Send MIDI Start if transport sending is enabled (independent of clock master)
+                if (common_state->device_config.midi_clock_send_transport) {
                     midi_output_send_start();
-                } else {
-                    printf("[Transport Debug] NOT sending Start (conditions not met)\n");
                 }
             }
             break;
@@ -606,7 +602,8 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                 }
 
                 // Send MIDI Clock stop if master mode and transport sending are both enabled
-                if (midi_output_is_clock_master() && common_state->device_config.midi_clock_send_transport) {
+                // Send MIDI Stop if transport sending is enabled (independent of clock master)
+                if (common_state->device_config.midi_clock_send_transport) {
                     midi_output_send_stop();
                 }
             }
@@ -2467,12 +2464,6 @@ static void ShowMainUI() {
                 double midi_tempo = midi_get_clock_tempo();
                 bool clock_syncing = midi_is_clock_sync_enabled() && (midi_tempo > 0.0);
 
-                // Debug: Print LCD state every 60 frames (~1 second)
-                static int lcd_debug_counter = 0;
-                if (lcd_debug_counter++ % 60 == 0 && midi_tempo > 0.0) {
-                    printf("[LCD Debug] midi_tempo=%.1f, clock_syncing=%d, sync_enabled=%d\n",
-                           midi_tempo, clock_syncing, midi_is_clock_sync_enabled());
-                }
 
                 // Show BPM with visual indicator when clock syncing
                 // [SYNC] indicator shows when clock sync is enabled AND receiving clock
@@ -7673,7 +7664,6 @@ int main(int argc, char* argv[]) {
     ImGui_ImplOpenGL2_Init();
     //if (load_module(module_path) != 0) return 1;
     int midi_ports = midi_list_ports();
-    printf("[STARTUP DEBUG] midi_ports=%d\n", midi_ports);
     if (midi_ports > 0) {
         // Use configured MIDI devices from INI, with command-line override for device 0
         int ports[MIDI_MAX_DEVICES];
@@ -7685,18 +7675,14 @@ int main(int argc, char* argv[]) {
             common_state->device_config.midi_device_0 = midi_port;
         }
 
-        printf("[STARTUP DEBUG] ports[0]=%d, ports[1]=%d\n", ports[0], ports[1]);
-
         // Count how many devices to open
         int num_devices = 0;
         if (ports[0] >= 0) num_devices++;
         if (ports[1] >= 0) num_devices++;
-        printf("[STARTUP DEBUG] num_devices=%d\n", num_devices);
 
         if (num_devices > 0) {
             midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
             midi_input_enabled = true;
-            printf("[STARTUP DEBUG] midi_input_enabled set to TRUE\n");
             // Enable MIDI clock sync if configured
             if (common_state && common_state->device_config.midi_clock_sync) {
                 midi_set_clock_sync_enabled(1);
@@ -7709,7 +7695,6 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    printf("[STARTUP DEBUG] FINAL midi_input_enabled=%d\n", midi_input_enabled ? 1 : 0);
     bool running = true;
     while (running) {
         SDL_Event e;

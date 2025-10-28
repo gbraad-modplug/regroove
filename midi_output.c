@@ -328,19 +328,15 @@ void midi_output_send_clock(void) {
     msg[0] = 0xF8;
 
     rtmidi_out_send_message(midi_out, msg, 1);
-
-    // Debug: Print every 24 pulses (once per beat)
-    clock_debug_counter++;
-    if (clock_debug_counter % 24 == 0) {
-        printf("[MIDI Output] Sent clock pulse #%d (0xF8)\n", clock_debug_counter);
-    }
 }
 
 void midi_output_send_start(void) {
-    if (!midi_out || !clock_master_enabled) return;
+    if (!midi_out) return;
 
-    // Reset clock accumulator when starting playback
-    clock_pulse_accumulator = 0.0;
+    // Reset clock accumulator when starting playback (if clock master is enabled)
+    if (clock_master_enabled) {
+        clock_pulse_accumulator = 0.0;
+    }
 
     // Send MIDI Start message (0xFA)
     unsigned char msg[1];
@@ -351,7 +347,7 @@ void midi_output_send_start(void) {
 }
 
 void midi_output_send_stop(void) {
-    if (!midi_out || !clock_master_enabled) return;
+    if (!midi_out) return;
 
     // Send MIDI Stop message (0xFC)
     unsigned char msg[1];
