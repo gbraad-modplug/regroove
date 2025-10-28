@@ -50,6 +50,8 @@ typedef struct {
     int midi_output_note_duration; // 0 = immediate off, 1 = hold until next note/off command
     int midi_clock_sync;    // 0 = disabled, 1 = sync tempo to incoming MIDI clock (default: 0)
     int midi_clock_master;  // 0 = disabled, 1 = send MIDI clock as master (default: 0)
+    int midi_clock_send_transport; // 0 = disabled, 1 = send MIDI Start/Stop/Continue when master (default: 0)
+    int midi_transport_control; // 0 = disabled, 1 = respond to MIDI Start/Stop/Continue (default: 0)
     int interpolation_filter; // 0=none, 1=linear, 2=cubic, 4=FIR (default: 2)
     int stereo_separation;    // 0-200, stereo separation percentage (default: 100)
     int dither;               // 0=none, 1=default, 2=rectangular 0.5bit, 3=rectangular 1bit (default: 1)

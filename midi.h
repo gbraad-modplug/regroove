@@ -68,6 +68,26 @@ double midi_get_clock_tempo(void);
  */
 void midi_reset_clock(void);
 
+/**
+ * Enable or disable responding to MIDI Start/Stop/Continue messages.
+ * When enabled, incoming 0xFA (Start), 0xFC (Stop), 0xFB (Continue) will trigger playback control.
+ * enabled: 1 to enable, 0 to disable
+ */
+void midi_set_transport_control_enabled(int enabled);
+
+/**
+ * Get the current MIDI transport control state.
+ * Returns 1 if enabled, 0 if disabled.
+ */
+int midi_is_transport_control_enabled(void);
+
+/**
+ * Set callback for transport control messages (Start/Stop/Continue).
+ * The callback receives: message_type (0xFA=Start, 0xFC=Stop, 0xFB=Continue)
+ */
+typedef void (*MidiTransportCallback)(unsigned char message_type, void* userdata);
+void midi_set_transport_callback(MidiTransportCallback callback, void* userdata);
+
 #ifdef __cplusplus
 }
 #endif

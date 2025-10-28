@@ -318,6 +318,8 @@ int midi_output_is_clock_master(void) {
     return clock_master_enabled;
 }
 
+static int clock_debug_counter = 0;
+
 void midi_output_send_clock(void) {
     if (!midi_out || !clock_master_enabled) return;
 
@@ -326,6 +328,12 @@ void midi_output_send_clock(void) {
     msg[0] = 0xF8;
 
     rtmidi_out_send_message(midi_out, msg, 1);
+
+    // Debug: Print every 24 pulses (once per beat)
+    clock_debug_counter++;
+    if (clock_debug_counter % 24 == 0) {
+        printf("[MIDI Output] Sent clock pulse #%d (0xF8)\n", clock_debug_counter);
+    }
 }
 
 void midi_output_send_start(void) {
@@ -338,6 +346,7 @@ void midi_output_send_start(void) {
     unsigned char msg[1];
     msg[0] = 0xFA;
 
+    printf("[MIDI Output] Sending Start (0xFA)\n");
     rtmidi_out_send_message(midi_out, msg, 1);
 }
 
@@ -348,6 +357,7 @@ void midi_output_send_stop(void) {
     unsigned char msg[1];
     msg[0] = 0xFC;
 
+    printf("[MIDI Output] Sending Stop (0xFC)\n");
     rtmidi_out_send_message(midi_out, msg, 1);
 }
 

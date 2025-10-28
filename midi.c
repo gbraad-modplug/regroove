@@ -21,7 +21,15 @@ static double pulse_interval_sum = 0.0;  // Running sum for average
 static int pulse_interval_count = 0;     // Count for average
 
 #define MIDI_CLOCK 0xF8
+#define MIDI_START 0xFA
+#define MIDI_CONTINUE 0xFB
+#define MIDI_STOP 0xFC
 #define PULSES_PER_QUARTER_NOTE 24
+
+// MIDI Transport control state
+static int transport_control_enabled = 0;
+static MidiTransportCallback transport_cb = NULL;
+static void *transport_userdata = NULL;
 
 // Get current time in microseconds
 static double get_time_us(void) {
@@ -39,10 +47,9 @@ static double get_time_us(void) {
 
 // Process MIDI Clock message (0xF8)
 static void process_midi_clock(void) {
-    if (!clock_sync_enabled) return;
-
     double current_time = get_time_us();
 
+    // Always process clock for visual indication, even if sync is disabled
     // If this is not the first pulse, calculate interval
     if (clock_pulse_count > 0) {
         double interval = current_time - last_clock_time;
@@ -63,7 +70,15 @@ static void process_midi_clock(void) {
             // BPM = 60,000,000 microseconds/minute / (avg_interval * 24 pulses/beat)
             double avg_interval = pulse_interval_sum / pulse_interval_count;
             clock_bpm = 60000000.0 / (avg_interval * PULSES_PER_QUARTER_NOTE);
+
+            // Debug: Print every 24 pulses (once per beat)
+            if (clock_pulse_count % 24 == 0) {
+                printf("[MIDI Clock] Received pulse #%d, BPM: %.1f (sync %s)\n",
+                       clock_pulse_count, clock_bpm, clock_sync_enabled ? "ENABLED" : "disabled");
+            }
         }
+    } else {
+        printf("[MIDI Clock] First pulse received\n");
     }
 
     // Update state
@@ -73,10 +88,24 @@ static void process_midi_clock(void) {
 
 // Device-specific callback wrappers
 static void rtmidi_event_callback_0(double dt, const unsigned char *msg, size_t sz, void *userdata) {
-    // Handle MIDI Clock (single-byte message)
-    if (sz == 1 && msg[0] == MIDI_CLOCK) {
-        process_midi_clock();
-        return;
+    // Handle single-byte system real-time messages
+    if (sz == 1) {
+        if (msg[0] == MIDI_CLOCK) {
+            process_midi_clock();
+            return;
+        }
+        // Handle transport control messages
+        if (msg[0] == MIDI_START || msg[0] == MIDI_STOP || msg[0] == MIDI_CONTINUE) {
+            const char* msg_name = (msg[0] == MIDI_START) ? "Start" :
+                                   (msg[0] == MIDI_STOP) ? "Stop" : "Continue";
+            printf("[MIDI Transport] Received %s (0x%02X) on device 0, control %s\n",
+                   msg_name, msg[0], transport_control_enabled ? "ENABLED" : "disabled");
+
+            if (transport_control_enabled && transport_cb) {
+                transport_cb(msg[0], transport_userdata);
+            }
+            return;
+        }
     }
 
     // Handle regular 3-byte messages (Note On/Off, CC)
@@ -86,10 +115,24 @@ static void rtmidi_event_callback_0(double dt, const unsigned char *msg, size_t 
 }
 
 static void rtmidi_event_callback_1(double dt, const unsigned char *msg, size_t sz, void *userdata) {
-    // Handle MIDI Clock (single-byte message)
-    if (sz == 1 && msg[0] == MIDI_CLOCK) {
-        process_midi_clock();
-        return;
+    // Handle single-byte system real-time messages
+    if (sz == 1) {
+        if (msg[0] == MIDI_CLOCK) {
+            process_midi_clock();
+            return;
+        }
+        // Handle transport control messages
+        if (msg[0] == MIDI_START || msg[0] == MIDI_STOP || msg[0] == MIDI_CONTINUE) {
+            const char* msg_name = (msg[0] == MIDI_START) ? "Start" :
+                                   (msg[0] == MIDI_STOP) ? "Stop" : "Continue";
+            printf("[MIDI Transport] Received %s (0x%02X) on device 1, control %s\n",
+                   msg_name, msg[0], transport_control_enabled ? "ENABLED" : "disabled");
+
+            if (transport_control_enabled && transport_cb) {
+                transport_cb(msg[0], transport_userdata);
+            }
+            return;
+        }
     }
 
     // Handle regular 3-byte messages (Note On/Off, CC)
@@ -190,9 +233,7 @@ void midi_deinit(void) {
 
 void midi_set_clock_sync_enabled(int enabled) {
     clock_sync_enabled = enabled;
-    if (!enabled) {
-        midi_reset_clock();
-    }
+    // Don't reset clock when disabling sync - keep processing for visual indication
 }
 
 int midi_is_clock_sync_enabled(void) {
@@ -209,4 +250,17 @@ void midi_reset_clock(void) {
     pulse_interval_sum = 0.0;
     pulse_interval_count = 0;
     last_clock_time = 0.0;
+}
+
+void midi_set_transport_control_enabled(int enabled) {
+    transport_control_enabled = enabled;
+}
+
+int midi_is_transport_control_enabled(void) {
+    return transport_control_enabled;
+}
+
+void midi_set_transport_callback(MidiTransportCallback callback, void* userdata) {
+    transport_cb = callback;
+    transport_userdata = userdata;
 }

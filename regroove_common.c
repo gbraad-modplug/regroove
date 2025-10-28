@@ -167,6 +167,8 @@ RegrooveCommonState* regroove_common_create(void) {
     state->device_config.midi_output_note_duration = 1; // Hold notes (default)
     state->device_config.midi_clock_sync = 0;     // Disabled (default)
     state->device_config.midi_clock_master = 0;   // Disabled (default)
+    state->device_config.midi_clock_send_transport = 0; // Disabled (default)
+    state->device_config.midi_transport_control = 0; // Disabled (default)
     state->device_config.interpolation_filter = 1; // Linear (default)
     state->device_config.stereo_separation = 100;  // 100% (default)
     state->device_config.dither = 1;               // Library default

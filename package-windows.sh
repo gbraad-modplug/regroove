@@ -5,7 +5,7 @@ set -e
 
 VERSION="1.0.0"
 BUILD_DIR="build-windows"
-PACKAGE_NAME="samplecrate-${VERSION}-windows-x64"
+PACKAGE_NAME="regroove-${VERSION}-windows-x64"
 PACKAGE_DIR="$PACKAGE_NAME"
 MINGW_BIN="/usr/x86_64-w64-mingw32/sys-root/mingw/bin"
 

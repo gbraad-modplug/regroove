@@ -124,6 +124,9 @@ enum FXRoute {
 };
 static FXRoute fx_route = FX_ROUTE_PLAYBACK;  // Default: effects on playback
 
+// MIDI input state
+static bool midi_input_enabled = false;
+
 // MIDI output state
 static int midi_output_device = -1;  // -1 = disabled
 static bool midi_output_enabled = false;
@@ -580,9 +583,13 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                 if (common_state) common_state->paused = 0;  // Update paused state
                 printf("ACT_PLAY: playing flag set to true\n");
 
-                // Send MIDI Clock start if master mode is enabled
-                if (midi_output_is_clock_master()) {
+                // Send MIDI Clock start if master mode and transport sending are both enabled
+                printf("[Transport Debug] clock_master=%d, send_transport=%d\n",
+                       midi_output_is_clock_master(), common_state->device_config.midi_clock_send_transport);
+                if (midi_output_is_clock_master() && common_state->device_config.midi_clock_send_transport) {
                     midi_output_send_start();
+                } else {
+                    printf("[Transport Debug] NOT sending Start (conditions not met)\n");
                 }
             }
             break;
@@ -598,8 +605,8 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                     regroove_performance_reset(common_state->performance);
                 }
 
-                // Send MIDI Clock stop if master mode is enabled
-                if (midi_output_is_clock_master()) {
+                // Send MIDI Clock stop if master mode and transport sending are both enabled
+                if (midi_output_is_clock_master() && common_state->device_config.midi_clock_send_transport) {
                     midi_output_send_stop();
                 }
             }
@@ -2039,6 +2046,22 @@ void handle_keyboard(SDL_Event &e, SDL_Window *window) {
     }
 }
 
+// MIDI Transport control callback (for Start/Stop/Continue messages)
+void my_midi_transport_callback(unsigned char message_type, void* userdata) {
+    (void)userdata;
+
+    if (message_type == 0xFA) {  // MIDI Start
+        printf("MIDI Start received\n");
+        dispatch_action(ACT_PLAY);
+    } else if (message_type == 0xFC) {  // MIDI Stop
+        printf("MIDI Stop received\n");
+        dispatch_action(ACT_STOP);
+    } else if (message_type == 0xFB) {  // MIDI Continue
+        printf("MIDI Continue received\n");
+        dispatch_action(ACT_PLAY);  // Treat continue as play
+    }
+}
+
 void my_midi_mapping(unsigned char status, unsigned char cc_or_note, unsigned char value, int device_id, void *userdata) {
     (void)userdata;
 
@@ -2442,19 +2465,31 @@ static void ShowMainUI() {
 
                 // Check for incoming MIDI Clock tempo (always displayed if present as a hint)
                 double midi_tempo = midi_get_clock_tempo();
+                bool clock_syncing = midi_is_clock_sync_enabled() && (midi_tempo > 0.0);
 
-                // Always show module BPM first (primary information)
-                // Add incoming MIDI Clock tempo as a hint with ">" prefix
+                // Debug: Print LCD state every 60 frames (~1 second)
+                static int lcd_debug_counter = 0;
+                if (lcd_debug_counter++ % 60 == 0 && midi_tempo > 0.0) {
+                    printf("[LCD Debug] midi_tempo=%.1f, clock_syncing=%d, sync_enabled=%d\n",
+                           midi_tempo, clock_syncing, midi_is_clock_sync_enabled());
+                }
+
+                // Show BPM with visual indicator when clock syncing
+                // [SYNC] indicator shows when clock sync is enabled AND receiving clock
                 if (pitch > 0.99 && pitch < 1.01) {
                     // Normal pitch
-                    if (midi_tempo > 0.0) {
+                    if (clock_syncing) {
+                        std::snprintf(bpm_str, sizeof(bpm_str), "%.0f [SYNC]", midi_tempo);
+                    } else if (midi_tempo > 0.0) {
                         std::snprintf(bpm_str, sizeof(bpm_str), "%.0f >%.0f", bpm, midi_tempo);
                     } else {
                         std::snprintf(bpm_str, sizeof(bpm_str), "%.0f", bpm);
                     }
                 } else {
                     // Pitch adjusted - show effective BPM
-                    if (midi_tempo > 0.0) {
+                    if (clock_syncing) {
+                        std::snprintf(bpm_str, sizeof(bpm_str), "%.0f [SYNC]", midi_tempo);
+                    } else if (midi_tempo > 0.0) {
                         std::snprintf(bpm_str, sizeof(bpm_str), "%.0f->%.0f >%.0f", bpm, effective_bpm, midi_tempo);
                     } else {
                         std::snprintf(bpm_str, sizeof(bpm_str), "%.0f->%.0f", bpm, effective_bpm);
@@ -4790,6 +4825,33 @@ static void ShowMainUI() {
         // Use cached MIDI port count (refreshed when panel is first shown)
         int num_midi_ports = cached_midi_port_count >= 0 ? cached_midi_port_count : 0;
 
+        // Helper function to reinitialize MIDI input devices
+        auto reinit_midi_input = [&]() {
+            midi_deinit();
+            int ports[MIDI_MAX_DEVICES];
+            ports[0] = common_state->device_config.midi_device_0;
+            ports[1] = common_state->device_config.midi_device_1;
+            int num_devices = 0;
+            if (ports[0] >= 0) num_devices++;
+            if (ports[1] >= 0) num_devices++;
+            if (num_devices > 0) {
+                midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
+                midi_input_enabled = true;
+                // Re-register MIDI transport control callback
+                midi_set_transport_callback(my_midi_transport_callback, NULL);
+                // Re-enable MIDI clock sync if configured
+                if (common_state->device_config.midi_clock_sync) {
+                    midi_set_clock_sync_enabled(1);
+                }
+                // Re-enable MIDI transport control if configured
+                if (common_state->device_config.midi_transport_control) {
+                    midi_set_transport_control_enabled(1);
+                }
+            } else {
+                midi_input_enabled = false;
+            }
+        };
+
         // MIDI Device 0 selection
         ImGui::Text("MIDI Input 0:");
         ImGui::SameLine(150.0f);
@@ -4810,17 +4872,7 @@ static void ShowMainUI() {
             if (ImGui::Selectable("None", current_device_0 == -1)) {
                 if (common_state) {
                     common_state->device_config.midi_device_0 = -1;
-                    // Hot-swap MIDI devices
-                    midi_deinit();
-                    int ports[MIDI_MAX_DEVICES];
-                    ports[0] = common_state->device_config.midi_device_0;
-                    ports[1] = common_state->device_config.midi_device_1;
-                    int num_devices = 0;
-                    if (ports[0] >= 0) num_devices = 1;
-                    if (ports[1] >= 0) num_devices = 2;
-                    if (num_devices > 0) {
-                        midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
-                    }
+                    reinit_midi_input();
                     printf("MIDI Device 0 set to: None\n");
                     regroove_common_save_device_config(common_state, current_config_file);
                 }
@@ -4836,17 +4888,7 @@ static void ShowMainUI() {
                 if (ImGui::Selectable(label, current_device_0 == i)) {
                     if (common_state) {
                         common_state->device_config.midi_device_0 = i;
-                        // Hot-swap MIDI devices
-                        midi_deinit();
-                        int ports[MIDI_MAX_DEVICES];
-                        ports[0] = common_state->device_config.midi_device_0;
-                        ports[1] = common_state->device_config.midi_device_1;
-                        int num_devices = 0;
-                        if (ports[0] >= 0) num_devices = 1;
-                        if (ports[1] >= 0) num_devices = 2;
-                        if (num_devices > 0) {
-                            midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
-                        }
+                        reinit_midi_input();
                         printf("MIDI Device 0 set to: Port %d\n", i);
                         regroove_common_save_device_config(common_state, current_config_file);
                     }
@@ -4877,17 +4919,7 @@ static void ShowMainUI() {
             if (ImGui::Selectable("None", current_device_1 == -1)) {
                 if (common_state) {
                     common_state->device_config.midi_device_1 = -1;
-                    // Hot-swap MIDI devices
-                    midi_deinit();
-                    int ports[MIDI_MAX_DEVICES];
-                    ports[0] = common_state->device_config.midi_device_0;
-                    ports[1] = common_state->device_config.midi_device_1;
-                    int num_devices = 0;
-                    if (ports[0] >= 0) num_devices = 1;
-                    if (ports[1] >= 0) num_devices = 2;
-                    if (num_devices > 0) {
-                        midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
-                    }
+                    reinit_midi_input();
                     printf("MIDI Device 1 set to: None\n");
                     regroove_common_save_device_config(common_state, current_config_file);
                 }
@@ -4903,17 +4935,7 @@ static void ShowMainUI() {
                 if (ImGui::Selectable(label, current_device_1 == i)) {
                     if (common_state) {
                         common_state->device_config.midi_device_1 = i;
-                        // Hot-swap MIDI devices
-                        midi_deinit();
-                        int ports[MIDI_MAX_DEVICES];
-                        ports[0] = common_state->device_config.midi_device_0;
-                        ports[1] = common_state->device_config.midi_device_1;
-                        int num_devices = 0;
-                        if (ports[0] >= 0) num_devices = 1;
-                        if (ports[1] >= 0) num_devices = 2;
-                        if (num_devices > 0) {
-                            midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
-                        }
+                        reinit_midi_input();
                         printf("MIDI Device 1 set to: Port %d\n", i);
                         regroove_common_save_device_config(common_state, current_config_file);
                     }
@@ -4931,7 +4953,7 @@ static void ShowMainUI() {
         ImGui::Dummy(ImVec2(0, 20.0f));
 
         // MIDI Output Device Configuration
-        ImGui::Text("MIDI Output (Experimental)");
+        ImGui::Text("MIDI Output");
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 8.0f));
         ImGui::TextWrapped("Send MIDI notes to external synths based on tracker playback. Effect commands 0FFF and EC0 trigger note-off.");
@@ -5016,22 +5038,15 @@ static void ShowMainUI() {
                 ImGui::SetTooltip("When enabled, MIDI notes are held until the next note or note-off command.\nWhen disabled, notes are immediately released after being triggered.");
             }
 
-            // MIDI Clock sync toggle
-            bool clock_sync = (common_state->device_config.midi_clock_sync == 1);
-            if (ImGui::Checkbox("Sync tempo to MIDI Clock (Slave)", &clock_sync)) {
-                common_state->device_config.midi_clock_sync = clock_sync ? 1 : 0;
-                midi_set_clock_sync_enabled(clock_sync);
-                save_mappings_to_config();
-            }
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("When enabled, playback speed will sync to incoming MIDI Clock messages (0xF8).\nEach instance controls its own playback (start/stop), but tempo is synchronized.");
-            }
+            // ===== MIDI MASTER SECTION =====
+            ImGui::Dummy(ImVec2(0, 8.0f));
+            ImGui::Text("MIDI Master");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
 
             // MIDI Clock master toggle
             bool clock_master = (common_state->device_config.midi_clock_master == 1);
-            if (ImGui::Checkbox("Send MIDI Clock (Master)", &clock_master)) {
+            if (ImGui::Checkbox("Send MIDI Clock", &clock_master)) {
                 common_state->device_config.midi_clock_master = clock_master ? 1 : 0;
                 midi_output_set_clock_master(clock_master);
                 save_mappings_to_config();
@@ -5039,7 +5054,53 @@ static void ShowMainUI() {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("When enabled, this instance sends MIDI Clock messages (24 PPQN) to external devices.\nUse this to sync external hardware or software to Regroove's playback tempo.");
+                ImGui::SetTooltip("When enabled, sends MIDI Clock pulses (24 PPQN) to sync external devices to this tempo.");
+            }
+
+            // Send transport when master
+            bool send_transport = (common_state->device_config.midi_clock_send_transport == 1);
+            if (ImGui::Checkbox("Send MIDI Start/Stop", &send_transport)) {
+                common_state->device_config.midi_clock_send_transport = send_transport ? 1 : 0;
+                save_mappings_to_config();
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, sends MIDI Start/Stop messages to control external device playback.\nDisable if you only want to sync tempo, not transport.");
+            }
+        }
+
+        if (midi_input_enabled && common_state) {
+            // ===== MIDI SLAVE SECTION =====
+            ImGui::Dummy(ImVec2(0, 8.0f));
+            ImGui::Text("MIDI Slave");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // MIDI Clock sync toggle
+            bool clock_sync = (common_state->device_config.midi_clock_sync == 1);
+            if (ImGui::Checkbox("Sync tempo to MIDI Clock", &clock_sync)) {
+                common_state->device_config.midi_clock_sync = clock_sync ? 1 : 0;
+                midi_set_clock_sync_enabled(clock_sync);
+                save_mappings_to_config();
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When ENABLED: Playback tempo adjusts to match incoming MIDI Clock.\nWhen DISABLED: Incoming tempo is shown in LCD [>120] but doesn't affect playback (visual only).");
+            }
+
+            // MIDI Transport control toggle
+            bool transport_control = (common_state->device_config.midi_transport_control == 1);
+            if (ImGui::Checkbox("Respond to MIDI Start/Stop", &transport_control)) {
+                common_state->device_config.midi_transport_control = transport_control ? 1 : 0;
+                midi_set_transport_control_enabled(transport_control);
+                save_mappings_to_config();
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, incoming MIDI Start/Stop messages will control playback.\nDisable if you only want tempo sync, not transport control.");
             }
         }
 
@@ -7612,25 +7673,43 @@ int main(int argc, char* argv[]) {
     ImGui_ImplOpenGL2_Init();
     //if (load_module(module_path) != 0) return 1;
     int midi_ports = midi_list_ports();
+    printf("[STARTUP DEBUG] midi_ports=%d\n", midi_ports);
     if (midi_ports > 0) {
         // Use configured MIDI devices from INI, with command-line override for device 0
         int ports[MIDI_MAX_DEVICES];
         ports[0] = (midi_port >= 0) ? midi_port : common_state->device_config.midi_device_0;
         ports[1] = common_state->device_config.midi_device_1;
 
+        // Update config state to match actual device being used (for UI feedback)
+        if (midi_port >= 0) {
+            common_state->device_config.midi_device_0 = midi_port;
+        }
+
+        printf("[STARTUP DEBUG] ports[0]=%d, ports[1]=%d\n", ports[0], ports[1]);
+
         // Count how many devices to open
         int num_devices = 0;
-        if (ports[0] >= 0) num_devices = 1;
-        if (ports[1] >= 0) num_devices = 2;
+        if (ports[0] >= 0) num_devices++;
+        if (ports[1] >= 0) num_devices++;
+        printf("[STARTUP DEBUG] num_devices=%d\n", num_devices);
 
         if (num_devices > 0) {
             midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
+            midi_input_enabled = true;
+            printf("[STARTUP DEBUG] midi_input_enabled set to TRUE\n");
             // Enable MIDI clock sync if configured
             if (common_state && common_state->device_config.midi_clock_sync) {
                 midi_set_clock_sync_enabled(1);
             }
+            // Set up MIDI transport control callback
+            midi_set_transport_callback(my_midi_transport_callback, NULL);
+            // Enable MIDI transport control if configured
+            if (common_state && common_state->device_config.midi_transport_control) {
+                midi_set_transport_control_enabled(1);
+            }
         }
     }
+    printf("[STARTUP DEBUG] FINAL midi_input_enabled=%d\n", midi_input_enabled ? 1 : 0);
     bool running = true;
     while (running) {
         SDL_Event e;
