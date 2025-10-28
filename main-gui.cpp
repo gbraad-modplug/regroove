@@ -2816,8 +2816,8 @@ static void ShowMainUI() {
 
     // CHANNEL PANEL (9 columns: 8 channels + 1 pitch)
     // In fullscreen pads mode, use full width
-    float rightX = fullscreen_pads_mode ? SIDE_MARGIN : (SIDE_MARGIN + LEFT_PANEL_WIDTH + 18.0f);
-    float rightW = fullW - rightX - SIDE_MARGIN;
+    float rightX = fullscreen_pads_mode ? 0.0f : (SIDE_MARGIN + LEFT_PANEL_WIDTH + 18.0f);
+    float rightW = fullscreen_pads_mode ? fullW : (fullW - rightX - SIDE_MARGIN);
     if (rightW < 300.0f) rightW = 300.0f;
 
     float baseTotal = BASE_SLIDER_W * 9.0f + BASE_SPACING * 8.0f;
@@ -2827,7 +2827,9 @@ static void ShowMainUI() {
     float spacing = BASE_SPACING * widthScale;
 
     ImGui::SetCursorPos(ImVec2(rightX, TOP_MARGIN));
-    ImGui::BeginChild("channels_panel", ImVec2(rightW, channelAreaHeight), true, ImGuiWindowFlags_NoScrollbar);
+    // Remove border in fullscreen mode so bar is flush against edge
+    bool show_border = !fullscreen_pads_mode;
+    ImGui::BeginChild("channels_panel", ImVec2(rightW, channelAreaHeight), show_border, ImGuiWindowFlags_NoScrollbar);
 
     float labelH = ImGui::GetTextLineHeight();
     float contentHeight = channelAreaHeight - childPaddingY;
@@ -2838,6 +2840,7 @@ static void ShowMainUI() {
     if (sliderH < MIN_SLIDER_HEIGHT) sliderH = MIN_SLIDER_HEIGHT;
 
     ImVec2 origin = ImGui::GetCursorPos();
+    ImVec2 screenOrigin = ImGui::GetCursorScreenPos();
 
     // Detect UI mode change to refresh devices only when needed
     if ((ui_mode == UI_MODE_SETTINGS || ui_mode == UI_MODE_MIDI) &&
@@ -3462,8 +3465,8 @@ static void ShowMainUI() {
         if (fullscreen_pads_mode) {
             float barWidth = 12.0f;
 
-            // Left edge exit bar - match file browse button color
-            ImGui::SetCursorPos(ImVec2(origin.x, origin.y));
+            // Left edge exit bar - use screen-space positioning to be flush against left edge
+            ImGui::SetCursorScreenPos(ImVec2(0.0f, screenOrigin.y));
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.12f, 0.12f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.23f, 0.23f, 0.23f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.16f, 0.16f, 0.16f, 1.0f));
