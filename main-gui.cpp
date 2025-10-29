@@ -268,8 +268,15 @@ static void my_row_callback(int ord, int row, void *userdata) {
             if (current_time - spp_last_sent_time >= 0.1) {
                 // Get current pattern's row count for accurate position calculation
                 int pattern_rows = total_rows > 0 ? total_rows : 64;
-                // Calculate SPP position: 64 MIDI beats per pattern, scale by actual row count
-                int spp_position = (ord * 64) + ((row * 64) / pattern_rows);
+
+                // Get current speed to scale SPP calculation
+                // Standard is 6 ticks/row = 64 MIDI beats per pattern
+                // 3 ticks/row (2x speed) = 32 MIDI beats per pattern
+                int speed = regroove_get_current_speed(common_state->player);
+                int beats_per_pattern = (64 * 6) / (speed > 0 ? speed : 6);  // Scale by speed
+
+                // Calculate SPP position with speed scaling
+                int spp_position = (ord * beats_per_pattern) + ((row * beats_per_pattern) / pattern_rows);
                 // Update position for clock thread to send
                 midi_output_update_position(spp_position);
                 spp_last_sent_time = current_time;
@@ -353,8 +360,14 @@ static void my_order_callback(int ord, int pat, void *userdata) {
             // This prevents spam when playback starts (order callback fires immediately)
             double current_time = SDL_GetTicks() / 1000.0;
             if (current_time - spp_last_sent_time >= 0.1) {
-                // Calculate SPP position: 64 MIDI beats per pattern
-                int spp_position = ord * 64;
+                // Get current speed to scale SPP calculation
+                // Standard is 6 ticks/row = 64 MIDI beats per pattern
+                // 3 ticks/row (2x speed) = 32 MIDI beats per pattern
+                int speed = regroove_get_current_speed(common_state->player);
+                int beats_per_pattern = (64 * 6) / (speed > 0 ? speed : 6);  // Scale by speed
+
+                // Calculate SPP position with speed scaling
+                int spp_position = ord * beats_per_pattern;
                 // Update position for clock thread to send
                 midi_output_update_position(spp_position);
                 spp_last_sent_time = current_time;

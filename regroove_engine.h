@@ -123,6 +123,7 @@ int regroove_get_custom_loop_rows(const Regroove *g);
 int regroove_get_full_pattern_rows(const Regroove *g);
 int regroove_get_pattern_num_rows(const Regroove *g, int pattern);  // Get row count for specific pattern
 double regroove_get_current_bpm(const Regroove *g);
+int regroove_get_current_speed(const Regroove *g);  // Get current speed (ticks per row)
 
 // Get formatted pattern cell data (note, instrument, volume, effects)
 // Returns 0 on success, -1 on error

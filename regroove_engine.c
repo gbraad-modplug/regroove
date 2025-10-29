@@ -1333,6 +1333,11 @@ double regroove_get_current_bpm(const Regroove* g) {
     return openmpt_module_get_current_tempo2(g->mod);
 }
 
+int regroove_get_current_speed(const Regroove* g) {
+    if (!g || !g->mod) return 6;  // Default to 6 ticks/row
+    return openmpt_module_get_current_speed(g->mod);
+}
+
 int regroove_get_pattern_cell(const Regroove *g, int pattern, int row, int channel, char *buffer, size_t buffer_size) {
     if (!g || !g->mod || !buffer || buffer_size < 32) return -1;
 
