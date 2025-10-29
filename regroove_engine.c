@@ -1327,7 +1327,10 @@ int regroove_get_pattern_num_rows(const Regroove* g, int pattern) {
 }
 double regroove_get_current_bpm(const Regroove* g) {
     if (!g || !g->mod) return 0.0;
-    return openmpt_module_get_current_estimated_bpm(g->mod);
+    // Use tempo2 instead of estimated_bpm to get the actual tempo value
+    // estimated_bpm accounts for speed (ticks/row) which makes MIDI Clock timing wrong
+    // MIDI Clock should represent the musical tempo, not the effective playback speed
+    return openmpt_module_get_current_tempo2(g->mod);
 }
 
 int regroove_get_pattern_cell(const Regroove *g, int pattern, int row, int channel, char *buffer, size_t buffer_size) {
