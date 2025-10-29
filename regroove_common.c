@@ -166,6 +166,7 @@ RegrooveCommonState* regroove_common_create(void) {
     state->device_config.midi_output_device = -1; // Disabled
     state->device_config.midi_output_note_duration = 1; // Hold notes (default)
     state->device_config.midi_clock_sync = 0;     // Disabled (default)
+    state->device_config.midi_clock_sync_threshold = 0.5f; // 0.5% threshold (default)
     state->device_config.midi_clock_master = 0;   // Disabled (default)
     state->device_config.midi_clock_send_transport = 0; // Disabled (default)
     state->device_config.midi_clock_send_spp = 2; // During playback (default) - regroove-to-regroove sync
@@ -279,6 +280,8 @@ int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_pa
                     state->device_config.midi_output_note_duration = atoi(value);
                 } else if (strcmp(key, "midi_clock_sync") == 0) {
                     state->device_config.midi_clock_sync = atoi(value);
+                } else if (strcmp(key, "midi_clock_sync_threshold") == 0) {
+                    state->device_config.midi_clock_sync_threshold = atof(value);
                 } else if (strcmp(key, "midi_clock_master") == 0) {
                     state->device_config.midi_clock_master = atoi(value);
                 } else if (strcmp(key, "midi_clock_send_transport") == 0) {
@@ -721,6 +724,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
         fprintf(f, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
         fprintf(f, "midi_clock_sync = %d\n", state->device_config.midi_clock_sync);
+        fprintf(f, "midi_clock_sync_threshold = %.2f\n", state->device_config.midi_clock_sync_threshold);
         fprintf(f, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
         fprintf(f, "midi_clock_send_transport = %d\n", state->device_config.midi_clock_send_transport);
         fprintf(f, "midi_clock_send_spp = %d\n", state->device_config.midi_clock_send_spp);
@@ -767,6 +771,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
         fprintf(f, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
         fprintf(f, "midi_clock_sync = %d\n", state->device_config.midi_clock_sync);
+        fprintf(f, "midi_clock_sync_threshold = %.2f\n", state->device_config.midi_clock_sync_threshold);
         fprintf(f, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
         fprintf(f, "midi_clock_send_transport = %d\n", state->device_config.midi_clock_send_transport);
         fprintf(f, "midi_clock_send_spp = %d\n", state->device_config.midi_clock_send_spp);
@@ -829,6 +834,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
                 fprintf(f_write, "midi_output_device = %d\n", state->device_config.midi_output_device);
                 fprintf(f_write, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
                 fprintf(f_write, "midi_clock_sync = %d\n", state->device_config.midi_clock_sync);
+                fprintf(f_write, "midi_clock_sync_threshold = %.2f\n", state->device_config.midi_clock_sync_threshold);
                 fprintf(f_write, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
                 fprintf(f_write, "midi_clock_send_transport = %d\n", state->device_config.midi_clock_send_transport);
                 fprintf(f_write, "midi_clock_send_spp = %d\n", state->device_config.midi_clock_send_spp);
@@ -875,6 +881,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
                 fprintf(f_write, "midi_output_device = %d\n", state->device_config.midi_output_device);
                 fprintf(f_write, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
                 fprintf(f_write, "midi_clock_sync = %d\n", state->device_config.midi_clock_sync);
+                fprintf(f_write, "midi_clock_sync_threshold = %.2f\n", state->device_config.midi_clock_sync_threshold);
                 fprintf(f_write, "midi_clock_master = %d\n", state->device_config.midi_clock_master);
                 fprintf(f_write, "midi_clock_send_transport = %d\n", state->device_config.midi_clock_send_transport);
                 fprintf(f_write, "midi_clock_send_spp = %d\n", state->device_config.midi_clock_send_spp);
@@ -943,6 +950,8 @@ int regroove_common_save_default_config(const char *filepath) {
     fprintf(f, "midi_output_device = -1\n");
     fprintf(f, "# MIDI Clock sync: 0=disabled, 1=sync tempo to incoming MIDI clock\n");
     fprintf(f, "midi_clock_sync = 0\n");
+    fprintf(f, "# MIDI Clock sync threshold: tempo change %% to apply pitch adjustment (0.1-5.0, default 0.5)\n");
+    fprintf(f, "midi_clock_sync_threshold = 0.5\n");
     fprintf(f, "# MIDI Clock master: 0=disabled, 1=send MIDI clock as master\n");
     fprintf(f, "midi_clock_master = 0\n");
     fprintf(f, "# MIDI transport messages: 0=disabled, 1=send Start/Stop when master\n");

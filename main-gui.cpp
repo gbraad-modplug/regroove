@@ -5237,6 +5237,28 @@ static void ShowMainUI() {
                 ImGui::SetTooltip("When ENABLED: Playback tempo adjusts to match incoming MIDI Clock.\nWhen DISABLED: Incoming tempo is shown in LCD [>120] but doesn't affect playback (visual only).");
             }
 
+            // MIDI Clock sync threshold (only shown when sync is enabled)
+            if (clock_sync) {
+                ImGui::Indent(20.0f);
+                ImGui::Text("Sync threshold (%%):");
+                ImGui::SameLine();
+                float threshold = common_state->device_config.midi_clock_sync_threshold;
+                ImGui::SetNextItemWidth(100.0f);
+                if (ImGui::SliderFloat("##clock_threshold", &threshold, 0.1f, 5.0f, "%.1f%%")) {
+                    common_state->device_config.midi_clock_sync_threshold = threshold;
+                    save_mappings_to_config();
+                }
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Minimum tempo change %% to apply pitch adjustment.\n"
+                                      "Lower = more responsive but may cause pitch wobble\n"
+                                      "Higher = more stable but less precise sync\n"
+                                      "Default: 0.5%% (recommended for most cases)");
+                }
+                ImGui::Unindent(20.0f);
+            }
+
             // MIDI Transport control toggle
             bool transport_control = (common_state->device_config.midi_transport_control == 1);
             if (ImGui::Checkbox("Respond to MIDI Start/Stop", &transport_control)) {
@@ -7890,10 +7912,22 @@ int main(int argc, char* argv[]) {
                     // Clamp to reasonable range
                     if (target_pitch < 0.25) target_pitch = 0.25;
                     if (target_pitch > 3.0) target_pitch = 3.0;
-                    // Update pitch
-                    regroove_common_set_pitch(common_state, target_pitch);
-                    // Update UI slider to reflect MIDI-controlled pitch
-                    pitch_slider = (float)(target_pitch - 1.0);
+
+                    // Only update pitch if change is significant (configurable threshold)
+                    // This prevents audible pitch shifts from minor MIDI tempo jitter
+                    double current_pitch = regroove_get_pitch(common_state->player);
+                    double pitch_diff = fabs(target_pitch - current_pitch);
+                    double pitch_change_percent = (pitch_diff / current_pitch) * 100.0;
+                    float threshold = common_state->device_config.midi_clock_sync_threshold;
+                    if (threshold < 0.1f) threshold = 0.1f;
+                    if (threshold > 5.0f) threshold = 5.0f;
+
+                    if (pitch_change_percent > threshold) {
+                        // Update pitch
+                        regroove_common_set_pitch(common_state, target_pitch);
+                        // Update UI slider to reflect MIDI-controlled pitch
+                        pitch_slider = (float)(target_pitch - 1.0);
+                    }
                 }
             }
         }

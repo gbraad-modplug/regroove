@@ -49,6 +49,7 @@ typedef struct {
     int midi_output_device; // MIDI output device port (-1 = disabled)
     int midi_output_note_duration; // 0 = immediate off, 1 = hold until next note/off command
     int midi_clock_sync;    // 0 = disabled, 1 = sync tempo to incoming MIDI clock (default: 0)
+    float midi_clock_sync_threshold; // Tempo change threshold % to apply pitch adjustment (0.1-5.0, default: 0.5)
     int midi_clock_master;  // 0 = disabled, 1 = send MIDI clock as master (default: 0)
     int midi_clock_send_transport; // 0 = disabled, 1 = send MIDI Start/Stop/Continue when master (default: 0)
     int midi_clock_send_spp; // 0 = disabled, 1 = on stop only (standard MIDI), 2 = during playback (regroove-to-regroove) (default: 2)
