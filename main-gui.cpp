@@ -67,6 +67,9 @@ static bool fullscreen_pads_mode = false;  // Performance mode: hide sidebar, sh
 static float trigger_pad_fade[MAX_TOTAL_TRIGGER_PADS] = {0.0f};
 static float trigger_pad_transition_fade[MAX_TOTAL_TRIGGER_PADS] = {0.0f}; // Red blink on transition
 
+// Visual feedback for SPP send activity (blink when sending)
+static float spp_send_fade = 0.0f;
+
 // Track previous pending state to detect transitions
 static bool prev_channel_pending[MAX_CHANNELS] = {false};
 static int prev_queued_jump_type = 0;
@@ -284,6 +287,7 @@ static void my_row_callback(int ord, int row, void *userdata) {
                 // Update position for clock thread to send
                 midi_output_update_position(spp_position);
                 spp_last_sent_time = current_time;
+                spp_send_fade = 1.0f; // Trigger visual feedback
             }
         }
     }
@@ -379,6 +383,7 @@ static void my_order_callback(int ord, int pat, void *userdata) {
                 // Update position for clock thread to send
                 midi_output_update_position(spp_position);
                 spp_last_sent_time = current_time;
+                spp_send_fade = 1.0f; // Trigger visual feedback
             }
         }
     }
@@ -1403,12 +1408,18 @@ static void execute_action(InputAction action, int parameter, float value, void*
             break;
         case ACTION_MIDI_SPP_SYNC_MODE_TOGGLE:
             if (common_state) {
-                // Toggle between PATTERN (64) and BEAT (16) modes
+                // Toggle between PATTERN (64) and BEAT modes
+                // Remember the last beat interval when toggling
+                static int last_beat_interval = 16; // Default to 16 if never set
+
                 if (common_state->device_config.midi_clock_spp_interval >= 64) {
-                    common_state->device_config.midi_clock_spp_interval = 16; // BEAT mode
-                    printf("MIDI SPP sync mode: BEAT (16 rows)\n");
+                    // Switching to BEAT mode - restore last beat interval
+                    common_state->device_config.midi_clock_spp_interval = last_beat_interval;
+                    printf("MIDI SPP sync mode: BEAT (%d rows)\n", last_beat_interval);
                 } else {
-                    common_state->device_config.midi_clock_spp_interval = 64; // PATTERN mode
+                    // Switching to PATTERN mode - save current beat interval
+                    last_beat_interval = common_state->device_config.midi_clock_spp_interval;
+                    common_state->device_config.midi_clock_spp_interval = 64;
                     printf("MIDI SPP sync mode: PATTERN (64 rows)\n");
                 }
                 // Update clock thread config
@@ -1939,7 +1950,15 @@ static void format_pad_action_text(InputAction action, int parameter, char *line
         case ACTION_MIDI_CLOCK_SEND_TOGGLE: snprintf(line1, line1_size, "SEND\nCLOCK"); break;
         case ACTION_MIDI_TRANSPORT_SEND_TOGGLE: snprintf(line1, line1_size, "SEND\nSTART"); break;
         case ACTION_MIDI_SPP_SEND_TOGGLE: snprintf(line1, line1_size, "SEND\nSPP"); break;
-        case ACTION_MIDI_SPP_SYNC_MODE_TOGGLE: snprintf(line1, line1_size, "SPP\nMODE"); break;
+        case ACTION_MIDI_SPP_SYNC_MODE_TOGGLE:
+            if (common_state && common_state->device_config.midi_clock_spp_interval >= 64) {
+                snprintf(line1, line1_size, "SPP\nPATTERN");
+            } else if (common_state) {
+                snprintf(line1, line1_size, "SPP\nBEAT/%d", common_state->device_config.midi_clock_spp_interval);
+            } else {
+                snprintf(line1, line1_size, "SPP\nMODE");
+            }
+            break;
         case ACTION_MIDI_SEND_START: snprintf(line1, line1_size, "TX\nSTART"); break;
         case ACTION_MIDI_SEND_STOP: snprintf(line1, line1_size, "TX\nSTOP"); break;
         case ACTION_MIDI_SEND_SPP: snprintf(line1, line1_size, "TX\nSPP"); break;
@@ -2616,6 +2635,9 @@ static void ShowMainUI() {
         trigger_pad_fade[i] = fmaxf(trigger_pad_fade[i] - 0.02f, 0.0f);
         trigger_pad_transition_fade[i] = fmaxf(trigger_pad_transition_fade[i] - 0.02f, 0.0f);
     }
+
+    // Fade SPP send activity indicator
+    spp_send_fade = fmaxf(spp_send_fade - 0.02f, 0.0f);
 
     ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
@@ -3553,23 +3575,38 @@ static void ShowMainUI() {
                 }
 
                 // Check if pad controls MIDI sync toggles
-                bool is_midi_sync_enabled = false;
+                // 0 = off, 1 = yellow (standard sync), 2 = blue (SPP/beat sync)
+                int is_midi_sync_enabled = 0;
                 if (pad && common_state) {
                     if (pad->action == ACTION_MIDI_CLOCK_SYNC_TOGGLE) {
-                        is_midi_sync_enabled = (common_state->device_config.midi_clock_sync == 1);
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_sync == 1) ? 1 : 0;
                     } else if (pad->action == ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE) {
-                        is_midi_sync_enabled = (common_state->device_config.midi_transport_control == 1);
+                        is_midi_sync_enabled = (common_state->device_config.midi_transport_control == 1) ? 1 : 0;
                     } else if (pad->action == ACTION_MIDI_CLOCK_SEND_TOGGLE) {
-                        is_midi_sync_enabled = (common_state->device_config.midi_clock_master == 1);
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_master == 1) ? 1 : 0;
                     } else if (pad->action == ACTION_MIDI_TRANSPORT_SEND_TOGGLE) {
-                        is_midi_sync_enabled = (common_state->device_config.midi_clock_send_transport == 1);
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_send_transport == 1) ? 1 : 0;
                     } else if (pad->action == ACTION_MIDI_SPP_SEND_TOGGLE) {
-                        is_midi_sync_enabled = (common_state->device_config.midi_clock_send_spp > 0);
+                        // Show yellow for PATTERN mode, blue for BEAT mode (when enabled)
+                        if (common_state->device_config.midi_clock_send_spp > 0) {
+                            if (common_state->device_config.midi_clock_spp_interval >= 64) {
+                                is_midi_sync_enabled = 1; // Yellow for PATTERN mode
+                            } else {
+                                is_midi_sync_enabled = 2; // Blue for BEAT mode
+                            }
+                        }
                     } else if (pad->action == ACTION_MIDI_SPP_SYNC_MODE_TOGGLE) {
-                        // Highlight when in BEAT mode (interval < 64)
-                        is_midi_sync_enabled = (common_state->device_config.midi_clock_spp_interval < 64);
+                        // Show yellow when in PATTERN mode, blue when in BEAT mode
+                        if (common_state->device_config.midi_clock_spp_interval >= 64) {
+                            is_midi_sync_enabled = 1; // Yellow for PATTERN mode
+                        } else {
+                            is_midi_sync_enabled = 2; // Blue for BEAT mode
+                        }
                     } else if (pad->action == ACTION_MIDI_SPP_RECEIVE_TOGGLE) {
-                        is_midi_sync_enabled = (common_state->device_config.midi_spp_receive == 1);
+                        // Always blue when enabled - emphasize this button
+                        if (common_state->device_config.midi_spp_receive == 1) {
+                            is_midi_sync_enabled = 2; // Blue
+                        }
                     }
                 }
 
@@ -3578,6 +3615,11 @@ static void ShowMainUI() {
                 int fade_idx = is_song_pad ? (MAX_TRIGGER_PADS + pad_idx) : pad_idx;
                 float brightness = trigger_pad_fade[fade_idx];
                 float transition_brightness = trigger_pad_transition_fade[fade_idx];
+
+                // Add SPP send fade for SEND SPP pads
+                if (pad && pad->action == ACTION_MIDI_SPP_SEND_TOGGLE) {
+                    brightness = fmaxf(brightness, spp_send_fade);
+                }
                 ImVec4 padCol;
                 if (has_pending) {
                     // Pulsing blue for pending queued action
@@ -3616,12 +3658,20 @@ static void ShowMainUI() {
                         0.14f + brightness * 0.10f,
                         1.0f
                     );
-                } else if (is_loop_active || is_effect_enabled || is_midi_sync_enabled) {
-                    // Yellow/orange when loop mode active OR effect enabled OR MIDI sync enabled
+                } else if (is_loop_active || is_effect_enabled || is_midi_sync_enabled == 1) {
+                    // Yellow/orange when loop mode active OR effect enabled OR MIDI sync enabled (pattern mode)
                     padCol = ImVec4(
                         0.70f + brightness * 0.20f,  // Orange/yellow base with brightness
                         0.50f + brightness * 0.25f,
                         0.10f + brightness * 0.15f,
+                        1.0f
+                    );
+                } else if (is_midi_sync_enabled == 2) {
+                    // Blue when MIDI sync in beat mode or RECV SPP enabled
+                    padCol = ImVec4(
+                        0.12f + brightness * 0.20f,
+                        0.40f + brightness * 0.30f,  // Blue base with brightness
+                        0.70f + brightness * 0.20f,
                         1.0f
                     );
                 } else {
@@ -3964,10 +4014,21 @@ static void ShowMainUI() {
                     } else if (pad->action == ACTION_MIDI_SPP_SEND_TOGGLE) {
                         is_midi_sync_enabled = (common_state->device_config.midi_clock_send_spp > 0);
                     } else if (pad->action == ACTION_MIDI_SPP_SYNC_MODE_TOGGLE) {
-                        // Highlight when in BEAT mode (interval < 64)
-                        is_midi_sync_enabled = (common_state->device_config.midi_clock_spp_interval < 64);
+                        // Show yellow when in PATTERN mode, blue when in BEAT mode
+                        if (common_state->device_config.midi_clock_spp_interval >= 64) {
+                            is_midi_sync_enabled = 1; // Yellow for PATTERN mode
+                        } else {
+                            is_midi_sync_enabled = 2; // Blue for BEAT mode
+                        }
                     } else if (pad->action == ACTION_MIDI_SPP_RECEIVE_TOGGLE) {
-                        is_midi_sync_enabled = (common_state->device_config.midi_spp_receive == 1);
+                        // Show color based on sync mode: yellow for PATTERN, blue for BEAT
+                        if (common_state->device_config.midi_spp_receive == 1) {
+                            if (common_state->device_config.midi_clock_spp_interval >= 64) {
+                                is_midi_sync_enabled = 1; // Yellow for PATTERN mode
+                            } else {
+                                is_midi_sync_enabled = 2; // Blue for BEAT mode
+                            }
+                        }
                     }
                 }
 
@@ -4012,12 +4073,20 @@ static void ShowMainUI() {
                         0.14f + brightness * 0.10f,
                         1.0f
                     );
-                } else if (is_loop_active || is_effect_enabled || is_midi_sync_enabled) {
-                    // Yellow/orange when loop mode active OR effect enabled OR MIDI sync enabled
+                } else if (is_loop_active || is_effect_enabled || is_midi_sync_enabled == 1) {
+                    // Yellow/orange when loop mode active OR effect enabled OR MIDI sync enabled (pattern mode)
                     padCol = ImVec4(
                         0.70f + brightness * 0.20f,  // Orange/yellow base with brightness
                         0.50f + brightness * 0.25f,
                         0.10f + brightness * 0.15f,
+                        1.0f
+                    );
+                } else if (is_midi_sync_enabled == 2) {
+                    // Blue when MIDI sync in beat mode or RECV SPP enabled
+                    padCol = ImVec4(
+                        0.12f + brightness * 0.20f,
+                        0.40f + brightness * 0.30f,  // Blue base with brightness
+                        0.70f + brightness * 0.20f,
                         1.0f
                     );
                 } else {
