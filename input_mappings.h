@@ -73,6 +73,18 @@ typedef enum {
     ACTION_MASTER_MUTE,            // toggle master mute
     ACTION_PLAYBACK_MUTE,          // toggle playback mute
     ACTION_INPUT_MUTE,             // toggle input mute
+    // MIDI slave toggles (receive/respond)
+    ACTION_MIDI_CLOCK_SYNC_TOGGLE,      // toggle MIDI Clock tempo sync (slave)
+    ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE, // toggle MIDI Start/Stop response (slave)
+    ACTION_MIDI_SPP_RECEIVE_TOGGLE,     // toggle MIDI SPP position sync (slave)
+    // MIDI master toggles (send)
+    ACTION_MIDI_CLOCK_SEND_TOGGLE,      // toggle sending MIDI Clock
+    ACTION_MIDI_TRANSPORT_SEND_TOGGLE,  // toggle sending MIDI Start/Stop
+    ACTION_MIDI_SPP_SEND_TOGGLE,        // toggle sending MIDI SPP
+    // MIDI master actions (one-time send)
+    ACTION_MIDI_SEND_START,        // send MIDI Start message
+    ACTION_MIDI_SEND_STOP,         // send MIDI Stop message
+    ACTION_MIDI_SEND_SPP,          // send MIDI Song Position Pointer
     ACTION_MAX
 } InputAction;
 

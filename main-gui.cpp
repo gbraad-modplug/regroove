@@ -1342,6 +1342,61 @@ static void execute_action(InputAction action, int parameter, float value, void*
         case ACTION_INPUT_MUTE:
             input_mute = !input_mute;
             break;
+        case ACTION_MIDI_CLOCK_SYNC_TOGGLE:
+            if (common_state) {
+                common_state->device_config.midi_clock_sync = !common_state->device_config.midi_clock_sync;
+                midi_set_clock_sync_enabled(common_state->device_config.midi_clock_sync);
+                printf("MIDI Clock sync %s\n", common_state->device_config.midi_clock_sync ? "ENABLED" : "DISABLED");
+            }
+            break;
+        case ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE:
+            if (common_state) {
+                common_state->device_config.midi_transport_control = !common_state->device_config.midi_transport_control;
+                midi_set_transport_control_enabled(common_state->device_config.midi_transport_control);
+                printf("MIDI Transport receive %s\n", common_state->device_config.midi_transport_control ? "ENABLED" : "DISABLED");
+            }
+            break;
+        case ACTION_MIDI_CLOCK_SEND_TOGGLE:
+            if (common_state) {
+                common_state->device_config.midi_clock_master = !common_state->device_config.midi_clock_master;
+                printf("MIDI Clock send %s\n", common_state->device_config.midi_clock_master ? "ENABLED" : "DISABLED");
+            }
+            break;
+        case ACTION_MIDI_TRANSPORT_SEND_TOGGLE:
+            if (common_state) {
+                common_state->device_config.midi_clock_send_transport = !common_state->device_config.midi_clock_send_transport;
+                printf("MIDI Transport send %s\n", common_state->device_config.midi_clock_send_transport ? "ENABLED" : "DISABLED");
+            }
+            break;
+        case ACTION_MIDI_SPP_SEND_TOGGLE:
+            if (common_state) {
+                // Toggle between modes: 0 (disabled) <-> 1 (on stop) <-> 2 (during playback)
+                common_state->device_config.midi_clock_send_spp = (common_state->device_config.midi_clock_send_spp + 1) % 3;
+                const char* modes[] = {"DISABLED", "ON STOP", "DURING PLAYBACK"};
+                printf("MIDI SPP send mode: %s\n", modes[common_state->device_config.midi_clock_send_spp]);
+            }
+            break;
+        case ACTION_MIDI_SPP_RECEIVE_TOGGLE:
+            if (common_state) {
+                common_state->device_config.midi_spp_receive = !common_state->device_config.midi_spp_receive;
+                printf("MIDI SPP receive %s\n", common_state->device_config.midi_spp_receive ? "ENABLED" : "DISABLED");
+            }
+            break;
+        case ACTION_MIDI_SEND_START:
+            midi_output_send_start();
+            printf("MIDI Start sent\n");
+            break;
+        case ACTION_MIDI_SEND_STOP:
+            midi_output_send_stop();
+            printf("MIDI Stop sent\n");
+            break;
+        case ACTION_MIDI_SEND_SPP:
+            if (common_state && common_state->player) {
+                int current_row = regroove_get_current_row(common_state->player);
+                midi_output_send_song_position(current_row);
+                printf("MIDI SPP sent (row %d)\n", current_row);
+            }
+            break;
         default:
             break;
     }
@@ -1838,6 +1893,15 @@ static void format_pad_action_text(InputAction action, int parameter, char *line
         case ACTION_MASTER_MUTE: snprintf(line1, line1_size, "MASTER\nMUTE"); break;
         case ACTION_PLAYBACK_MUTE: snprintf(line1, line1_size, "PBACK\nMUTE"); break;
         case ACTION_INPUT_MUTE: snprintf(line1, line1_size, "INPUT\nMUTE"); break;
+        case ACTION_MIDI_CLOCK_SYNC_TOGGLE: snprintf(line1, line1_size, "SYNC\nCLOCK"); break;
+        case ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE: snprintf(line1, line1_size, "RECV\nSTART"); break;
+        case ACTION_MIDI_SPP_RECEIVE_TOGGLE: snprintf(line1, line1_size, "RECV\nSPP"); break;
+        case ACTION_MIDI_CLOCK_SEND_TOGGLE: snprintf(line1, line1_size, "SEND\nCLOCK"); break;
+        case ACTION_MIDI_TRANSPORT_SEND_TOGGLE: snprintf(line1, line1_size, "SEND\nSTART"); break;
+        case ACTION_MIDI_SPP_SEND_TOGGLE: snprintf(line1, line1_size, "SEND\nSPP"); break;
+        case ACTION_MIDI_SEND_START: snprintf(line1, line1_size, "TX\nSTART"); break;
+        case ACTION_MIDI_SEND_STOP: snprintf(line1, line1_size, "TX\nSTOP"); break;
+        case ACTION_MIDI_SEND_SPP: snprintf(line1, line1_size, "TX\nSPP"); break;
         case ACTION_RECORD_TOGGLE: snprintf(line1, line1_size, "RECORD"); break;
         case ACTION_TAP_TEMPO: snprintf(line1, line1_size, "TAP\nTEMPO"); break;
         default:
@@ -2136,6 +2200,22 @@ void my_midi_spp_callback(int position, void* userdata) {
     // Mark SPP as active (for LCD display)
     spp_active = true;
     spp_last_received_time = SDL_GetTicks() / 1000.0;
+
+    // Trigger visual feedback on any pads assigned to ACTION_MIDI_SPP_RECEIVE_TOGGLE
+    if (common_state->input_mappings) {
+        for (int i = 0; i < MAX_TRIGGER_PADS; i++) {
+            if (common_state->input_mappings->trigger_pads[i].action == ACTION_MIDI_SPP_RECEIVE_TOGGLE) {
+                trigger_pad_fade[i] = 1.0f;
+            }
+        }
+    }
+    if (common_state->metadata) {
+        for (int i = 0; i < MAX_SONG_TRIGGER_PADS; i++) {
+            if (common_state->metadata->song_trigger_pads[i].action == ACTION_MIDI_SPP_RECEIVE_TOGGLE) {
+                trigger_pad_fade[MAX_TRIGGER_PADS + i] = 1.0f;
+            }
+        }
+    }
 
     // Only sync if we're more than 2 rows off (avoids constant micro-adjustments)
     // This prevents "halting" caused by unnecessary row jumps
@@ -3425,6 +3505,24 @@ static void ShowMainUI() {
                     }
                 }
 
+                // Check if pad controls MIDI sync toggles
+                bool is_midi_sync_enabled = false;
+                if (pad && common_state) {
+                    if (pad->action == ACTION_MIDI_CLOCK_SYNC_TOGGLE) {
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_sync == 1);
+                    } else if (pad->action == ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE) {
+                        is_midi_sync_enabled = (common_state->device_config.midi_transport_control == 1);
+                    } else if (pad->action == ACTION_MIDI_CLOCK_SEND_TOGGLE) {
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_master == 1);
+                    } else if (pad->action == ACTION_MIDI_TRANSPORT_SEND_TOGGLE) {
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_send_transport == 1);
+                    } else if (pad->action == ACTION_MIDI_SPP_SEND_TOGGLE) {
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_send_spp > 0);
+                    } else if (pad->action == ACTION_MIDI_SPP_RECEIVE_TOGGLE) {
+                        is_midi_sync_enabled = (common_state->device_config.midi_spp_receive == 1);
+                    }
+                }
+
                 // Pad color with pending (pulsing blue), transition (red), state colors, or trigger fade
                 // Use correct fade index: APP pads 0-15, SONG pads 16-31
                 int fade_idx = is_song_pad ? (MAX_TRIGGER_PADS + pad_idx) : pad_idx;
@@ -3468,8 +3566,8 @@ static void ShowMainUI() {
                         0.14f + brightness * 0.10f,
                         1.0f
                     );
-                } else if (is_loop_active || is_effect_enabled) {
-                    // Yellow/orange when loop mode active OR effect enabled
+                } else if (is_loop_active || is_effect_enabled || is_midi_sync_enabled) {
+                    // Yellow/orange when loop mode active OR effect enabled OR MIDI sync enabled
                     padCol = ImVec4(
                         0.70f + brightness * 0.20f,  // Orange/yellow base with brightness
                         0.50f + brightness * 0.25f,
@@ -3801,6 +3899,25 @@ static void ShowMainUI() {
                     }
                 }
 
+                // Check if pad controls MIDI sync toggles
+                bool is_midi_sync_enabled = false;
+                if (common_state && common_state->metadata) {
+                    TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[idx];
+                    if (pad->action == ACTION_MIDI_CLOCK_SYNC_TOGGLE) {
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_sync == 1);
+                    } else if (pad->action == ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE) {
+                        is_midi_sync_enabled = (common_state->device_config.midi_transport_control == 1);
+                    } else if (pad->action == ACTION_MIDI_CLOCK_SEND_TOGGLE) {
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_master == 1);
+                    } else if (pad->action == ACTION_MIDI_TRANSPORT_SEND_TOGGLE) {
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_send_transport == 1);
+                    } else if (pad->action == ACTION_MIDI_SPP_SEND_TOGGLE) {
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_send_spp > 0);
+                    } else if (pad->action == ACTION_MIDI_SPP_RECEIVE_TOGGLE) {
+                        is_midi_sync_enabled = (common_state->device_config.midi_spp_receive == 1);
+                    }
+                }
+
                 // Pad color with pending (pulsing blue), transition (red), state colors, or trigger fade
                 float brightness = trigger_pad_fade[global_idx];
                 float transition_brightness = trigger_pad_transition_fade[global_idx];
@@ -3842,8 +3959,8 @@ static void ShowMainUI() {
                         0.14f + brightness * 0.10f,
                         1.0f
                     );
-                } else if (is_loop_active || is_effect_enabled) {
-                    // Yellow/orange when loop mode active OR effect enabled
+                } else if (is_loop_active || is_effect_enabled || is_midi_sync_enabled) {
+                    // Yellow/orange when loop mode active OR effect enabled OR MIDI sync enabled
                     padCol = ImVec4(
                         0.70f + brightness * 0.20f,  // Orange/yellow base with brightness
                         0.50f + brightness * 0.25f,
