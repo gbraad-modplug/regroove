@@ -83,6 +83,7 @@ InputAction parse_action(const char *str) {
     if (strcmp(str, "midi_clock_send_toggle") == 0) return ACTION_MIDI_CLOCK_SEND_TOGGLE;
     if (strcmp(str, "midi_transport_send_toggle") == 0) return ACTION_MIDI_TRANSPORT_SEND_TOGGLE;
     if (strcmp(str, "midi_spp_send_toggle") == 0) return ACTION_MIDI_SPP_SEND_TOGGLE;
+    if (strcmp(str, "midi_spp_sync_mode_toggle") == 0) return ACTION_MIDI_SPP_SYNC_MODE_TOGGLE;
     if (strcmp(str, "midi_send_start") == 0) return ACTION_MIDI_SEND_START;
     if (strcmp(str, "midi_send_stop") == 0) return ACTION_MIDI_SEND_STOP;
     if (strcmp(str, "midi_send_spp") == 0) return ACTION_MIDI_SEND_SPP;
@@ -162,6 +163,7 @@ const char* input_action_name(InputAction action) {
         case ACTION_MIDI_CLOCK_SEND_TOGGLE: return "midi_clock_send_toggle";
         case ACTION_MIDI_TRANSPORT_SEND_TOGGLE: return "midi_transport_send_toggle";
         case ACTION_MIDI_SPP_SEND_TOGGLE: return "midi_spp_send_toggle";
+        case ACTION_MIDI_SPP_SYNC_MODE_TOGGLE: return "midi_spp_sync_mode_toggle";
         case ACTION_MIDI_SEND_START: return "midi_send_start";
         case ACTION_MIDI_SEND_STOP: return "midi_send_stop";
         case ACTION_MIDI_SEND_SPP: return "midi_send_spp";

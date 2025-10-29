@@ -81,6 +81,7 @@ typedef enum {
     ACTION_MIDI_CLOCK_SEND_TOGGLE,      // toggle sending MIDI Clock
     ACTION_MIDI_TRANSPORT_SEND_TOGGLE,  // toggle sending MIDI Start/Stop
     ACTION_MIDI_SPP_SEND_TOGGLE,        // toggle sending MIDI SPP
+    ACTION_MIDI_SPP_SYNC_MODE_TOGGLE,   // toggle SPP sync mode (PATTERN/BEAT)
     // MIDI master actions (one-time send)
     ACTION_MIDI_SEND_START,        // send MIDI Start message
     ACTION_MIDI_SEND_STOP,         // send MIDI Stop message

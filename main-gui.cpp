@@ -269,14 +269,18 @@ static void my_row_callback(int ord, int row, void *userdata) {
                 // Get current pattern's row count for accurate position calculation
                 int pattern_rows = total_rows > 0 ? total_rows : 64;
 
-                // Get current speed to scale SPP calculation
-                // Standard is 6 ticks/row = 64 MIDI beats per pattern
-                // 3 ticks/row (2x speed) = 32 MIDI beats per pattern
-                int speed = regroove_get_current_speed(common_state->player);
-                int beats_per_pattern = (64 * 6) / (speed > 0 ? speed : 6);  // Scale by speed
+                // Calculate SPP position: always use 64 beats per pattern
+                int spp_position = (ord * 64) + ((row * 64) / pattern_rows);
 
-                // Calculate SPP position with speed scaling
-                int spp_position = (ord * beats_per_pattern) + ((row * beats_per_pattern) / pattern_rows);
+                // Apply speed compensation if enabled - divide SPP by speed ratio
+                if (common_state->device_config.midi_spp_speed_compensation) {
+                    // Speed compensation mode: scale SPP by inverse of speed ratio
+                    // 3 ticks/row plays 2x faster, so divide SPP by 2 (send half the position)
+                    // 6 ticks/row is standard (divide by 1, no change)
+                    // 12 ticks/row plays 0.5x speed, so divide by 0.5 (multiply by 2)
+                    int speed = regroove_get_current_speed(common_state->player);
+                    spp_position = (spp_position * (speed > 0 ? speed : 6)) / 6;
+                }
                 // Update position for clock thread to send
                 midi_output_update_position(spp_position);
                 spp_last_sent_time = current_time;
@@ -360,14 +364,18 @@ static void my_order_callback(int ord, int pat, void *userdata) {
             // This prevents spam when playback starts (order callback fires immediately)
             double current_time = SDL_GetTicks() / 1000.0;
             if (current_time - spp_last_sent_time >= 0.1) {
-                // Get current speed to scale SPP calculation
-                // Standard is 6 ticks/row = 64 MIDI beats per pattern
-                // 3 ticks/row (2x speed) = 32 MIDI beats per pattern
-                int speed = regroove_get_current_speed(common_state->player);
-                int beats_per_pattern = (64 * 6) / (speed > 0 ? speed : 6);  // Scale by speed
+                // Calculate SPP position: always use 64 beats per pattern
+                int spp_position = ord * 64;
 
-                // Calculate SPP position with speed scaling
-                int spp_position = ord * beats_per_pattern;
+                // Apply speed compensation if enabled - divide SPP by speed ratio
+                if (common_state->device_config.midi_spp_speed_compensation) {
+                    // Speed compensation mode: scale SPP by inverse of speed ratio
+                    // 3 ticks/row plays 2x faster, so divide SPP by 2 (send half the position)
+                    // 6 ticks/row is standard (divide by 1, no change)
+                    // 12 ticks/row plays 0.5x speed, so divide by 0.5 (multiply by 2)
+                    int speed = regroove_get_current_speed(common_state->player);
+                    spp_position = (spp_position * (speed > 0 ? speed : 6)) / 6;
+                }
                 // Update position for clock thread to send
                 midi_output_update_position(spp_position);
                 spp_last_sent_time = current_time;
@@ -1393,6 +1401,21 @@ static void execute_action(InputAction action, int parameter, float value, void*
                 printf("MIDI SPP send mode: %s\n", modes[common_state->device_config.midi_clock_send_spp]);
             }
             break;
+        case ACTION_MIDI_SPP_SYNC_MODE_TOGGLE:
+            if (common_state) {
+                // Toggle between PATTERN (64) and BEAT (16) modes
+                if (common_state->device_config.midi_clock_spp_interval >= 64) {
+                    common_state->device_config.midi_clock_spp_interval = 16; // BEAT mode
+                    printf("MIDI SPP sync mode: BEAT (16 rows)\n");
+                } else {
+                    common_state->device_config.midi_clock_spp_interval = 64; // PATTERN mode
+                    printf("MIDI SPP sync mode: PATTERN (64 rows)\n");
+                }
+                // Update clock thread config
+                midi_output_set_spp_config(common_state->device_config.midi_clock_send_spp,
+                                          common_state->device_config.midi_clock_spp_interval);
+            }
+            break;
         case ACTION_MIDI_SPP_RECEIVE_TOGGLE:
             if (common_state) {
                 common_state->device_config.midi_spp_receive = !common_state->device_config.midi_spp_receive;
@@ -1916,6 +1939,7 @@ static void format_pad_action_text(InputAction action, int parameter, char *line
         case ACTION_MIDI_CLOCK_SEND_TOGGLE: snprintf(line1, line1_size, "SEND\nCLOCK"); break;
         case ACTION_MIDI_TRANSPORT_SEND_TOGGLE: snprintf(line1, line1_size, "SEND\nSTART"); break;
         case ACTION_MIDI_SPP_SEND_TOGGLE: snprintf(line1, line1_size, "SEND\nSPP"); break;
+        case ACTION_MIDI_SPP_SYNC_MODE_TOGGLE: snprintf(line1, line1_size, "SPP\nMODE"); break;
         case ACTION_MIDI_SEND_START: snprintf(line1, line1_size, "TX\nSTART"); break;
         case ACTION_MIDI_SEND_STOP: snprintf(line1, line1_size, "TX\nSTOP"); break;
         case ACTION_MIDI_SEND_SPP: snprintf(line1, line1_size, "TX\nSPP"); break;
@@ -3541,6 +3565,9 @@ static void ShowMainUI() {
                         is_midi_sync_enabled = (common_state->device_config.midi_clock_send_transport == 1);
                     } else if (pad->action == ACTION_MIDI_SPP_SEND_TOGGLE) {
                         is_midi_sync_enabled = (common_state->device_config.midi_clock_send_spp > 0);
+                    } else if (pad->action == ACTION_MIDI_SPP_SYNC_MODE_TOGGLE) {
+                        // Highlight when in BEAT mode (interval < 64)
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_spp_interval < 64);
                     } else if (pad->action == ACTION_MIDI_SPP_RECEIVE_TOGGLE) {
                         is_midi_sync_enabled = (common_state->device_config.midi_spp_receive == 1);
                     }
@@ -3936,6 +3963,9 @@ static void ShowMainUI() {
                         is_midi_sync_enabled = (common_state->device_config.midi_clock_send_transport == 1);
                     } else if (pad->action == ACTION_MIDI_SPP_SEND_TOGGLE) {
                         is_midi_sync_enabled = (common_state->device_config.midi_clock_send_spp > 0);
+                    } else if (pad->action == ACTION_MIDI_SPP_SYNC_MODE_TOGGLE) {
+                        // Highlight when in BEAT mode (interval < 64)
+                        is_midi_sync_enabled = (common_state->device_config.midi_clock_spp_interval < 64);
                     } else if (pad->action == ACTION_MIDI_SPP_RECEIVE_TOGGLE) {
                         is_midi_sync_enabled = (common_state->device_config.midi_spp_receive == 1);
                     }
@@ -5327,36 +5357,90 @@ static void ShowMainUI() {
                                   "- During Playback: Real-time sync (regroove-to-regroove only)");
             }
 
-            // SPP interval (only when "During Playback" mode is selected)
+            // SPP sync mode (only when "During Playback" mode is selected)
             if (common_state->device_config.midi_clock_send_spp == 2) {
                 ImGui::Indent(20.0f);
-                ImGui::Text("SPP Sync Interval:");
-                const char* intervals[] = {"Every 4 rows", "Every 8 rows", "Every 16 rows", "Every 32 rows", "Every Pattern (64 rows)"};
-                int interval_values[] = {4, 8, 16, 32, 64};
+                ImGui::Text("SPP Sync Mode:");
 
-                // Find current selection
-                int current_interval = common_state->device_config.midi_clock_spp_interval;
-                int selected = 4; // Default to "Every Pattern"
-                for (int i = 0; i < 5; i++) {
-                    if (interval_values[i] == current_interval) {
-                        selected = i;
-                        break;
+                // Determine current mode based on interval
+                bool is_pattern_mode = (common_state->device_config.midi_clock_spp_interval >= 64);
+                int sync_mode = is_pattern_mode ? 0 : 1; // 0 = PATTERN, 1 = BEAT
+
+                const char* sync_modes[] = {"PATTERN (boundary sync)", "BEAT (aggressive sync)"};
+                if (ImGui::Combo("##spp_sync_mode", &sync_mode, sync_modes, 2)) {
+                    if (sync_mode == 0) {
+                        // PATTERN mode - set to 64 rows
+                        common_state->device_config.midi_clock_spp_interval = 64;
+                    } else {
+                        // BEAT mode - set to 16 rows (default beat interval)
+                        common_state->device_config.midi_clock_spp_interval = 16;
                     }
-                }
-
-                if (ImGui::Combo("##spp_interval", &selected, intervals, 5)) {
-                    common_state->device_config.midi_clock_spp_interval = interval_values[selected];
                     // Update clock thread's SPP config
-                    midi_output_set_spp_config(common_state->device_config.midi_clock_send_spp, interval_values[selected]);
+                    midi_output_set_spp_config(common_state->device_config.midi_clock_send_spp,
+                                             common_state->device_config.midi_clock_spp_interval);
                     save_mappings_to_config();
                 }
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("How often to send position updates during playback.\n"
-                                      "More frequent = tighter sync but more MIDI traffic.\n"
-                                      "Every Pattern (64 rows) is usually sufficient.");
+                    ImGui::SetTooltip("SPP sync behavior:\n"
+                                      "- PATTERN: Smooth sync at pattern boundaries only (gentle, once per pattern)\n"
+                                      "- BEAT: Aggressive beat-syncing (tight sync but may be jumpy)");
                 }
+
+                // Beat interval control (only visible in BEAT mode)
+                if (sync_mode == 1) {
+                    ImGui::Indent(20.0f);
+                    ImGui::Text("Beat Sync Interval:");
+                    const char* beat_intervals[] = {"Every 4 rows", "Every 8 rows", "Every 16 rows", "Every 32 rows"};
+                    int beat_interval_values[] = {4, 8, 16, 32};
+
+                    // Find current selection for beat interval
+                    int current_interval = common_state->device_config.midi_clock_spp_interval;
+                    int selected = 2; // Default to 16 rows
+                    for (int i = 0; i < 4; i++) {
+                        if (beat_interval_values[i] == current_interval) {
+                            selected = i;
+                            break;
+                        }
+                    }
+
+                    if (ImGui::Combo("##beat_interval", &selected, beat_intervals, 4)) {
+                        common_state->device_config.midi_clock_spp_interval = beat_interval_values[selected];
+                        // Update clock thread's SPP config
+                        midi_output_set_spp_config(common_state->device_config.midi_clock_send_spp,
+                                                 beat_interval_values[selected]);
+                        save_mappings_to_config();
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("How often to send position updates during beat sync.\n"
+                                          "More frequent = tighter sync but more MIDI traffic and jumpier playback.\n"
+                                          "16 rows is a good balance.");
+                    }
+                    ImGui::Unindent(20.0f);
+                }
+
+                // SPP speed compensation checkbox
+                bool spp_speed_comp = (common_state->device_config.midi_spp_speed_compensation != 0);
+                if (ImGui::Checkbox("SPP Speed Compensation", &spp_speed_comp)) {
+                    common_state->device_config.midi_spp_speed_compensation = spp_speed_comp ? 1 : 0;
+                    save_mappings_to_config();
+                }
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(?)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Speed compensation for SPP sync (recommended: enabled).\n"
+                                      "Enabled: Compensate for sender's speed difference.\n"
+                                      "  - 3 ticks/row sender: sends half position (receiver at 6 ticks/row stays in sync)\n"
+                                      "  - 6 ticks/row sender: sends actual position (no change)\n"
+                                      "  - Allows sender and receiver to have different speeds\n"
+                                      "Disabled: Send actual position without compensation.\n"
+                                      "  - Only works if sender and receiver have same speed\n"
+                                      "  - Disable if both use same ticks/row setting");
+                }
+
                 ImGui::Unindent(20.0f);
             }
         }

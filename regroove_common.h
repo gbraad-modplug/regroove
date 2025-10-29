@@ -54,6 +54,7 @@ typedef struct {
     int midi_clock_send_transport; // 0 = disabled, 1 = send MIDI Start/Stop/Continue when master (default: 0)
     int midi_clock_send_spp; // 0 = disabled, 1 = on stop only (standard MIDI), 2 = during playback (regroove-to-regroove) (default: 2)
     int midi_clock_spp_interval; // SPP interval in rows when sending during playback: 64=pattern, 16, 8, 4 (default: 64)
+    int midi_spp_speed_compensation; // 0 = disabled (speed-aware SPP), 1 = enabled (always 64 beats/pattern) (default: 1)
     int midi_spp_receive; // 0 = disabled (ignore incoming SPP), 1 = enabled (sync to incoming SPP) (default: 1)
     int midi_transport_control; // 0 = disabled, 1 = respond to MIDI Start/Stop/Continue (default: 0)
     int interpolation_filter; // 0=none, 1=linear, 2=cubic, 4=FIR (default: 2)
