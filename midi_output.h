@@ -101,6 +101,15 @@ void midi_output_update_clock(double bpm, double row_fraction);
 // bpm: current tempo in beats per minute (adjusted for pitch)
 void midi_output_send_clock_pulses(int frames, double sample_rate, double bpm);
 
+// Configure SPP sending behavior (for clock thread)
+// mode: 0=disabled, 1=on stop only, 2=during playback
+// interval: rows between SPP messages (when mode=2)
+void midi_output_set_spp_config(int mode, int interval);
+
+// Update current playback position (for SPP sending in clock thread)
+// spp_position: MIDI beats position (already calculated from order/row)
+void midi_output_update_position(int spp_position);
+
 #ifdef __cplusplus
 }
 #endif

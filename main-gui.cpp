@@ -254,22 +254,24 @@ void update_channel_mute_states() {
 static void my_row_callback(int ord, int row, void *userdata) {
     //printf("[ROW] Order %d, Row %d\n", ord, row);
 
-    // Send MIDI Song Position Pointer at configured intervals (if "during playback" mode and interval < 64)
-    // For interval == 64 (every pattern), this is handled more efficiently in the order callback
+    // Update MIDI Song Position Pointer at configured intervals (if "during playback" mode and interval < 64)
+    // The clock thread will send SPP when position changes
+    // For interval == 64 (every pattern), this is handled in the order callback
     if (common_state && common_state->device_config.midi_clock_send_spp == 2 && midi_output_enabled) {
         int interval = common_state->device_config.midi_clock_spp_interval;
         if (interval <= 0) interval = 64; // Safety check
 
         // Only use row callback for intervals smaller than 64 (within-pattern sync)
         if (interval < 64 && row % interval == 0) {
-            // Throttle SPP sending - don't send more than once per 100ms
+            // Throttle SPP updates - don't update more than once per 100ms
             double current_time = SDL_GetTicks() / 1000.0;
             if (current_time - spp_last_sent_time >= 0.1) {
                 // Get current pattern's row count for accurate position calculation
                 int pattern_rows = total_rows > 0 ? total_rows : 64;
                 // Calculate SPP position: 64 MIDI beats per pattern, scale by actual row count
                 int spp_position = (ord * 64) + ((row * 64) / pattern_rows);
-                midi_output_send_song_position(spp_position);
+                // Update position for clock thread to send
+                midi_output_update_position(spp_position);
                 spp_last_sent_time = current_time;
             }
         }
@@ -338,21 +340,23 @@ static void my_order_callback(int ord, int pat, void *userdata) {
         midi_output_reset_programs();
     }
 
-    // Send MIDI Song Position Pointer at pattern boundaries (if "during playback" mode and interval == 64)
-    // For smaller intervals, SPP is sent from row callback
+    // Update MIDI Song Position Pointer at pattern boundaries (if "during playback" mode and interval == 64)
+    // The clock thread will send SPP when position changes
+    // For smaller intervals, SPP is updated from row callback
     if (common_state && common_state->device_config.midi_clock_send_spp == 2 && midi_output_enabled) {
         int interval = common_state->device_config.midi_clock_spp_interval;
         if (interval <= 0) interval = 64; // Safety check
 
         // Use order callback for pattern-boundary sync (interval == 64, most efficient)
         if (interval >= 64) {
-            // Throttle SPP sending - don't send more than once per 100ms
+            // Throttle SPP updates - don't update more than once per 100ms
             // This prevents spam when playback starts (order callback fires immediately)
             double current_time = SDL_GetTicks() / 1000.0;
             if (current_time - spp_last_sent_time >= 0.1) {
                 // Calculate SPP position: 64 MIDI beats per pattern
                 int spp_position = ord * 64;
-                midi_output_send_song_position(spp_position);
+                // Update position for clock thread to send
+                midi_output_update_position(spp_position);
                 spp_last_sent_time = current_time;
             }
         }
@@ -2353,7 +2357,13 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
             // Higher pitch = libopenmpt renders at higher samplerate = slower playback = lower effective BPM
             // So we DIVIDE by pitch, not multiply
             double effective_bpm = bpm / pitch;
-            midi_output_send_clock_pulses(frames, 48000.0, effective_bpm);
+
+            // Update BPM for clock thread (lock-free, non-blocking)
+            // The dedicated clock thread will handle sending pulses with precise timing
+            midi_output_update_clock(effective_bpm, 0.0);
+
+            // Note: SPP position is updated by row/order callbacks based on configured interval
+            // The clock thread sends SPP when position changes
         }
 
         // Apply effects if routed to playback
@@ -5291,6 +5301,8 @@ static void ShowMainUI() {
             if (spp_mode < 0 || spp_mode > 2) spp_mode = 0;
             if (ImGui::Combo("##spp_mode", &spp_mode, spp_modes, 3)) {
                 common_state->device_config.midi_clock_send_spp = spp_mode;
+                // Update clock thread's SPP config
+                midi_output_set_spp_config(spp_mode, common_state->device_config.midi_clock_spp_interval);
                 save_mappings_to_config();
             }
             ImGui::SameLine();
@@ -5321,6 +5333,8 @@ static void ShowMainUI() {
 
                 if (ImGui::Combo("##spp_interval", &selected, intervals, 5)) {
                     common_state->device_config.midi_clock_spp_interval = interval_values[selected];
+                    // Update clock thread's SPP config
+                    midi_output_set_spp_config(common_state->device_config.midi_clock_send_spp, interval_values[selected]);
                     save_mappings_to_config();
                 }
                 ImGui::SameLine();
