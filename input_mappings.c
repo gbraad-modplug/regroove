@@ -76,7 +76,8 @@ InputAction parse_action(const char *str) {
     if (strcmp(str, "master_mute") == 0) return ACTION_MASTER_MUTE;
     if (strcmp(str, "playback_mute") == 0) return ACTION_PLAYBACK_MUTE;
     if (strcmp(str, "input_mute") == 0) return ACTION_INPUT_MUTE;
-    if (strcmp(str, "midi_clock_sync_toggle") == 0) return ACTION_MIDI_CLOCK_SYNC_TOGGLE;
+    if (strcmp(str, "midi_clock_tempo_sync_toggle") == 0) return ACTION_MIDI_CLOCK_TEMPO_SYNC_TOGGLE;
+    if (strcmp(str, "midi_clock_sync_toggle") == 0) return ACTION_MIDI_CLOCK_TEMPO_SYNC_TOGGLE;  // Legacy compatibility
     if (strcmp(str, "midi_transport_receive_toggle") == 0) return ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE;
     if (strcmp(str, "midi_transport_toggle") == 0) return ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE; // Legacy
     if (strcmp(str, "midi_spp_receive_toggle") == 0) return ACTION_MIDI_SPP_RECEIVE_TOGGLE;
@@ -157,7 +158,7 @@ const char* input_action_name(InputAction action) {
         case ACTION_MASTER_MUTE: return "master_mute";
         case ACTION_PLAYBACK_MUTE: return "playback_mute";
         case ACTION_INPUT_MUTE: return "input_mute";
-        case ACTION_MIDI_CLOCK_SYNC_TOGGLE: return "midi_clock_sync_toggle";
+        case ACTION_MIDI_CLOCK_TEMPO_SYNC_TOGGLE: return "midi_clock_tempo_sync_toggle";
         case ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE: return "midi_transport_receive_toggle";
         case ACTION_MIDI_SPP_RECEIVE_TOGGLE: return "midi_spp_receive_toggle";
         case ACTION_MIDI_CLOCK_SEND_TOGGLE: return "midi_clock_send_toggle";

@@ -74,7 +74,7 @@ typedef enum {
     ACTION_PLAYBACK_MUTE,          // toggle playback mute
     ACTION_INPUT_MUTE,             // toggle input mute
     // MIDI slave toggles (receive/respond)
-    ACTION_MIDI_CLOCK_SYNC_TOGGLE,      // toggle MIDI Clock tempo sync (slave)
+    ACTION_MIDI_CLOCK_TEMPO_SYNC_TOGGLE,      // toggle MIDI Clock tempo sync (slave)
     ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE, // toggle MIDI Start/Stop response (slave)
     ACTION_MIDI_SPP_RECEIVE_TOGGLE,     // toggle MIDI SPP position sync (slave)
     // MIDI master toggles (send)

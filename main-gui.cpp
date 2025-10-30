@@ -1372,7 +1372,7 @@ static void execute_action(InputAction action, int parameter, float value, void*
         case ACTION_INPUT_MUTE:
             input_mute = !input_mute;
             break;
-        case ACTION_MIDI_CLOCK_SYNC_TOGGLE:
+        case ACTION_MIDI_CLOCK_TEMPO_SYNC_TOGGLE:
             if (common_state) {
                 common_state->device_config.midi_clock_sync = !common_state->device_config.midi_clock_sync;
                 midi_set_clock_sync_enabled(common_state->device_config.midi_clock_sync);
@@ -1944,7 +1944,7 @@ static void format_pad_action_text(InputAction action, int parameter, char *line
         case ACTION_MASTER_MUTE: snprintf(line1, line1_size, "MASTER\nMUTE"); break;
         case ACTION_PLAYBACK_MUTE: snprintf(line1, line1_size, "PBACK\nMUTE"); break;
         case ACTION_INPUT_MUTE: snprintf(line1, line1_size, "INPUT\nMUTE"); break;
-        case ACTION_MIDI_CLOCK_SYNC_TOGGLE: snprintf(line1, line1_size, "SYNC\nCLOCK"); break;
+        case ACTION_MIDI_CLOCK_TEMPO_SYNC_TOGGLE: snprintf(line1, line1_size, "SYNC\nTEMPO"); break;
         case ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE: snprintf(line1, line1_size, "RECV\nSTART"); break;
         case ACTION_MIDI_SPP_RECEIVE_TOGGLE: snprintf(line1, line1_size, "RECV\nSPP"); break;
         case ACTION_MIDI_CLOCK_SEND_TOGGLE: snprintf(line1, line1_size, "SEND\nCLOCK"); break;
