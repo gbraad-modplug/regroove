@@ -124,6 +124,16 @@ static void reapply_mutes(struct Regroove* g) {
     }
 }
 
+static void reapply_volumes(struct Regroove* g) {
+    if (!g->interactive_ok) return;
+    for (int ch = 0; ch < g->num_channels; ++ch) {
+        // Reapply channel volume (unless muted)
+        if (!g->mute_states[ch]) {
+            g->interactive.set_channel_volume(g->modext, ch, g->channel_volumes[ch]);
+        }
+    }
+}
+
 static void reapply_pannings(struct Regroove* g) {
     if (!g->interactive2_ok || !g->interactive2) return;
     for (int ch = 0; ch < g->num_channels; ++ch) {
@@ -142,6 +152,7 @@ static void apply_pending_mute_changes(struct Regroove* g) {
     // Apply to engine
     if (g->interactive_ok) {
         reapply_mutes(g);
+        reapply_volumes(g);
         reapply_pannings(g);
     }
 
@@ -382,6 +393,7 @@ static void process_commands(struct Regroove* g) {
                 printf("RG_CMD_JUMP_TO_PATTERN: Executed jump to order %d, row 0\n", target_order);
                 if (g->interactive_ok) {
                     // reapply_mutes(g);  // Testing if this is still needed
+                    reapply_volumes(g);
                     reapply_pannings(g);
                 }
                 break;
@@ -407,6 +419,7 @@ static void process_commands(struct Regroove* g) {
                 apply_pending_mute_changes(g);
                 if (g->interactive_ok) {
                     // reapply_mutes(g);  // Testing if this is still needed
+                    reapply_volumes(g);
                     reapply_pannings(g);
                 }
                 g->prev_row = -1;
@@ -436,6 +449,7 @@ static void process_commands(struct Regroove* g) {
                 openmpt_module_set_position_order_row(g->mod, cur_order, 0);
                 if (g->interactive_ok) {
                     // reapply_mutes(g);  // Testing if this is still needed
+                    reapply_volumes(g);
                     reapply_pannings(g);
                 }
                 g->prev_row = -1;
@@ -582,6 +596,7 @@ Regroove *regroove_create(const char *filename, double samplerate) {
             &g->interactive, sizeof(g->interactive)) != 0) {
         g->interactive_ok = 1;
         reapply_mutes(g);
+        reapply_volumes(g);
         reapply_pannings(g);
     }
 
@@ -746,6 +761,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         apply_pending_mute_changes(g);
         if (g->interactive_ok) {
             // reapply_mutes(g);  // Testing if this is still needed
+            reapply_volumes(g);
             reapply_pannings(g);
         }
         // Re-render a clean buffer from pattern start
@@ -796,6 +812,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             apply_pending_mute_changes(g);
             if (g->interactive_ok) {
                 // reapply_mutes(g);  // Testing if this is still needed
+                reapply_volumes(g);
                 reapply_pannings(g);
             }
             if (g->on_loop_pattern) {
@@ -837,6 +854,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
                 apply_pending_mute_changes(g);
                 if (g->interactive_ok) {
                     // reapply_mutes(g);  // Testing if this is still needed
+                    reapply_volumes(g);
                     reapply_pannings(g);
                 }
                 if (g->on_loop_pattern)
@@ -854,6 +872,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
                     apply_pending_mute_changes(g);
                     if (g->interactive_ok) {
                         // reapply_mutes(g);  // Testing if this is still needed
+                        reapply_volumes(g);
                         reapply_pannings(g);
                     }
                     // Re-render a clean buffer from the new pattern start to avoid glitches
@@ -884,6 +903,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             apply_pending_mute_changes(g);
             if (g->interactive_ok) {
                 // reapply_mutes(g);  // Testing if this is still needed
+                reapply_volumes(g);
                 reapply_pannings(g);
             }
             if (g->on_loop_pattern)
@@ -924,6 +944,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
                 apply_pending_mute_changes(g);
                 if (g->interactive_ok) {
                     // reapply_mutes(g);  // Testing if this is still needed
+                    reapply_volumes(g);
                     reapply_pannings(g);
                 }
             }
@@ -933,6 +954,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
                 openmpt_module_set_position_order_row(g->mod, g->queued_order, g->queued_row);
                 if (g->interactive_ok) {
                     // reapply_mutes(g);  // Testing if this is still needed
+                    reapply_volumes(g);
                     reapply_pannings(g);
                 }
                 g->has_queued_jump = 0;
