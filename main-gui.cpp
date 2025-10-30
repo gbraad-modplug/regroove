@@ -113,8 +113,12 @@ static SDL_AudioDeviceID audio_device_id = 0;
 static std::vector<std::string> audio_input_device_names;
 static int selected_audio_input_device = -1;
 static SDL_AudioDeviceID audio_input_device_id = 0;
-static int16_t *input_buffer = NULL;  // Temporary buffer for input audio
-static int input_buffer_size = 0;
+
+// Ring buffer for audio input (to handle different buffer sizes and timing)
+#define RING_BUFFER_SIZE (48000 * 2 * 2)  // 2 seconds of stereo audio at 48kHz
+static int16_t input_ring_buffer[RING_BUFFER_SIZE];
+static volatile int ring_write_pos = 0;
+static volatile int ring_read_pos = 0;
 
 // MIDI device cache (refreshed only when settings panel is shown or on refresh button)
 static int cached_midi_port_count = -1;
@@ -2468,12 +2472,31 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
         regroove_effects_process(effects, buffer, frames, 48000);
     }
 
-    // Mix in audio input when not muted and buffer is available
-    if (!input_mute && input_volume > 0.0f && input_buffer && input_buffer_size >= frames * 2) {
-        // Create a temporary buffer for input processing
-        int16_t *input_temp = (int16_t*)malloc(frames * 2 * sizeof(int16_t));
-        if (input_temp) {
-            memcpy(input_temp, input_buffer, frames * 2 * sizeof(int16_t));
+    // Mix in audio input when not muted and device is active
+    if (!input_mute && input_volume > 0.0f && audio_input_device_id) {
+        // Calculate available samples in ring buffer
+        int available;
+        int write_pos = ring_write_pos;  // Snapshot
+        int read_pos = ring_read_pos;
+        if (write_pos >= read_pos) {
+            available = write_pos - read_pos;
+        } else {
+            available = RING_BUFFER_SIZE - read_pos + write_pos;
+        }
+
+        // Only process if we have enough data
+        int needed_samples = frames * 2;  // stereo
+        if (available >= needed_samples) {
+            // Create a temporary buffer for input processing
+            int16_t *input_temp = (int16_t*)malloc(frames * 2 * sizeof(int16_t));
+            if (input_temp) {
+                // Read from ring buffer
+                SDL_LockAudioDevice(audio_input_device_id);
+                for (int i = 0; i < needed_samples; i++) {
+                    input_temp[i] = input_ring_buffer[ring_read_pos];
+                    ring_read_pos = (ring_read_pos + 1) % RING_BUFFER_SIZE;
+                }
+                SDL_UnlockAudioDevice(audio_input_device_id);
 
             // Apply effects if routed to input
             if (effects && fx_route == FX_ROUTE_INPUT) {
@@ -2499,7 +2522,8 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
                 buffer[i * 2 + 1] = (int16_t)mixed_right;
             }
 
-            free(input_temp);
+                free(input_temp);
+            }
         }
     } else if (effects && fx_route == FX_ROUTE_INPUT) {
         // When input is muted/unavailable but effects are routed to input, process effects on silence
@@ -2546,33 +2570,31 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
 static void audio_input_callback(void *userdata, Uint8 *stream, int len) {
     (void)userdata;
 
-    // Allocate input buffer if needed
-    int frames = len / (2 * sizeof(int16_t));
-    int needed_size = frames * 2; // stereo
+    int16_t *samples = (int16_t*)stream;
+    int num_samples = len / sizeof(int16_t);  // Total samples (stereo)
 
-    if (input_buffer_size < needed_size) {
-        if (input_buffer) free(input_buffer);
-        input_buffer = (int16_t*)malloc(needed_size * sizeof(int16_t));
-        input_buffer_size = needed_size;
+    // Write to ring buffer
+    for (int i = 0; i < num_samples; i++) {
+        input_ring_buffer[ring_write_pos] = samples[i];
+        ring_write_pos = (ring_write_pos + 1) % RING_BUFFER_SIZE;
+
+        // If we're about to overwrite unread data, advance read position
+        if (ring_write_pos == ring_read_pos) {
+            ring_read_pos = (ring_read_pos + 1) % RING_BUFFER_SIZE;
+        }
     }
 
-    if (input_buffer) {
-        // Copy captured audio to our buffer
-        memcpy(input_buffer, stream, len);
-
-        // Debug: Check if we're getting any signal (first time only)
-        static bool first_signal_check = true;
-        if (first_signal_check) {
-            int16_t *samples = (int16_t*)stream;
-            int max_sample = 0;
-            for (int i = 0; i < frames * 2; i++) {
-                int abs_val = abs(samples[i]);
-                if (abs_val > max_sample) max_sample = abs_val;
-            }
-            if (max_sample > 100) {
-                printf("Audio input receiving signal (max amplitude: %d)\n", max_sample);
-                first_signal_check = false;
-            }
+    // Debug: Check if we're getting any signal (first time only)
+    static bool first_signal_check = true;
+    if (first_signal_check) {
+        int max_sample = 0;
+        for (int i = 0; i < num_samples; i++) {
+            int abs_val = abs(samples[i]);
+            if (abs_val > max_sample) max_sample = abs_val;
+        }
+        if (max_sample > 100) {
+            printf("Audio input receiving signal (max amplitude: %d)\n", max_sample);
+            first_signal_check = false;
         }
     }
 }
@@ -7342,7 +7364,7 @@ static void ShowMainUI() {
                     input_spec.callback = audio_input_callback;
                     input_spec.userdata = NULL;
 
-                    audio_input_device_id = SDL_OpenAudioDevice(audio_input_device_names[i].c_str(), 1, &input_spec, &obtained_spec, 0);
+                    audio_input_device_id = SDL_OpenAudioDevice(audio_input_device_names[i].c_str(), 1, &input_spec, &obtained_spec, SDL_AUDIO_ALLOW_SAMPLES_CHANGE);
                     if (audio_input_device_id > 0) {
                         selected_audio_input_device = i;
                         SDL_PauseAudioDevice(audio_input_device_id, 0); // Start capturing immediately
@@ -7352,7 +7374,8 @@ static void ShowMainUI() {
                             common_state->device_config.audio_input_device = i;
                             regroove_common_save_device_config(common_state, current_config_file);
                         }
-                        printf("Audio input set to: %s\n", audio_input_device_names[i].c_str());
+                        printf("Audio input set to: %s (requested: %d samples, obtained: %d samples)\n",
+                               audio_input_device_names[i].c_str(), input_spec.samples, obtained_spec.samples);
                     } else {
                         printf("Failed to open audio input device: %s\n", SDL_GetError());
                         selected_audio_input_device = -1;
@@ -8343,10 +8366,6 @@ int main(int argc, char* argv[]) {
     if (audio_input_device_id) {
         SDL_PauseAudioDevice(audio_input_device_id, 1);
         SDL_CloseAudioDevice(audio_input_device_id);
-    }
-    if (input_buffer) {
-        free(input_buffer);
-        input_buffer = NULL;
     }
 
     regroove_common_destroy(common_state);
