@@ -119,8 +119,8 @@ struct Regroove {
 static void reapply_mutes(struct Regroove* g) {
     if (!g->interactive_ok) return;
     for (int ch = 0; ch < g->num_channels; ++ch) {
-        g->interactive.set_channel_volume(g->modext, ch,
-            g->mute_states[ch] ? 0.0 : g->channel_volumes[ch]);
+        // Use proper mute function instead of volume=0 to prevent pattern data from unmuting
+        g->interactive.set_channel_mute_status(g->modext, ch, g->mute_states[ch]);
     }
 }
 
@@ -202,8 +202,7 @@ static void process_commands(struct Regroove* g) {
                 if (cmd->arg1 >= 0 && cmd->arg1 < g->num_channels) {
                     g->mute_states[cmd->arg1] = !g->mute_states[cmd->arg1];
                     if (g->interactive_ok)
-                        g->interactive.set_channel_volume(
-                            g->modext, cmd->arg1, g->mute_states[cmd->arg1] ? 0.0 : g->channel_volumes[cmd->arg1]);
+                        g->interactive.set_channel_mute_status(g->modext, cmd->arg1, g->mute_states[cmd->arg1]);
                 }
                 break;
             case RG_CMD_TOGGLE_CHANNEL_SINGLE:
@@ -212,8 +211,7 @@ static void process_commands(struct Regroove* g) {
                         int mute = (i != cmd->arg1);
                         g->mute_states[i] = mute;
                         if (g->interactive_ok)
-                            g->interactive.set_channel_volume(
-                                g->modext, i, mute ? 0.0 : g->channel_volumes[i]);
+                            g->interactive.set_channel_mute_status(g->modext, i, mute);
                     }
                 }
                 break;
@@ -224,9 +222,8 @@ static void process_commands(struct Regroove* g) {
                     if (vol < 0.0) vol = 0.0;
                     if (vol > 1.0) vol = 1.0;
                     g->channel_volumes[ch] = vol;
-                    if (g->interactive_ok)
-                        g->interactive.set_channel_volume(
-                            g->modext, ch, g->mute_states[ch] ? 0.0 : vol);
+                    if (g->interactive_ok && !g->mute_states[ch])
+                        g->interactive.set_channel_volume(g->modext, ch, vol);
                 }
                 break;
             }

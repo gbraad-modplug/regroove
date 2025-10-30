@@ -91,10 +91,29 @@ static void apply_channel_settings() {
     Regroove *mod = common_state->player;
     int num_channels = common_state->num_channels;
 
+    // Check if any channel is soloed
+    bool any_solo = false;
     for (int i = 0; i < num_channels && i < MAX_CHANNELS; i++) {
+        if (channels[i].solo) {
+            any_solo = true;
+            break;
+        }
+    }
+
+    for (int i = 0; i < num_channels && i < MAX_CHANNELS; i++) {
+        // Determine desired mute state based on solo/mute
+        bool should_be_muted;
+        if (any_solo) {
+            // If any channel is soloed, mute all except soloed channels
+            should_be_muted = !channels[i].solo;
+        } else {
+            // Normal mode: use individual mute state
+            should_be_muted = channels[i].mute;
+        }
+
         // Apply mute state
         bool is_muted = regroove_is_channel_muted(mod, i);
-        if (channels[i].mute != is_muted) {
+        if (should_be_muted != is_muted) {
             regroove_toggle_channel_mute(mod, i);
         }
 
@@ -825,18 +844,16 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                 for (int i = 0; i < common_state->num_channels; ++i) channels[i].solo = false;
 
                 if (!wasSolo) {
-                    // New solo: set this channel solo, mute all, unmute this one
+                    // New solo: set this channel solo
                     channels[arg1].solo = true;
-                    regroove_mute_all(mod);
-                    for (int i = 0; i < common_state->num_channels; ++i) channels[i].mute = true;
-                    // Unmute soloed channel
-                    regroove_toggle_channel_mute(mod, arg1);
-                    channels[arg1].mute = false;
                 } else {
-                    // Un-solo: unmute all
+                    // Un-solo: clear solo state and unmute all channels
                     regroove_unmute_all(mod);
                     for (int i = 0; i < common_state->num_channels; ++i) channels[i].mute = false;
                 }
+
+                // Apply the new solo state to the engine
+                apply_channel_settings();
             }
             break;
         }
@@ -898,16 +915,22 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
             break;
         case ACT_JUMP_TO_ORDER:
             if (mod && arg1 >= 0) {
+                // Lock audio to ensure jump and mute-apply happen atomically
+                if (audio_device_id) SDL_LockAudioDevice(audio_device_id);
                 regroove_jump_to_order(mod, arg1);
-                // Apply channel settings after jumping to ensure mute/pan state is correct
+                // Apply channel settings AFTER jumping because the jump may reset mute/pan states
                 apply_channel_settings();
+                if (audio_device_id) SDL_UnlockAudioDevice(audio_device_id);
             }
             break;
         case ACT_JUMP_TO_PATTERN:
             if (mod && arg1 >= 0) {
+                // Lock audio to ensure jump and mute-apply happen atomically
+                if (audio_device_id) SDL_LockAudioDevice(audio_device_id);
                 regroove_jump_to_pattern(mod, arg1);
-                // Apply channel settings after jumping to ensure mute/pan state is correct
+                // Apply channel settings AFTER jumping because the jump may reset mute/pan states
                 apply_channel_settings();
+                if (audio_device_id) SDL_UnlockAudioDevice(audio_device_id);
             }
             break;
         case ACT_QUEUE_ORDER:
@@ -2321,7 +2344,12 @@ void my_midi_spp_callback(int position, void* userdata) {
             printf("[MIDI SPP] Syncing row %d->%d (diff=%d, SPP pos %d, order mismatch: slave=%d, master=%d)\n",
                    current_row, target_row, row_diff, position, order, target_order);
         }
+        // Lock audio to ensure jump and mute-apply happen atomically
+        if (audio_device_id) SDL_LockAudioDevice(audio_device_id);
         regroove_set_position_row(common_state->player, target_row);
+        // Apply channel settings AFTER jumping because the jump may reset mute/pan states
+        apply_channel_settings();
+        if (audio_device_id) SDL_UnlockAudioDevice(audio_device_id);
     }
 }
 
@@ -7947,12 +7975,22 @@ static void ShowMainUI() {
                 if (is_valid_row && mouse_over_row && mod) {
                     // Only trigger on click, not continuous drag
                     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                        // Lock audio to ensure jump and mute-apply happen atomically
+                        if (audio_device_id) SDL_LockAudioDevice(audio_device_id);
                         regroove_set_position_row(mod, row);
+                        // Apply channel settings AFTER jumping because the jump may reset mute/pan states
+                        apply_channel_settings();
+                        if (audio_device_id) SDL_UnlockAudioDevice(audio_device_id);
                     }
                     // Or if dragging, only update when we're on a different row than current playback
                     else if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) {
                         if (row != current_row) {
+                            // Lock audio to ensure jump and mute-apply happen atomically
+                            if (audio_device_id) SDL_LockAudioDevice(audio_device_id);
                             regroove_set_position_row(mod, row);
+                            // Apply channel settings AFTER jumping because the jump may reset mute/pan states
+                            apply_channel_settings();
+                            if (audio_device_id) SDL_UnlockAudioDevice(audio_device_id);
                         }
                     }
                 }
