@@ -103,8 +103,8 @@ typedef void (*MidiSPPCallback)(int position, void* userdata);
 static MidiSPPCallback spp_cb = NULL;
 static void *spp_userdata = NULL;
 
-// Device-specific callback wrappers
-static void rtmidi_event_callback_0(double dt, const unsigned char *msg, size_t sz, void *userdata) {
+// Generic MIDI event handler
+static void handle_midi_event(int device_id, double dt, const unsigned char *msg, size_t sz) {
     // Handle single-byte system real-time messages
     if (sz == 1) {
         if (msg[0] == MIDI_CLOCK) {
@@ -115,8 +115,8 @@ static void rtmidi_event_callback_0(double dt, const unsigned char *msg, size_t 
         if (msg[0] == MIDI_START || msg[0] == MIDI_STOP || msg[0] == MIDI_CONTINUE) {
             const char* msg_name = (msg[0] == MIDI_START) ? "Start" :
                                    (msg[0] == MIDI_STOP) ? "Stop" : "Continue";
-            printf("[MIDI Transport] Received %s (0x%02X) on device 0, control %s\n",
-                   msg_name, msg[0], transport_control_enabled ? "ENABLED" : "disabled");
+            printf("[MIDI Transport] Received %s (0x%02X) on device %d, control %s\n",
+                   msg_name, msg[0], device_id, transport_control_enabled ? "ENABLED" : "disabled");
 
             if (transport_control_enabled && transport_cb) {
                 transport_cb(msg[0], transport_userdata);
@@ -137,45 +137,21 @@ static void rtmidi_event_callback_0(double dt, const unsigned char *msg, size_t 
 
     // Handle regular 3-byte messages (Note On/Off, CC)
     if (midi_cb && sz >= 3) {
-        midi_cb(msg[0], msg[1], msg[2], 0, cb_userdata);
+        midi_cb(msg[0], msg[1], msg[2], device_id, cb_userdata);
     }
 }
 
+// Device-specific callback wrappers
+static void rtmidi_event_callback_0(double dt, const unsigned char *msg, size_t sz, void *userdata) {
+    handle_midi_event(0, dt, msg, sz);
+}
+
 static void rtmidi_event_callback_1(double dt, const unsigned char *msg, size_t sz, void *userdata) {
-    // Handle single-byte system real-time messages
-    if (sz == 1) {
-        if (msg[0] == MIDI_CLOCK) {
-            process_midi_clock();
-            return;
-        }
-        // Handle transport control messages
-        if (msg[0] == MIDI_START || msg[0] == MIDI_STOP || msg[0] == MIDI_CONTINUE) {
-            const char* msg_name = (msg[0] == MIDI_START) ? "Start" :
-                                   (msg[0] == MIDI_STOP) ? "Stop" : "Continue";
-            printf("[MIDI Transport] Received %s (0x%02X) on device 1, control %s\n",
-                   msg_name, msg[0], transport_control_enabled ? "ENABLED" : "disabled");
+    handle_midi_event(1, dt, msg, sz);
+}
 
-            if (transport_control_enabled && transport_cb) {
-                transport_cb(msg[0], transport_userdata);
-            }
-            return;
-        }
-    }
-
-    // Handle 3-byte Song Position Pointer (0xF2 + LSB + MSB)
-    if (sz == 3 && msg[0] == 0xF2) {
-        int position = msg[1] | (msg[2] << 7);  // Combine 7-bit bytes
-        printf("[MIDI SPP] Received Song Position: %d MIDI beats\n", position);
-        if (spp_cb) {
-            spp_cb(position, spp_userdata);
-        }
-        return;
-    }
-
-    // Handle regular 3-byte messages (Note On/Off, CC)
-    if (midi_cb && sz >= 3) {
-        midi_cb(msg[0], msg[1], msg[2], 1, cb_userdata);
-    }
+static void rtmidi_event_callback_2(double dt, const unsigned char *msg, size_t sz, void *userdata) {
+    handle_midi_event(2, dt, msg, sz);
 }
 
 int midi_list_ports(void) {
@@ -228,7 +204,7 @@ int midi_init_multi(MidiEventCallback cb, void *userdata, const int *ports, int 
     cb_userdata = userdata;
 
     int opened = 0;
-    RtMidiCCallback callbacks[MIDI_MAX_DEVICES] = {rtmidi_event_callback_0, rtmidi_event_callback_1};
+    RtMidiCCallback callbacks[MIDI_MAX_DEVICES] = {rtmidi_event_callback_0, rtmidi_event_callback_1, rtmidi_event_callback_2};
 
     for (int dev = 0; dev < num_ports; dev++) {
         if (ports[dev] < 0) continue;  // Skip if port is -1

@@ -6,7 +6,7 @@ extern "C" {
 #endif
 
 // Maximum number of MIDI input devices
-#define MIDI_MAX_DEVICES 2
+#define MIDI_MAX_DEVICES 3
 
 typedef void (*MidiEventCallback)(unsigned char status, unsigned char data1, unsigned char data2, int device_id, void *userdata);
 
