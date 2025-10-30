@@ -5192,11 +5192,10 @@ static void ShowMainUI() {
             ports[0] = common_state->device_config.midi_device_0;
             ports[1] = common_state->device_config.midi_device_1;
             ports[2] = common_state->device_config.midi_device_2;
-            int num_devices = 0;
-            if (ports[0] >= 0) num_devices++;
-            if (ports[1] >= 0) num_devices++;
-            if (ports[2] >= 0) num_devices++;
-            if (num_devices > 0) {
+            // Always pass all 3 device slots to midi_init_multi
+            // It will skip any with port = -1
+            int num_devices = 3;
+            if (ports[0] >= 0 || ports[1] >= 0 || ports[2] >= 0) {
                 midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
                 midi_input_enabled = true;
                 // Re-register MIDI callbacks
@@ -8257,12 +8256,11 @@ int main(int argc, char* argv[]) {
             common_state->device_config.midi_device_0 = midi_port;
         }
 
-        // Count how many devices to open
-        int num_devices = 0;
-        if (ports[0] >= 0) num_devices++;
-        if (ports[1] >= 0) num_devices++;
+        // Always pass all 3 device slots to midi_init_multi
+        // It will skip any with port = -1
+        int num_devices = 3;
 
-        if (num_devices > 0) {
+        if (ports[0] >= 0 || ports[1] >= 0 || ports[2] >= 0) {
             midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
             midi_input_enabled = true;
             // Enable MIDI clock sync if configured
