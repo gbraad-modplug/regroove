@@ -39,6 +39,31 @@ struct Channel {
 
 #define MAX_CHANNELS 64
 static Channel channels[MAX_CHANNELS];
+
+// Apply channel settings (mute/solo/pan/volume) from GUI state to the playback engine
+static void apply_channel_settings() {
+    if (!common_state || !common_state->player) return;
+
+    Regroove *mod = common_state->player;
+    int num_channels = common_state->num_channels;
+
+    for (int i = 0; i < num_channels && i < MAX_CHANNELS; i++) {
+        // Apply mute state
+        bool is_muted = regroove_is_channel_muted(mod, i);
+        if (channels[i].mute != is_muted) {
+            regroove_toggle_channel_mute(mod, i);
+        }
+
+        // Apply panning
+        regroove_set_channel_panning(mod, i, channels[i].pan);
+
+        // Apply volume
+        regroove_set_channel_volume(mod, i, channels[i].volume);
+    }
+
+    // Process commands to apply settings immediately
+    regroove_process_commands(mod);
+}
 static float pitch_slider = 0.0f; // -1.0 to 1.0, 0 = 1.0x pitch
 static float step_fade[16] = {0.0f};
 static int current_step = 0;
@@ -654,6 +679,10 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
                         regroove_performance_set_playback(common_state->performance, 1);
                     }
                 }
+
+                // Apply channel settings (mute/solo/pan/volume) before starting playback
+                apply_channel_settings();
+
                 // Audio device is always running for input passthrough - just set playing flag
                 playing = true;
                 if (common_state) common_state->paused = 0;  // Update paused state
@@ -869,11 +898,15 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
         case ACT_JUMP_TO_ORDER:
             if (mod && arg1 >= 0) {
                 regroove_jump_to_order(mod, arg1);
+                // Apply channel settings after jumping to ensure mute/pan state is correct
+                apply_channel_settings();
             }
             break;
         case ACT_JUMP_TO_PATTERN:
             if (mod && arg1 >= 0) {
                 regroove_jump_to_pattern(mod, arg1);
+                // Apply channel settings after jumping to ensure mute/pan state is correct
+                apply_channel_settings();
             }
             break;
         case ACT_QUEUE_ORDER:
