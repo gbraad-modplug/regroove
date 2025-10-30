@@ -207,11 +207,32 @@ static void process_commands(struct Regroove* g) {
                 break;
             case RG_CMD_TOGGLE_CHANNEL_SINGLE:
                 if (cmd->arg1 >= 0 && cmd->arg1 < g->num_channels) {
-                    for (int i = 0; i < g->num_channels; ++i) {
-                        int mute = (i != cmd->arg1);
-                        g->mute_states[i] = mute;
-                        if (g->interactive_ok)
-                            g->interactive.set_channel_mute_status(g->modext, i, mute);
+                    // Check if this channel is already soloed (unmuted while all others are muted)
+                    int is_soloed = (g->mute_states[cmd->arg1] == 0);
+                    if (is_soloed) {
+                        for (int i = 0; i < g->num_channels; i++) {
+                            if (i != cmd->arg1 && g->mute_states[i] == 0) {
+                                is_soloed = 0;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (is_soloed) {
+                        // Un-solo: unmute all channels
+                        for (int i = 0; i < g->num_channels; ++i) {
+                            g->mute_states[i] = 0;
+                            if (g->interactive_ok)
+                                g->interactive.set_channel_mute_status(g->modext, i, 0);
+                        }
+                    } else {
+                        // Solo: mute all except this channel
+                        for (int i = 0; i < g->num_channels; ++i) {
+                            int mute = (i != cmd->arg1);
+                            g->mute_states[i] = mute;
+                            if (g->interactive_ok)
+                                g->interactive.set_channel_mute_status(g->modext, i, mute);
+                        }
                     }
                 }
                 break;
@@ -360,7 +381,7 @@ static void process_commands(struct Regroove* g) {
                 openmpt_module_set_position_order_row(g->mod, target_order, 0);
                 printf("RG_CMD_JUMP_TO_PATTERN: Executed jump to order %d, row 0\n", target_order);
                 if (g->interactive_ok) {
-                    reapply_mutes(g);
+                    // reapply_mutes(g);  // Testing if this is still needed
                     reapply_pannings(g);
                 }
                 break;
@@ -385,7 +406,7 @@ static void process_commands(struct Regroove* g) {
                 g->loop_range_enabled = 2; // ACTIVE
                 apply_pending_mute_changes(g);
                 if (g->interactive_ok) {
-                    reapply_mutes(g);
+                    // reapply_mutes(g);  // Testing if this is still needed
                     reapply_pannings(g);
                 }
                 g->prev_row = -1;
@@ -414,7 +435,7 @@ static void process_commands(struct Regroove* g) {
                 int cur_order = openmpt_module_get_current_order(g->mod);
                 openmpt_module_set_position_order_row(g->mod, cur_order, 0);
                 if (g->interactive_ok) {
-                    reapply_mutes(g);
+                    // reapply_mutes(g);  // Testing if this is still needed
                     reapply_pannings(g);
                 }
                 g->prev_row = -1;
@@ -724,7 +745,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
         openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
         apply_pending_mute_changes(g);
         if (g->interactive_ok) {
-            reapply_mutes(g);
+            // reapply_mutes(g);  // Testing if this is still needed
             reapply_pannings(g);
         }
         // Re-render a clean buffer from pattern start
@@ -774,7 +795,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             openmpt_module_set_position_order_row(g->mod, loop_start_order, g->loop_start_row);
             apply_pending_mute_changes(g);
             if (g->interactive_ok) {
-                reapply_mutes(g);
+                // reapply_mutes(g);  // Testing if this is still needed
                 reapply_pannings(g);
             }
             if (g->on_loop_pattern) {
@@ -815,7 +836,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
                 g->prev_order = g->loop_order;
                 apply_pending_mute_changes(g);
                 if (g->interactive_ok) {
-                    reapply_mutes(g);
+                    // reapply_mutes(g);  // Testing if this is still needed
                     reapply_pannings(g);
                 }
                 if (g->on_loop_pattern)
@@ -832,7 +853,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
                     openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
                     apply_pending_mute_changes(g);
                     if (g->interactive_ok) {
-                        reapply_mutes(g);
+                        // reapply_mutes(g);  // Testing if this is still needed
                         reapply_pannings(g);
                     }
                     // Re-render a clean buffer from the new pattern start to avoid glitches
@@ -862,7 +883,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             openmpt_module_set_position_order_row(g->mod, g->loop_order, 0);
             apply_pending_mute_changes(g);
             if (g->interactive_ok) {
-                reapply_mutes(g);
+                // reapply_mutes(g);  // Testing if this is still needed
                 reapply_pannings(g);
             }
             if (g->on_loop_pattern)
@@ -902,7 +923,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             if (g->has_pending_mute_changes) {
                 apply_pending_mute_changes(g);
                 if (g->interactive_ok) {
-                    reapply_mutes(g);
+                    // reapply_mutes(g);  // Testing if this is still needed
                     reapply_pannings(g);
                 }
             }
@@ -911,7 +932,7 @@ int regroove_render_audio(Regroove* g, int16_t* buffer, int frames) {
             if (g->has_queued_jump) {
                 openmpt_module_set_position_order_row(g->mod, g->queued_order, g->queued_row);
                 if (g->interactive_ok) {
-                    reapply_mutes(g);
+                    // reapply_mutes(g);  // Testing if this is still needed
                     reapply_pannings(g);
                 }
                 g->has_queued_jump = 0;

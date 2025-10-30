@@ -84,39 +84,15 @@ static float instrument_note_fade[256] = {0.0f};  // For highlighting active ins
 static RegrooveCommonState *common_state = NULL;
 static const char *current_config_file = "regroove.ini"; // Track config file for saving
 
-// Apply channel settings (mute/solo/pan/volume) from GUI state to the playback engine
+// Apply channel settings (pan/volume) from GUI state to the playback engine
+// Note: Mute/solo state is managed by the engine, not pushed from GUI
 static void apply_channel_settings() {
     if (!common_state || !common_state->player) return;
 
     Regroove *mod = common_state->player;
     int num_channels = common_state->num_channels;
 
-    // Check if any channel is soloed
-    bool any_solo = false;
     for (int i = 0; i < num_channels && i < MAX_CHANNELS; i++) {
-        if (channels[i].solo) {
-            any_solo = true;
-            break;
-        }
-    }
-
-    for (int i = 0; i < num_channels && i < MAX_CHANNELS; i++) {
-        // Determine desired mute state based on solo/mute
-        bool should_be_muted;
-        if (any_solo) {
-            // If any channel is soloed, mute all except soloed channels
-            should_be_muted = !channels[i].solo;
-        } else {
-            // Normal mode: use individual mute state
-            should_be_muted = channels[i].mute;
-        }
-
-        // Apply mute state
-        bool is_muted = regroove_is_channel_muted(mod, i);
-        if (should_be_muted != is_muted) {
-            regroove_toggle_channel_mute(mod, i);
-        }
-
         // Apply panning
         regroove_set_channel_panning(mod, i, channels[i].pan);
 
@@ -838,38 +814,24 @@ void dispatch_action(GuiAction act, int arg1 = -1, float arg2 = 0.0f, bool shoul
             break;
         case ACT_SOLO_CHANNEL: {
             if (mod && arg1 >= 0 && arg1 < common_state->num_channels) {
-                bool wasSolo = channels[arg1].solo;
+                // Let the engine handle solo/unsolo logic
+                regroove_toggle_channel_solo(mod, arg1);
 
-                // Clear all solo states
-                for (int i = 0; i < common_state->num_channels; ++i) channels[i].solo = false;
-
-                if (!wasSolo) {
-                    // New solo: set this channel solo
-                    channels[arg1].solo = true;
-                } else {
-                    // Un-solo: clear solo state and unmute all channels
-                    regroove_unmute_all(mod);
-                    for (int i = 0; i < common_state->num_channels; ++i) channels[i].mute = false;
+                // Read back the state from the engine
+                for (int i = 0; i < common_state->num_channels; ++i) {
+                    channels[i].mute = regroove_is_channel_muted(mod, i);
                 }
-
-                // Apply the new solo state to the engine
-                apply_channel_settings();
             }
             break;
         }
         case ACT_MUTE_CHANNEL: {
             if (mod && arg1 >= 0 && arg1 < common_state->num_channels) {
-                // If soloed, un-solo and mute all
-                if (channels[arg1].solo) {
-                    channels[arg1].solo = false;
-                    regroove_mute_all(mod);
-                    for (int i = 0; i < common_state->num_channels; ++i) channels[i].mute = true;
-                } else {
-                    // Toggle mute just for this channel, remove solo
-                    channels[arg1].mute = !channels[arg1].mute;
-                    regroove_toggle_channel_mute(mod, arg1);
-                    for (int i = 0; i < common_state->num_channels; ++i) channels[i].solo = false;
-                }
+                // Clear all solo states
+                for (int i = 0; i < common_state->num_channels; ++i) channels[i].solo = false;
+
+                // Toggle mute for this channel
+                channels[arg1].mute = !channels[arg1].mute;
+                regroove_toggle_channel_mute(mod, arg1);
             }
             break;
         }
