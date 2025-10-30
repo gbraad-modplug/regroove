@@ -244,51 +244,9 @@ void input_mappings_reset_defaults(InputMappings *mappings) {
     mappings->trigger_pads[13].action = ACTION_UNMUTE_ALL;          // P14: Unmute all
     // P15-P16 are unassigned (ACTION_NONE)
 
-    // Default MIDI mappings (based on current implementation)
-    // device_id = -1 means any device, 0 = device 0, 1 = device 1
-    MidiMapping default_midi[] = {
-        {-1, 41, ACTION_PLAY, 0, 64, 0},
-        {-1, 42, ACTION_STOP, 0, 64, 0},
-        {-1, 46, ACTION_PATTERN_MODE_TOGGLE, 0, 64, 0},
-        {-1, 44, ACTION_JUMP_NEXT_ORDER, 0, 64, 0},
-        {-1, 43, ACTION_JUMP_PREV_ORDER, 0, 64, 0},
-        {-1, 60, ACTION_FILE_LOAD, 0, 64, 0},
-        {-1, 61, ACTION_FILE_PREV, 0, 64, 0},
-        {-1, 62, ACTION_FILE_NEXT, 0, 64, 0},
-        // Channel solo (CC 32-39)
-        {-1, 32, ACTION_CHANNEL_SOLO, 0, 64, 0},
-        {-1, 33, ACTION_CHANNEL_SOLO, 1, 64, 0},
-        {-1, 34, ACTION_CHANNEL_SOLO, 2, 64, 0},
-        {-1, 35, ACTION_CHANNEL_SOLO, 3, 64, 0},
-        {-1, 36, ACTION_CHANNEL_SOLO, 4, 64, 0},
-        {-1, 37, ACTION_CHANNEL_SOLO, 5, 64, 0},
-        {-1, 38, ACTION_CHANNEL_SOLO, 6, 64, 0},
-        {-1, 39, ACTION_CHANNEL_SOLO, 7, 64, 0},
-        // Channel mute (CC 48-55)
-        {-1, 48, ACTION_CHANNEL_MUTE, 0, 64, 0},
-        {-1, 49, ACTION_CHANNEL_MUTE, 1, 64, 0},
-        {-1, 50, ACTION_CHANNEL_MUTE, 2, 64, 0},
-        {-1, 51, ACTION_CHANNEL_MUTE, 3, 64, 0},
-        {-1, 52, ACTION_CHANNEL_MUTE, 4, 64, 0},
-        {-1, 53, ACTION_CHANNEL_MUTE, 5, 64, 0},
-        {-1, 54, ACTION_CHANNEL_MUTE, 6, 64, 0},
-        {-1, 55, ACTION_CHANNEL_MUTE, 7, 64, 0},
-        // Channel volume (CC 0-7) - continuous controls
-        {-1, 0, ACTION_CHANNEL_VOLUME, 0, 0, 1},
-        {-1, 1, ACTION_CHANNEL_VOLUME, 1, 0, 1},
-        {-1, 2, ACTION_CHANNEL_VOLUME, 2, 0, 1},
-        {-1, 3, ACTION_CHANNEL_VOLUME, 3, 0, 1},
-        {-1, 4, ACTION_CHANNEL_VOLUME, 4, 0, 1},
-        {-1, 5, ACTION_CHANNEL_VOLUME, 5, 0, 1},
-        {-1, 6, ACTION_CHANNEL_VOLUME, 6, 0, 1},
-        {-1, 7, ACTION_CHANNEL_VOLUME, 7, 0, 1},
-    };
-
-    int default_midi_count = sizeof(default_midi) / sizeof(default_midi[0]);
-    for (int i = 0; i < default_midi_count && i < mappings->midi_capacity; i++) {
-        mappings->midi_mappings[i] = default_midi[i];
-    }
-    mappings->midi_count = default_midi_count;
+    // MIDI mappings are loaded from INI file - no hardcoded defaults
+    // This allows users to fully customize or remove mappings via the settings UI
+    mappings->midi_count = 0;
 
     // Default keyboard mappings (based on current implementation)
     KeyboardMapping default_keyboard[] = {
