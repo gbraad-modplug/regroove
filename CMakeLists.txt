@@ -65,6 +65,7 @@ add_executable(regroove-gui
     regroove_performance.c
     regroove_phrase.c
     regroove_effects.c
+    audio_input.c
     midi.c
     midi_output.c
     input_mappings.c

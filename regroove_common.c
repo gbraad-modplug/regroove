@@ -164,6 +164,7 @@ RegrooveCommonState* regroove_common_create(void) {
     state->device_config.midi_device_2 = -1;      // Not configured
     state->device_config.audio_device = -1;       // Default device
     state->device_config.audio_input_device = -1; // Disabled
+    state->device_config.audio_input_buffer_ms = 100; // 100ms default buffer
     state->device_config.midi_output_device = -1; // Disabled
     state->device_config.midi_output_note_duration = 1; // Hold notes (default)
     state->device_config.midi_clock_sync = 0;     // Disabled (default)
@@ -278,6 +279,8 @@ int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_pa
                     state->device_config.audio_device = atoi(value);
                 } else if (strcmp(key, "audio_input_device") == 0) {
                     state->device_config.audio_input_device = atoi(value);
+                } else if (strcmp(key, "audio_input_buffer_ms") == 0) {
+                    state->device_config.audio_input_buffer_ms = atoi(value);
                 } else if (strcmp(key, "midi_output_device") == 0) {
                     state->device_config.midi_output_device = atoi(value);
                 } else if (strcmp(key, "midi_output_note_duration") == 0) {
@@ -728,6 +731,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_device_2 = %d\n", state->device_config.midi_device_2);
         fprintf(f, "audio_device = %d\n", state->device_config.audio_device);
         fprintf(f, "audio_input_device = %d\n", state->device_config.audio_input_device);
+        fprintf(f, "audio_input_buffer_ms = %d\n", state->device_config.audio_input_buffer_ms);
         fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
         fprintf(f, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
         fprintf(f, "midi_clock_sync = %d\n", state->device_config.midi_clock_sync);
@@ -777,6 +781,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "midi_device_2 = %d\n", state->device_config.midi_device_2);
         fprintf(f, "audio_device = %d\n", state->device_config.audio_device);
         fprintf(f, "audio_input_device = %d\n", state->device_config.audio_input_device);
+        fprintf(f, "audio_input_buffer_ms = %d\n", state->device_config.audio_input_buffer_ms);
         fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
         fprintf(f, "midi_output_note_duration = %d\n", state->device_config.midi_output_note_duration);
         fprintf(f, "midi_clock_sync = %d\n", state->device_config.midi_clock_sync);
@@ -958,6 +963,8 @@ int regroove_common_save_default_config(const char *filepath) {
     fprintf(f, "# Audio devices (-1 = default for output, -1 = disabled for input)\n");
     fprintf(f, "audio_device = -1\n");
     fprintf(f, "audio_input_device = -1\n");
+    fprintf(f, "# Audio input buffer size in milliseconds (10-500, default: 100)\n");
+    fprintf(f, "audio_input_buffer_ms = 100\n");
     fprintf(f, "midi_output_device = -1\n");
     fprintf(f, "# MIDI Clock sync: 0=disabled, 1=sync tempo to incoming MIDI clock\n");
     fprintf(f, "midi_clock_sync = 0\n");

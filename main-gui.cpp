@@ -17,6 +17,7 @@ extern "C" {
 #include "midi_output.h"
 #include "lcd.h"
 #include "regroove_effects.h"
+#include "audio_input.h"
 }
 
 // -----------------------------------------------------------------------------
@@ -113,12 +114,6 @@ static SDL_AudioDeviceID audio_device_id = 0;
 static std::vector<std::string> audio_input_device_names;
 static int selected_audio_input_device = -1;
 static SDL_AudioDeviceID audio_input_device_id = 0;
-
-// Ring buffer for audio input (to handle different buffer sizes and timing)
-#define RING_BUFFER_SIZE (48000 * 2 * 2)  // 2 seconds of stereo audio at 48kHz
-static int16_t input_ring_buffer[RING_BUFFER_SIZE];
-static volatile int ring_write_pos = 0;
-static volatile int ring_read_pos = 0;
 
 // MIDI device cache (refreshed only when settings panel is shown or on refresh button)
 static int cached_midi_port_count = -1;
@@ -2474,29 +2469,20 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
 
     // Mix in audio input when not muted and device is active
     if (!input_mute && input_volume > 0.0f && audio_input_device_id) {
-        // Calculate available samples in ring buffer
-        int available;
-        int write_pos = ring_write_pos;  // Snapshot
-        int read_pos = ring_read_pos;
-        if (write_pos >= read_pos) {
-            available = write_pos - read_pos;
-        } else {
-            available = RING_BUFFER_SIZE - read_pos + write_pos;
-        }
-
-        // Only process if we have enough data
+        // Check if enough data is available in ring buffer
         int needed_samples = frames * 2;  // stereo
+        int available = audio_input_available();
+
         if (available >= needed_samples) {
             // Create a temporary buffer for input processing
             int16_t *input_temp = (int16_t*)malloc(frames * 2 * sizeof(int16_t));
             if (input_temp) {
                 // Read from ring buffer
-                SDL_LockAudioDevice(audio_input_device_id);
-                for (int i = 0; i < needed_samples; i++) {
-                    input_temp[i] = input_ring_buffer[ring_read_pos];
-                    ring_read_pos = (ring_read_pos + 1) % RING_BUFFER_SIZE;
+                int read = audio_input_read(input_temp, needed_samples);
+                if (read < needed_samples) {
+                    // Fill remainder with silence if underrun
+                    memset(input_temp + read, 0, (needed_samples - read) * sizeof(int16_t));
                 }
-                SDL_UnlockAudioDevice(audio_input_device_id);
 
             // Apply effects if routed to input
             if (effects && fx_route == FX_ROUTE_INPUT) {
@@ -2573,16 +2559,8 @@ static void audio_input_callback(void *userdata, Uint8 *stream, int len) {
     int16_t *samples = (int16_t*)stream;
     int num_samples = len / sizeof(int16_t);  // Total samples (stereo)
 
-    // Write to ring buffer
-    for (int i = 0; i < num_samples; i++) {
-        input_ring_buffer[ring_write_pos] = samples[i];
-        ring_write_pos = (ring_write_pos + 1) % RING_BUFFER_SIZE;
-
-        // If we're about to overwrite unread data, advance read position
-        if (ring_write_pos == ring_read_pos) {
-            ring_read_pos = (ring_read_pos + 1) % RING_BUFFER_SIZE;
-        }
-    }
+    // Write to ring buffer using the audio_input module
+    audio_input_write(samples, num_samples);
 
     // Debug: Check if we're getting any signal (first time only)
     static bool first_signal_check = true;
@@ -7391,6 +7369,29 @@ static void ShowMainUI() {
             printf("Refreshed audio input device list (%d devices found)\n", (int)audio_input_device_names.size());
         }
 
+        // Audio input buffer size control
+        ImGui::Dummy(ImVec2(0, 8.0f));
+        ImGui::Text("Input Buffer:");
+        ImGui::SameLine(150.0f);
+        ImGui::PushItemWidth(200.0f);
+        int buffer_ms = common_state->device_config.audio_input_buffer_ms;
+        if (ImGui::SliderInt("##audio_input_buffer", &buffer_ms, 10, 500, "%d ms")) {
+            // Clamp to valid range
+            if (buffer_ms < 10) buffer_ms = 10;
+            if (buffer_ms > 500) buffer_ms = 500;
+            common_state->device_config.audio_input_buffer_ms = buffer_ms;
+
+            // Reinitialize the ring buffer with new size
+            audio_input_init(buffer_ms);
+
+            // Save to config
+            regroove_common_save_device_config(common_state, current_config_file);
+            printf("Audio input buffer set to %d ms\n", buffer_ms);
+        }
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(Lower = less latency, Higher = more stable)");
+
         ImGui::Dummy(ImVec2(0, 20.0f));
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 20.0f));
@@ -8211,6 +8212,9 @@ int main(int argc, char* argv[]) {
     }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) return 1;
+
+    // Initialize audio input ring buffer with configured size
+    audio_input_init(common_state->device_config.audio_input_buffer_ms);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
@@ -8385,6 +8389,10 @@ int main(int argc, char* argv[]) {
     ImGui::DestroyContext();
     SDL_GL_DeleteContext(gl_ctx);
     SDL_DestroyWindow(window);
+
+    // Cleanup audio input
+    audio_input_cleanup();
+
     SDL_Quit();
     return 0;
 }

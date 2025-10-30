@@ -47,6 +47,7 @@ typedef struct {
     int midi_device_2;      // MIDI device 2 port (-1 = not configured)
     int audio_device;       // Audio output device index (-1 = default)
     int audio_input_device; // Audio input device index (-1 = disabled)
+    int audio_input_buffer_ms; // Audio input buffer size in ms (10-500, default: 100)
     int midi_output_device; // MIDI output device port (-1 = disabled)
     int midi_output_note_duration; // 0 = immediate off, 1 = hold until next note/off command
     int midi_clock_sync;    // 0 = disabled, 1 = sync tempo to incoming MIDI clock (default: 0)
