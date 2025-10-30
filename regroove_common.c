@@ -161,6 +161,7 @@ RegrooveCommonState* regroove_common_create(void) {
     // Initialize device config to defaults
     state->device_config.midi_device_0 = -1;      // Not configured
     state->device_config.midi_device_1 = -1;      // Not configured
+    state->device_config.midi_device_2 = -1;      // Not configured
     state->device_config.audio_device = -1;       // Default device
     state->device_config.audio_input_device = -1; // Disabled
     state->device_config.midi_output_device = -1; // Disabled
@@ -271,6 +272,8 @@ int regroove_common_load_mappings(RegrooveCommonState *state, const char *ini_pa
                     state->device_config.midi_device_0 = atoi(value);
                 } else if (strcmp(key, "midi_device_1") == 0) {
                     state->device_config.midi_device_1 = atoi(value);
+                } else if (strcmp(key, "midi_device_2") == 0) {
+                    state->device_config.midi_device_2 = atoi(value);
                 } else if (strcmp(key, "audio_device") == 0) {
                     state->device_config.audio_device = atoi(value);
                 } else if (strcmp(key, "audio_input_device") == 0) {
@@ -722,6 +725,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "[devices]\n");
         fprintf(f, "midi_device_0 = %d\n", state->device_config.midi_device_0);
         fprintf(f, "midi_device_1 = %d\n", state->device_config.midi_device_1);
+        fprintf(f, "midi_device_2 = %d\n", state->device_config.midi_device_2);
         fprintf(f, "audio_device = %d\n", state->device_config.audio_device);
         fprintf(f, "audio_input_device = %d\n", state->device_config.audio_input_device);
         fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
@@ -770,6 +774,7 @@ int regroove_common_save_device_config(RegrooveCommonState *state, const char *f
         fprintf(f, "\n[devices]\n");
         fprintf(f, "midi_device_0 = %d\n", state->device_config.midi_device_0);
         fprintf(f, "midi_device_1 = %d\n", state->device_config.midi_device_1);
+        fprintf(f, "midi_device_2 = %d\n", state->device_config.midi_device_2);
         fprintf(f, "audio_device = %d\n", state->device_config.audio_device);
         fprintf(f, "audio_input_device = %d\n", state->device_config.audio_input_device);
         fprintf(f, "midi_output_device = %d\n", state->device_config.midi_output_device);
@@ -949,6 +954,7 @@ int regroove_common_save_default_config(const char *filepath) {
     fprintf(f, "# MIDI device ports (-1 = not configured)\n");
     fprintf(f, "midi_device_0 = -1\n");
     fprintf(f, "midi_device_1 = -1\n");
+    fprintf(f, "midi_device_2 = -1\n");
     fprintf(f, "# Audio devices (-1 = default for output, -1 = disabled for input)\n");
     fprintf(f, "audio_device = -1\n");
     fprintf(f, "audio_input_device = -1\n");

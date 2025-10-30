@@ -5167,9 +5167,11 @@ static void ShowMainUI() {
             int ports[MIDI_MAX_DEVICES];
             ports[0] = common_state->device_config.midi_device_0;
             ports[1] = common_state->device_config.midi_device_1;
+            ports[2] = common_state->device_config.midi_device_2;
             int num_devices = 0;
             if (ports[0] >= 0) num_devices++;
             if (ports[1] >= 0) num_devices++;
+            if (ports[2] >= 0) num_devices++;
             if (num_devices > 0) {
                 midi_init_multi(my_midi_mapping, NULL, ports, num_devices);
                 midi_input_enabled = true;
@@ -5274,6 +5276,53 @@ static void ShowMainUI() {
                         common_state->device_config.midi_device_1 = i;
                         reinit_midi_input();
                         printf("MIDI Device 1 set to: Port %d\n", i);
+                        regroove_common_save_device_config(common_state, current_config_file);
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        ImGui::Dummy(ImVec2(0, 8.0f));
+
+        // MIDI Device 2 selection
+        ImGui::Text("MIDI Input 2:");
+        ImGui::SameLine(150.0f);
+        int current_device_2 = common_state ? common_state->device_config.midi_device_2 : -1;
+        char device_2_label[128];
+        if (current_device_2 == -1) {
+            snprintf(device_2_label, sizeof(device_2_label), "None");
+        } else {
+            char port_name[128];
+            if (midi_get_port_name(current_device_2, port_name, sizeof(port_name)) == 0) {
+                snprintf(device_2_label, sizeof(device_2_label), "%s", port_name);
+            } else {
+                snprintf(device_2_label, sizeof(device_2_label), "Port %d", current_device_2);
+            }
+        }
+
+        if (ImGui::BeginCombo("##midi_device_2", device_2_label)) {
+            if (ImGui::Selectable("None", current_device_2 == -1)) {
+                if (common_state) {
+                    common_state->device_config.midi_device_2 = -1;
+                    reinit_midi_input();
+                    printf("MIDI Device 2 set to: None\n");
+                    regroove_common_save_device_config(common_state, current_config_file);
+                }
+            }
+            for (int i = 0; i < num_midi_ports; i++) {
+                char label[128];
+                char port_name[128];
+                if (midi_get_port_name(i, port_name, sizeof(port_name)) == 0) {
+                    snprintf(label, sizeof(label), "%s", port_name);
+                } else {
+                    snprintf(label, sizeof(label), "Port %d", i);
+                }
+                if (ImGui::Selectable(label, current_device_2 == i)) {
+                    if (common_state) {
+                        common_state->device_config.midi_device_2 = i;
+                        reinit_midi_input();
+                        printf("MIDI Device 2 set to: Port %d\n", i);
                         regroove_common_save_device_config(common_state, current_config_file);
                     }
                 }
@@ -6060,7 +6109,8 @@ static void ShowMainUI() {
                 if (pad->midi_note >= 0) {
                     const char* device_label = pad->midi_device == -1 ? "Any" :
                                                pad->midi_device == -2 ? "Disabled" :
-                                               (pad->midi_device == 0 ? "Dev 0" : "Dev 1");
+                                               pad->midi_device == 0 ? "Dev 0" :
+                                               pad->midi_device == 1 ? "Dev 1" : "Dev 2";
                     ImGui::SetNextItemWidth(90.0f);
                     if (ImGui::BeginCombo("##device", device_label)) {
                         if (ImGui::Selectable("Any", pad->midi_device == -1)) {
@@ -6073,6 +6123,10 @@ static void ShowMainUI() {
                         }
                         if (ImGui::Selectable("Dev 1", pad->midi_device == 1)) {
                             pad->midi_device = 1;
+                            save_mappings_to_config();
+                        }
+                        if (ImGui::Selectable("Dev 2", pad->midi_device == 2)) {
+                            pad->midi_device = 2;
                             save_mappings_to_config();
                         }
                         if (ImGui::Selectable("Disabled", pad->midi_device == -2)) {
@@ -6210,7 +6264,8 @@ static void ShowMainUI() {
                 if (pad->midi_note >= 0) {
                     const char* device_label = pad->midi_device == -1 ? "Any" :
                                                pad->midi_device == -2 ? "Disabled" :
-                                               (pad->midi_device == 0 ? "Dev 0" : "Dev 1");
+                                               pad->midi_device == 0 ? "Dev 0" :
+                                               pad->midi_device == 1 ? "Dev 1" : "Dev 2";
                     ImGui::SetNextItemWidth(90.0f);
                     if (ImGui::BeginCombo("##device", device_label)) {
                         if (ImGui::Selectable("Any", pad->midi_device == -1)) {
@@ -6223,6 +6278,10 @@ static void ShowMainUI() {
                         }
                         if (ImGui::Selectable("Dev 1", pad->midi_device == 1)) {
                             pad->midi_device = 1;
+                            song_pads_changed = true;
+                        }
+                        if (ImGui::Selectable("Dev 2", pad->midi_device == 2)) {
+                            pad->midi_device = 2;
                             song_pads_changed = true;
                         }
                         if (ImGui::Selectable("Disabled", pad->midi_device == -2)) {
@@ -6374,12 +6433,13 @@ static void ShowMainUI() {
             ImGui::Text("Device:");
             ImGui::SameLine(150.0f);
             ImGui::SetNextItemWidth(150.0f);
-            const char* device_labels[] = { "Any", "Device 0", "Device 1" };
+            const char* device_labels[] = { "Any", "Device 0", "Device 1", "Device 2" };
             int device_combo_idx = new_midi_device == -1 ? 0 : new_midi_device + 1;
             if (ImGui::BeginCombo("##new_midi_device", device_labels[device_combo_idx])) {
                 if (ImGui::Selectable("Any", new_midi_device == -1)) new_midi_device = -1;
                 if (ImGui::Selectable("Device 0", new_midi_device == 0)) new_midi_device = 0;
                 if (ImGui::Selectable("Device 1", new_midi_device == 1)) new_midi_device = 1;
+                if (ImGui::Selectable("Device 2", new_midi_device == 2)) new_midi_device = 2;
                 ImGui::EndCombo();
             }
 
@@ -8156,6 +8216,7 @@ int main(int argc, char* argv[]) {
         int ports[MIDI_MAX_DEVICES];
         ports[0] = (midi_port >= 0) ? midi_port : common_state->device_config.midi_device_0;
         ports[1] = common_state->device_config.midi_device_1;
+        ports[2] = common_state->device_config.midi_device_2;
 
         // Update config state to match actual device being used (for UI feedback)
         if (midi_port >= 0) {

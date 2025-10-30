@@ -875,11 +875,13 @@ int main(int argc, char *argv[]) {
         int ports[MIDI_MAX_DEVICES];
         ports[0] = (midi_port >= 0) ? midi_port : common_state->device_config.midi_device_0;
         ports[1] = common_state->device_config.midi_device_1;
+        ports[2] = common_state->device_config.midi_device_2;
 
         // Count how many devices to open
         int num_devices = 0;
         if (ports[0] >= 0) num_devices = 1;
         if (ports[1] >= 0) num_devices = 2;
+        if (ports[2] >= 0) num_devices = 3;
 
         if (num_devices > 0) {
             if (midi_init_multi(my_midi_mapping, NULL, ports, num_devices) != 0) {
