@@ -24,6 +24,7 @@ extern "C" {
 // -----------------------------------------------------------------------------
 static void handle_input_event(InputEvent *event, bool from_playback = false);
 static void update_phrases(void);
+static void apply_channel_settings(void);
 
 // -----------------------------------------------------------------------------
 // State & Helper Types
@@ -39,31 +40,6 @@ struct Channel {
 
 #define MAX_CHANNELS 64
 static Channel channels[MAX_CHANNELS];
-
-// Apply channel settings (mute/solo/pan/volume) from GUI state to the playback engine
-static void apply_channel_settings() {
-    if (!common_state || !common_state->player) return;
-
-    Regroove *mod = common_state->player;
-    int num_channels = common_state->num_channels;
-
-    for (int i = 0; i < num_channels && i < MAX_CHANNELS; i++) {
-        // Apply mute state
-        bool is_muted = regroove_is_channel_muted(mod, i);
-        if (channels[i].mute != is_muted) {
-            regroove_toggle_channel_mute(mod, i);
-        }
-
-        // Apply panning
-        regroove_set_channel_panning(mod, i, channels[i].pan);
-
-        // Apply volume
-        regroove_set_channel_volume(mod, i, channels[i].volume);
-    }
-
-    // Process commands to apply settings immediately
-    regroove_process_commands(mod);
-}
 static float pitch_slider = 0.0f; // -1.0 to 1.0, 0 = 1.0x pitch
 static float step_fade[16] = {0.0f};
 static int current_step = 0;
@@ -107,6 +83,31 @@ static float instrument_note_fade[256] = {0.0f};  // For highlighting active ins
 // Shared state
 static RegrooveCommonState *common_state = NULL;
 static const char *current_config_file = "regroove.ini"; // Track config file for saving
+
+// Apply channel settings (mute/solo/pan/volume) from GUI state to the playback engine
+static void apply_channel_settings() {
+    if (!common_state || !common_state->player) return;
+
+    Regroove *mod = common_state->player;
+    int num_channels = common_state->num_channels;
+
+    for (int i = 0; i < num_channels && i < MAX_CHANNELS; i++) {
+        // Apply mute state
+        bool is_muted = regroove_is_channel_muted(mod, i);
+        if (channels[i].mute != is_muted) {
+            regroove_toggle_channel_mute(mod, i);
+        }
+
+        // Apply panning
+        regroove_set_channel_panning(mod, i, channels[i].pan);
+
+        // Apply volume
+        regroove_set_channel_volume(mod, i, channels[i].volume);
+    }
+
+    // Process commands to apply settings immediately
+    regroove_process_commands(mod);
+}
 
 // Audio device state
 static std::vector<std::string> audio_device_names;
@@ -3611,7 +3612,7 @@ static void ShowMainUI() {
                 // 0 = off, 1 = yellow (standard sync), 2 = blue (SPP/beat sync)
                 int is_midi_sync_enabled = 0;
                 if (pad && common_state) {
-                    if (pad->action == ACTION_MIDI_CLOCK_SYNC_TOGGLE) {
+                    if (pad->action == ACTION_MIDI_CLOCK_TEMPO_SYNC_TOGGLE) {
                         is_midi_sync_enabled = (common_state->device_config.midi_clock_sync == 1) ? 1 : 0;
                     } else if (pad->action == ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE) {
                         is_midi_sync_enabled = (common_state->device_config.midi_transport_control == 1) ? 1 : 0;
@@ -4036,7 +4037,7 @@ static void ShowMainUI() {
                 bool is_midi_sync_enabled = false;
                 if (common_state && common_state->metadata) {
                     TriggerPadConfig *pad = &common_state->metadata->song_trigger_pads[idx];
-                    if (pad->action == ACTION_MIDI_CLOCK_SYNC_TOGGLE) {
+                    if (pad->action == ACTION_MIDI_CLOCK_TEMPO_SYNC_TOGGLE) {
                         is_midi_sync_enabled = (common_state->device_config.midi_clock_sync == 1);
                     } else if (pad->action == ACTION_MIDI_TRANSPORT_RECEIVE_TOGGLE) {
                         is_midi_sync_enabled = (common_state->device_config.midi_transport_control == 1);
