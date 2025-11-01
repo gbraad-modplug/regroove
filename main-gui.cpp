@@ -3323,38 +3323,6 @@ static void ShowMainUI() {
             ImGui::EndGroup();
         }
 
-        // Pitch slider column (positioned after channels)
-        {
-            float colX = origin.x + num_channels * (sliderW + spacing);
-            ImGui::SetCursorPos(ImVec2(colX, origin.y + 8.0f));
-            ImGui::BeginGroup();
-            ImGui::Text("Pitch");
-            ImGui::Dummy(ImVec2(0, 4.0f));
-
-            // Match channel spacing: SOLO button + pan slider
-            ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
-            ImGui::Dummy(ImVec2(0, 2.0f));
-            ImGui::Dummy(ImVec2(sliderW, panSliderH));  // Pan slider height
-            ImGui::Dummy(ImVec2(0, 2.0f));
-
-            float prev_pitch = pitch_slider;
-            // Inverted slider: up = slower (min), down = faster (max)
-            if (ImGui::VSliderFloat("##pitch", ImVec2(sliderW, sliderH),
-                                    &pitch_slider, 1.0f, -1.0f, "")) {
-                if (learn_mode_active && ImGui::IsItemActive()) {
-                    // User is dragging the slider in learn mode - enter learn mode for pitch
-                    start_learn_for_action(ACTION_PITCH_SET);
-                } else if (prev_pitch != pitch_slider) {
-                    dispatch_action(ACT_SET_PITCH, -1, pitch_slider);
-                }
-            }
-            ImGui::Dummy(ImVec2(0, 8.0f));
-            if (ImGui::Button("R##pitch_reset", ImVec2(sliderW, MUTE_SIZE))) {
-                if (learn_mode_active) start_learn_for_action(ACTION_PITCH_RESET);
-                else dispatch_action(ACT_PITCH_RESET);
-            }
-            ImGui::EndGroup();
-        }
     }
     else if (ui_mode == UI_MODE_PADS) {
         // PADS MODE: Show application trigger pads (A1-A16)
@@ -6591,6 +6559,44 @@ static void ShowMainUI() {
 
         // Use the same spacing as VOL panel (already calculated above)
         int col_index = 0;
+
+        // --- PITCH COLUMN ---
+        {
+            float colX = origin.x + col_index * (sliderW + spacing);
+            ImGui::SetCursorPos(ImVec2(colX, origin.y + 8.0f));
+            ImGui::BeginGroup();
+            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.5f, 1.0f), "PITCH");
+            ImGui::Dummy(ImVec2(0, 4.0f));
+
+            // Dummy FX button placeholder to match layout
+            ImGui::Dummy(ImVec2(sliderW, SOLO_SIZE));
+            ImGui::Dummy(ImVec2(0, 2.0f));
+
+            // Dummy pan slider placeholder to match layout
+            ImGui::Dummy(ImVec2(sliderW, panSliderH));
+            ImGui::Dummy(ImVec2(0, 2.0f));
+
+            // Pitch/Tempo fader (inverted: up = slower, down = faster)
+            float prev_pitch = pitch_slider;
+            if (ImGui::VSliderFloat("##pitch_mix", ImVec2(sliderW, sliderH),
+                                    &pitch_slider, 1.0f, -1.0f, "")) {
+                if (learn_mode_active && ImGui::IsItemActive()) {
+                    start_learn_for_action(ACTION_PITCH_SET);
+                } else if (prev_pitch != pitch_slider) {
+                    dispatch_action(ACT_SET_PITCH, -1, pitch_slider);
+                }
+            }
+            ImGui::Dummy(ImVec2(0, 8.0f));
+
+            // Reset button
+            if (ImGui::Button("R##pitch_reset_mix", ImVec2(sliderW, MUTE_SIZE))) {
+                if (learn_mode_active) start_learn_for_action(ACTION_PITCH_RESET);
+                else dispatch_action(ACT_PITCH_RESET);
+            }
+
+            ImGui::EndGroup();
+            col_index++;
+        }
 
         // --- MASTER CHANNEL ---
         {
