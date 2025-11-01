@@ -488,8 +488,32 @@ static int midi_clock_thread_func(void *data) {
         // Check if clock should be running
         int is_playing = SDL_AtomicGet(&clock_running);
 
-        if (!is_playing || !clock_master_enabled) {
-            // Clock paused, reset timing for next start
+        if (!is_playing) {
+            // Not playing, but still check for SPP updates (SPP works independently of clock)
+            if (spp_send_mode > 0) {
+                int current_spp = SDL_AtomicGet(&spp_position_atomic);
+                if (current_spp != last_sent_spp && current_spp >= 0) {
+                    midi_output_send_song_position(current_spp);
+                    last_sent_spp = current_spp;
+                }
+            }
+            SDL_Delay(10);
+            next_pulse_tick = SDL_GetPerformanceCounter();
+            last_bpm_update = SDL_GetPerformanceCounter();
+            continue;
+        }
+
+        // Handle SPP independently of clock (even if clock is disabled)
+        if (spp_send_mode > 0) {
+            int current_spp = SDL_AtomicGet(&spp_position_atomic);
+            if (current_spp != last_sent_spp && current_spp >= 0) {
+                midi_output_send_song_position(current_spp);
+                last_sent_spp = current_spp;
+            }
+        }
+
+        // If clock is not enabled, skip clock pulse generation
+        if (!clock_master_enabled) {
             SDL_Delay(10);
             next_pulse_tick = SDL_GetPerformanceCounter();
             last_bpm_update = SDL_GetPerformanceCounter();
@@ -546,18 +570,6 @@ static int midi_clock_thread_func(void *data) {
             if (current_tick >= next_pulse_tick) {
                 // Send clock pulse
                 midi_output_send_clock();
-
-                // Send SPP if enabled (mode 2 = during playback)
-                // The audio callback updates spp_position_atomic when position changes
-                if (spp_send_mode == 2) {
-                    int current_spp = SDL_AtomicGet(&spp_position_atomic);
-
-                    // Send SPP when position has changed from what we last sent
-                    if (current_spp != last_sent_spp && current_spp >= 0) {
-                        midi_output_send_song_position(current_spp);
-                        last_sent_spp = current_spp;
-                    }
-                }
 
                 // Schedule next pulse at exact interval (prevents drift accumulation)
                 next_pulse_tick += ticks_per_pulse;
