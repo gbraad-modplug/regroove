@@ -134,6 +134,10 @@ void regroove_common_trigger_phrase(RegrooveCommonState *state, int phrase_index
 void regroove_common_update_phrases(RegrooveCommonState *state);
 int regroove_common_phrase_is_active(const RegrooveCommonState *state);
 
+// MIDI output initialization (applies all config settings)
+// Returns 0 on success, -1 on failure
+int regroove_common_init_midi_output(RegrooveCommonState *state);
+
 // Save device configuration to existing INI file
 int regroove_common_save_device_config(RegrooveCommonState *state, const char *filepath);
 

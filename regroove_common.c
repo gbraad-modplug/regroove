@@ -1,4 +1,5 @@
 #include "regroove_common.h"
+#include "midi_output.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -1138,6 +1139,36 @@ int regroove_common_save_rgx(RegrooveCommonState *state) {
     }
 
     printf("Saved .rgx file: %s\n", rgx_path);
+    return 0;
+}
+
+// MIDI output initialization (applies all config settings)
+int regroove_common_init_midi_output(RegrooveCommonState *state) {
+    if (!state) return -1;
+    if (state->device_config.midi_output_device < 0) return -1;  // Not configured
+
+    // Initialize MIDI output device
+    if (midi_output_init(state->device_config.midi_output_device) != 0) {
+        fprintf(stderr, "Failed to initialize MIDI output on device %d\n",
+                state->device_config.midi_output_device);
+        return -1;
+    }
+
+    printf("MIDI output enabled on device %d\n", state->device_config.midi_output_device);
+
+    // Apply MIDI Clock master mode from config
+    if (state->device_config.midi_clock_master) {
+        midi_output_set_clock_master(1);
+        printf("MIDI Clock master enabled\n");
+    }
+
+    // Apply SPP configuration from config
+    midi_output_set_spp_config(state->device_config.midi_clock_send_spp,
+                              state->device_config.midi_clock_spp_interval);
+    printf("MIDI SPP config: mode=%d, interval=%d\n",
+           state->device_config.midi_clock_send_spp,
+           state->device_config.midi_clock_spp_interval);
+
     return 0;
 }
 

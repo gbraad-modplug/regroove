@@ -295,14 +295,14 @@ static void my_row_callback(int ord, int row, void *userdata) {
                 // Calculate SPP position: always use 64 beats per pattern
                 int spp_position = (ord * 64) + ((row * 64) / pattern_rows);
 
-                // Apply speed compensation if enabled - divide SPP by speed ratio
+                // Apply speed compensation if enabled - scale SPP by speed ratio
                 if (common_state->device_config.midi_spp_speed_compensation) {
-                    // Speed compensation mode: scale SPP by inverse of speed ratio
-                    // 3 ticks/row plays 2x faster, so divide SPP by 2 (send half the position)
-                    // 6 ticks/row is standard (divide by 1, no change)
-                    // 12 ticks/row plays 0.5x speed, so divide by 0.5 (multiply by 2)
+                    // Speed compensation mode: scale SPP by speed ratio
+                    // 3 ticks/row plays 2x faster, so multiply SPP by 2 (double the musical position)
+                    // 6 ticks/row is standard (multiply by 1, no change)
+                    // 12 ticks/row plays 0.5x speed, so multiply by 0.5 (half the musical position)
                     int speed = regroove_get_current_speed(common_state->player);
-                    spp_position = (spp_position * (speed > 0 ? speed : 6)) / 6;
+                    spp_position = (spp_position * 6) / (speed > 0 ? speed : 6);
                 }
                 // Update position for clock thread to send
                 midi_output_update_position(spp_position);
@@ -391,14 +391,14 @@ static void my_order_callback(int ord, int pat, void *userdata) {
                 // Calculate SPP position: always use 64 beats per pattern
                 int spp_position = ord * 64;
 
-                // Apply speed compensation if enabled - divide SPP by speed ratio
+                // Apply speed compensation if enabled - scale SPP by speed ratio
                 if (common_state->device_config.midi_spp_speed_compensation) {
-                    // Speed compensation mode: scale SPP by inverse of speed ratio
-                    // 3 ticks/row plays 2x faster, so divide SPP by 2 (send half the position)
-                    // 6 ticks/row is standard (divide by 1, no change)
-                    // 12 ticks/row plays 0.5x speed, so divide by 0.5 (multiply by 2)
+                    // Speed compensation mode: scale SPP by speed ratio
+                    // 3 ticks/row plays 2x faster, so multiply SPP by 2 (double the musical position)
+                    // 6 ticks/row is standard (multiply by 1, no change)
+                    // 12 ticks/row plays 0.5x speed, so multiply by 0.5 (half the musical position)
                     int speed = regroove_get_current_speed(common_state->player);
-                    spp_position = (spp_position * (speed > 0 ? speed : 6)) / 6;
+                    spp_position = (spp_position * 6) / (speed > 0 ? speed : 6);
                 }
                 // Update position for clock thread to send
                 midi_output_update_position(spp_position);
@@ -8170,28 +8170,9 @@ int main(int argc, char* argv[]) {
     expanded_pads = (common_state->device_config.expanded_pads != 0);
 
     // Initialize MIDI output if configured
-    if (common_state->device_config.midi_output_device >= 0) {
-        if (midi_output_init(common_state->device_config.midi_output_device) == 0) {
-            midi_output_device = common_state->device_config.midi_output_device;
-            midi_output_enabled = true;
-            printf("MIDI output enabled on device %d\n", midi_output_device);
-
-            // Initialize MIDI Clock master mode from config
-            if (common_state->device_config.midi_clock_master) {
-                midi_output_set_clock_master(1);
-                printf("MIDI Clock master enabled\n");
-            }
-
-            // Initialize SPP configuration from config
-            midi_output_set_spp_config(common_state->device_config.midi_clock_send_spp,
-                                      common_state->device_config.midi_clock_spp_interval);
-            printf("MIDI SPP config: mode=%d, interval=%d\n",
-                   common_state->device_config.midi_clock_send_spp,
-                   common_state->device_config.midi_clock_spp_interval);
-        } else {
-            fprintf(stderr, "Failed to initialize MIDI output on device %d\n",
-                    common_state->device_config.midi_output_device);
-        }
+    if (regroove_common_init_midi_output(common_state) == 0) {
+        midi_output_device = common_state->device_config.midi_output_device;
+        midi_output_enabled = true;
     }
 
     // Load file list from directory
