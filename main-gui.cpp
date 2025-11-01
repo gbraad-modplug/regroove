@@ -8181,6 +8181,13 @@ int main(int argc, char* argv[]) {
                 midi_output_set_clock_master(1);
                 printf("MIDI Clock master enabled\n");
             }
+
+            // Initialize SPP configuration from config
+            midi_output_set_spp_config(common_state->device_config.midi_clock_send_spp,
+                                      common_state->device_config.midi_clock_spp_interval);
+            printf("MIDI SPP config: mode=%d, interval=%d\n",
+                   common_state->device_config.midi_clock_send_spp,
+                   common_state->device_config.midi_clock_spp_interval);
         } else {
             fprintf(stderr, "Failed to initialize MIDI output on device %d\n",
                     common_state->device_config.midi_output_device);
